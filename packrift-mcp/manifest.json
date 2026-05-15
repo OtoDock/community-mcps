@@ -1,0 +1,58 @@
+{
+  "name": "packrift-mcp",
+  "label": "Packrift",
+  "description": "Packaging catalog, pricing, inventory, shipping, and cart helper tools",
+  "version": "0.1.0",
+  "category": "community",
+  "author": "Packrift",
+  "author_url": "https://github.com/Packrift",
+  "license": "MIT",
+  "server": {
+    "runtime": "docker",
+    "transport": "http",
+    "docker_compose": "docker-compose.yml",
+    "port": 8787,
+    "health_endpoint": "/mcp",
+    "url_template": "http://localhost:${port}",
+    "source": "docker:ghcr.io/packrift/packrift-mcp:latest"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {
+        "key": "SHOPIFY_PACKRIFT_TOKEN",
+        "label": "Packrift Shopify Admin API token",
+        "input_type": "password",
+        "required": true,
+        "secret": true
+      },
+      {
+        "key": "SHOPIFY_STORE_DOMAIN",
+        "label": "Shopify store domain",
+        "input_type": "text",
+        "default": "packrift.myshopify.com"
+      },
+      {
+        "key": "STOREFRONT_DOMAIN",
+        "label": "Storefront domain",
+        "input_type": "text",
+        "default": "packrift.com"
+      }
+    ],
+    "max_instances": 0
+  },
+  "config": [],
+  "env": {
+    "PORT": "8787",
+    "SHOPIFY_API_VERSION": "2025-04"
+  },
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null
+}
