@@ -1,0 +1,10 @@
+services:
+  camoufox:
+    build: .
+    container_name: camoufox-mcp
+    restart: always
+    shm_size: 2gb
+    ports:
+      - "8931:8931"
+    volumes:
+      - ./screenshots:/screenshots

@@ -1,0 +1,39 @@
+{
+  "name": "google-maps",
+  "label": "Google Maps",
+  "description": "Places search, directions, and geocoding",
+  "version": "0.2.1",
+  "category": "community",
+  "server": {
+    "runtime": "python",
+    "transport": "stdio",
+    "command": "venv/bin/google-maps-mcp-server",
+    "args": [],
+    "source": "pypi:google-maps-mcp-server@0.2.1"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {"key": "GOOGLE_MAPS_API_KEY", "label": "API Key", "input_type": "password", "required": true, "secret": true}
+    ],
+    "max_instances": 0
+  },
+  "config": [],
+  "env": {"PYTHONWARNINGS": "ignore::FutureWarning"},
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "skills": [
+    {
+      "id": "google-maps-usage",
+      "file": "skills/google-maps.md",
+      "description": "Places search behavior, result presentation, and location-aware queries",
+      "default_exclude_from": []
+    }
+  ],
+  "patched": true,
+  "patch_note": "Keyword filter fix: split words + normalize underscores for multi-word searches"
+}

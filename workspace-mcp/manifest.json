@@ -1,0 +1,92 @@
+{
+  "name": "google-workspace",
+  "label": "Google Workspace",
+  "description": "Gmail, Calendar, Contacts via OAuth",
+  "version": "1.18.0",
+  "category": "community",
+  "server": {
+    "runtime": "python",
+    "transport": "stdio",
+    "command": "venv/bin/workspace-mcp",
+    "args": [
+      "--single-user",
+      "--tools",
+      "gmail",
+      "calendar",
+      "contacts",
+      "--transport",
+      "stdio"
+    ],
+    "source": "pypi:workspace-mcp@1.18.0"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "Google Workspace",
+    "description": "Gmail, Calendar, Contacts",
+    "oauth": {
+      "provider": "google",
+      "app_credential": "google-oauth-app",
+      "app_credential_fields": [
+        {"key": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "input_type": "text"},
+        {"key": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "input_type": "password"}
+      ],
+      "services": [
+        {
+          "key": "gmail",
+          "label": "Gmail",
+          "description": "Read and send emails"
+        },
+        {
+          "key": "calendar",
+          "label": "Calendar",
+          "description": "View and manage events"
+        },
+        {
+          "key": "contacts",
+          "label": "Contacts",
+          "description": "View and manage contacts"
+        }
+      ]
+    },
+    "service_account": true
+  },
+  "config": [],
+  "env": {
+    "WORKSPACE_MCP_PORT": "18199"
+  },
+  "path_env": {
+    "WORKSPACE_MCP_CREDENTIALS_DIR": {
+      "role": "credentials_dir",
+      "subpath": "google-tokens"
+    },
+    "ALLOWED_FILE_DIRS": {
+      "values": [
+        {"role": "user_root"},
+        {"role": "shared_workspace"},
+        {"role": "config"}
+      ],
+      "join": ":"
+    }
+  },
+  "agent_env": {
+    "OAUTHLIB_INSECURE_TRANSPORT": "${platform.oauth_insecure_transport}"
+  },
+  "exclude_from": [],
+  "skills": [
+    {
+      "id": "google-workspace-usage",
+      "file": "skills/google-workspace.md",
+      "description": "Gmail, Calendar, Contacts usage rules and safety guidelines",
+      "default_exclude_from": [
+        "voice"
+      ]
+    }
+  ],
+  "hosted_service": {
+    "label": "OtoDock Google Relay",
+    "description": "Use OtoDock's verified Google OAuth app. No Google Cloud Console setup needed.",
+    "default_mode": "hosted"
+  },
+  "patched": false,
+  "patch_note": null
+}

@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "@davidfuchs/mcp-uptime-kuma": "0.7.0"
+  }
+}

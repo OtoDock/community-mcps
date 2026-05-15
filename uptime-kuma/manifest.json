@@ -1,0 +1,36 @@
+{
+  "name": "uptime-kuma",
+  "label": "Uptime Kuma",
+  "description": "Uptime monitoring dashboard (requires v2)",
+  "version": "0.7.0",
+  "category": "community",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/@davidfuchs/mcp-uptime-kuma/dist/index.js"
+    ],
+    "source": "npm:@davidfuchs/mcp-uptime-kuma@0.7.0"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {"key": "UPTIME_KUMA_URL", "label": "Uptime Kuma URL", "input_type": "url", "default": "http://localhost:3001"},
+      {"key": "UPTIME_KUMA_USERNAME", "label": "Username", "input_type": "text", "required": true},
+      {"key": "UPTIME_KUMA_PASSWORD", "label": "Password", "input_type": "password", "required": true, "secret": true}
+    ],
+    "max_instances": 0
+  },
+  "config": [],
+  "env": {},
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null
+}

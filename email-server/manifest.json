@@ -1,0 +1,84 @@
+{
+  "name": "email-server",
+  "label": "Email",
+  "description": "Email via IMAP/SMTP",
+  "version": "1.2.1",
+  "category": "community",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/mcp-mail-server/dist/index.js"
+    ],
+    "source": "npm:mcp-mail-server@1.2.1"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "Email",
+    "description": "Email account (IMAP/SMTP)",
+    "fields": [
+      {
+        "key": "EMAIL_USER",
+        "label": "Email Address",
+        "input_type": "email"
+      },
+      {
+        "key": "EMAIL_PASS",
+        "label": "Password",
+        "input_type": "password"
+      }
+    ],
+    "service_account": true
+  },
+  "config": [
+    {
+      "key": "SMTP_HOST",
+      "label": "SMTP Host",
+      "input_type": "text",
+      "default": "",
+      "user_overridable": true
+    },
+    {
+      "key": "SMTP_PORT",
+      "label": "SMTP Port",
+      "input_type": "text",
+      "default": "465",
+      "user_overridable": true
+    },
+    {
+      "key": "SMTP_SECURE",
+      "label": "SMTP TLS",
+      "input_type": "text",
+      "default": "true",
+      "user_overridable": true
+    },
+    {
+      "key": "IMAP_HOST",
+      "label": "IMAP Host",
+      "input_type": "text",
+      "default": "",
+      "user_overridable": true
+    },
+    {
+      "key": "IMAP_PORT",
+      "label": "IMAP Port",
+      "input_type": "text",
+      "default": "993",
+      "user_overridable": true
+    },
+    {
+      "key": "IMAP_SECURE",
+      "label": "IMAP TLS",
+      "input_type": "text",
+      "default": "true",
+      "user_overridable": true
+    }
+  ],
+  "env": {},
+  "agent_env": {},
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null
+}

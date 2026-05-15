@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "mcp-mail-server": "1.2.1"
+  }
+}
