@@ -1,0 +1,13 @@
+services:
+  packrift-mcp:
+    image: ghcr.io/packrift/packrift-mcp:latest
+    container_name: packrift-mcp
+    restart: always
+    ports:
+      - "8787:8787"
+    environment:
+      PORT: "8787"
+      SHOPIFY_API_VERSION: "2025-04"
+      SHOPIFY_PACKRIFT_TOKEN: ${SHOPIFY_PACKRIFT_TOKEN}
+      SHOPIFY_STORE_DOMAIN: ${SHOPIFY_STORE_DOMAIN:-packrift.myshopify.com}
+      STOREFRONT_DOMAIN: ${STOREFRONT_DOMAIN:-packrift.com}

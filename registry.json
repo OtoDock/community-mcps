@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-05-15T04:56:18Z",
+  "updated_at": "2026-05-15T12:56:25Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -136,6 +136,33 @@
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
       "size_bytes": 53179,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "packrift-mcp",
+      "label": "Packrift",
+      "description": "Packaging catalog, pricing, inventory, shipping, and cart helper tools",
+      "category": "community",
+      "version": "0.1.0",
+      "runtime": "docker",
+      "source": "docker:ghcr.io/packrift/packrift-mcp:latest",
+      "manifest_url": "./packrift-mcp/manifest.json",
+      "readme_url": "./packrift-mcp/README.md",
+      "icon_url": null,
+      "tags": [
+        "docker",
+        "packrift"
+      ],
+      "author": "Packrift",
+      "author_url": "https://github.com/Packrift",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "0.4.0",
+      "assignment_mode": "explicit",
+      "size_bytes": 3450,
       "deprecated": false,
       "patched": false,
       "patch_note": null
