@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-05-15T04:56:18Z",
+  "updated_at": "2026-06-14T00:16:20Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -274,6 +274,33 @@
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
       "size_bytes": 4636,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "xquik",
+      "label": "Xquik",
+      "description": "X data API and automation tools through a hosted MCP server",
+      "category": "community",
+      "version": "0.1.0",
+      "runtime": "node",
+      "source": "npm:mcp-remote@0.1.38",
+      "manifest_url": "./xquik/manifest.json",
+      "readme_url": "./xquik/README.md",
+      "icon_url": null,
+      "tags": [
+        "node",
+        "xquik"
+      ],
+      "author": "Xquik",
+      "author_url": "https://xquik.com",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "0.4.0",
+      "assignment_mode": "explicit",
+      "size_bytes": 37788,
       "deprecated": false,
       "patched": false,
       "patch_note": null
