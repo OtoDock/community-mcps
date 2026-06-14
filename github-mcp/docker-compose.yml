@@ -1,0 +1,10 @@
+services:
+  github-mcp:
+    build: .
+    container_name: github-mcp
+    restart: always
+    ports:
+      - "8935:8935"
+    # MCP_PORT is auto-injected from manifest.env by docker_manager._inject_mcp_env.
+    # GITHUB_HOST (optional) for GitHub Enterprise; default = github.com.
+    env_file: .env

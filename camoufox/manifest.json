@@ -1,6 +1,6 @@
 {
   "name": "camoufox",
-  "server_name": "playwright",
+  "server_name": "platform",
   "label": "Browser (Camoufox)",
   "description": "Anti-detect browser automation via Playwright MCP",
   "version": "0.0.55",
@@ -25,7 +25,7 @@
   "env": {},
   "agent_env": {},
 
-  "exclude_from": ["voice"],
+  "exclude_from": [],
 
   "outputs": [
     {
@@ -41,7 +41,7 @@
       "id": "web-browsing",
       "file": "skills/web-browsing.md",
       "description": "Browser tool selection, best practices, screenshot handling",
-      "default_exclude_from": ["voice"]
+      "default_exclude_from": []
     }
   ],
 

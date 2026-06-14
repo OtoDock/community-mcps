@@ -27,7 +27,7 @@ REGISTRY_VERSION = "1"
 PLATFORM_MIN_VERSION = "0.4.0"
 
 REQUIRED_MANIFEST_FIELDS = ("name", "label", "description", "version", "server")
-ALLOWED_RUNTIMES = {"python", "node", "docker"}
+ALLOWED_RUNTIMES = {"python", "node", "docker", "remote"}
 
 
 def _iter_mcp_dirs() -> list[Path]:
@@ -49,11 +49,23 @@ def _read_manifest(path: Path) -> dict:
         raise SystemExit(f"{path}: invalid JSON ({exc})")
 
 
+def _runtime(server: dict) -> str | None:
+    """Catalog runtime. ``server.runtime`` when declared (python/node/docker);
+    remote MCPs (``source: remote:…``) run on vendor infra and omit it, so
+    derive ``"remote"`` from the source prefix."""
+    rt = server.get("runtime")
+    if rt:
+        return rt
+    if str(server.get("source", "")).startswith("remote:"):
+        return "remote"
+    return None
+
+
 def _validate(manifest: dict, mcp_dir: Path) -> None:
     missing = [f for f in REQUIRED_MANIFEST_FIELDS if f not in manifest]
     if missing:
         raise SystemExit(f"{mcp_dir.name}: missing required fields {missing}")
-    runtime = manifest["server"].get("runtime")
+    runtime = _runtime(manifest["server"])
     if runtime not in ALLOWED_RUNTIMES:
         raise SystemExit(
             f"{mcp_dir.name}: server.runtime must be one of {sorted(ALLOWED_RUNTIMES)}, got {runtime!r}"
@@ -90,7 +102,7 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
     manifest = _read_manifest(mcp_dir / "manifest.json")
     _validate(manifest, mcp_dir)
     server = manifest["server"]
-    runtime = server["runtime"]
+    runtime = _runtime(server)
     requires_credentials = bool(
         manifest.get("credentials", {}).get("type") not in (None, "none")
         or manifest.get("instances", {}).get("fields")

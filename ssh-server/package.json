@@ -1,6 +1,0 @@
-{
-  "private": true,
-  "dependencies": {
-    "@fangjunjie/ssh-mcp-server": "1.6.0"
-  }
-}

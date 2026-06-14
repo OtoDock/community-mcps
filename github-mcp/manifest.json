@@ -1,0 +1,265 @@
+{
+  "name": "github-mcp",
+  "label": "GitHub",
+  "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
+  "version": "1.0.0",
+  "category": "community",
+  "server": {
+    "runtime": "docker",
+    "transport": "streamable_http",
+    "docker_compose": "docker-compose.yml",
+    "port": 8935,
+    "health_endpoint": "/health",
+    "url_template": "http://localhost:${port}/mcp",
+    "source": "docker:github-mcp"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "GitHub Account",
+    "description": "Connect your GitHub account.",
+    "service_account": true,
+    "oauth": {
+      "provider_id": "github",
+      "flows": ["authorization_code", "personal_access_token"],
+      "authorization_url": "https://github.com/login/oauth/authorize",
+      "token_url": "https://github.com/login/oauth/access_token",
+      "userinfo_url": "https://api.github.com/user",
+      "userinfo_email_field": "email",
+      "userinfo_name_field": "name",
+      "userinfo_id_field": "login",
+      "token_format": {
+        "schema": "generic_oauth_v1",
+        "filename_pattern": "{account_label}.json"
+      },
+      "refresh": {
+        "strategy": "lazy",
+        "min_remaining_seconds": 300
+      },
+      "supports_multi_account": true,
+      "registered_app_required": true,
+      "bearer_required": true,
+      "proposed_hosts": ["localhost"],
+      "env_injection": ["GH_TOKEN", "GITHUB_TOKEN"],
+      "git_credential_helper": {
+        "host": "github.com",
+        "helper": "!gh auth git-credential"
+      },
+      "app_credential": "github-oauth-app",
+      "app_credential_fields": [
+        {
+          "key": "GITHUB_CLIENT_ID",
+          "label": "OAuth App Client ID",
+          "input_type": "text",
+          "help": "Get from github.com/settings/developers → OAuth Apps"
+        },
+        {
+          "key": "GITHUB_CLIENT_SECRET",
+          "label": "OAuth App Client Secret",
+          "input_type": "password"
+        }
+      ],
+      "pat_instructions_url": "https://github.com/settings/tokens?type=beta",
+      "services": [
+        {
+          "key": "repos",
+          "label": "Repositories",
+          "description": "List, read, and manage repositories you have access to",
+          "scopes": ["repo"]
+        },
+        {
+          "key": "issues",
+          "label": "Issues",
+          "description": "Read, comment on, and create issues",
+          "scopes": ["repo"]
+        },
+        {
+          "key": "pull_requests",
+          "label": "Pull requests",
+          "description": "Read and create pull requests, request reviews",
+          "scopes": ["repo"]
+        },
+        {
+          "key": "actions",
+          "label": "GitHub Actions",
+          "description": "List workflows, read run logs, trigger workflow_dispatch",
+          "scopes": ["repo", "workflow"]
+        },
+        {
+          "key": "code_search",
+          "label": "Code search",
+          "description": "Search across repositories you can read",
+          "scopes": ["repo"]
+        },
+        {
+          "key": "user_profile",
+          "label": "User profile",
+          "description": "Read your profile, email addresses, and following/followers",
+          "scopes": ["read:user", "user:email"]
+        }
+      ]
+    },
+    "webhooks": {
+      "available": true,
+      "provider_id": "github",
+      "signature": {
+        "algorithm": "hmac-sha256",
+        "header": "X-Hub-Signature-256",
+        "prefix": "sha256=",
+        "per_subscription_secret": true,
+        "secret_credential_key": "",
+        "max_age_seconds": 0
+      },
+      "url_verification": {
+        "kind": "none"
+      },
+      "registration": {
+        "mode": "auto",
+        "create": {
+          "method": "POST",
+          "url_template": "https://api.github.com/repos/${vendor_target}/hooks",
+          "headers": {
+            "Authorization": "token ${account.access_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+          },
+          "body_template": {
+            "name": "web",
+            "active": true,
+            "events": "${selected_events}",
+            "config": {
+              "url": "${platform.webhook_base}/v1/webhooks/github/${subscription_id}",
+              "content_type": "json",
+              "secret": "${subscription.signing_secret}",
+              "insecure_ssl": "0"
+            }
+          },
+          "response_id_path": "id",
+          "expected_status": [201]
+        },
+        "delete": {
+          "method": "DELETE",
+          "url_template": "https://api.github.com/repos/${vendor_target}/hooks/${vendor_subscription_id}",
+          "headers": {
+            "Authorization": "token ${account.access_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+          },
+          "expected_status": [204, 404]
+        }
+      },
+      "event_catalog": [
+        {
+          "key": "push",
+          "label": "Commits pushed",
+          "description": "Fires when commits are pushed to any branch.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "pull_request",
+          "label": "Pull request lifecycle",
+          "description": "Fires when a PR is opened, closed, reopened, edited, synchronized, or marked ready for review.",
+          "required_scopes": ["repo"],
+          "subevents": ["opened", "closed", "reopened", "edited", "synchronize", "ready_for_review"]
+        },
+        {
+          "key": "issues",
+          "label": "Issues lifecycle",
+          "description": "Fires when an issue is opened, closed, reopened, edited, labeled, or assigned.",
+          "required_scopes": ["repo"],
+          "subevents": ["opened", "closed", "reopened", "edited", "labeled", "assigned"]
+        },
+        {
+          "key": "issue_comment",
+          "label": "Issue and PR comments",
+          "description": "Fires on new comments on issues or pull requests.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "release",
+          "label": "Releases",
+          "description": "Fires when a release is published, edited, or deleted.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "workflow_run",
+          "label": "GitHub Actions workflow runs",
+          "description": "Fires when a workflow run is requested, completed, or fails.",
+          "required_scopes": ["repo"]
+        }
+      ],
+      "payload_normalization": {
+        "event_type_path": "headers.X-GitHub-Event",
+        "actor": {
+          "id_path": "body.sender.id",
+          "name_path": "body.sender.login",
+          "url_path": "body.sender.html_url"
+        },
+        "subject": {
+          "type_path": "body.action",
+          "id_path": [
+            "body.pull_request.number",
+            "body.issue.number",
+            "body.release.id",
+            "body.workflow_run.id",
+            "body.comment.id",
+            "body.head_commit.id"
+          ],
+          "title_path": [
+            "body.pull_request.title",
+            "body.issue.title",
+            "body.release.name",
+            "body.workflow_run.name",
+            "body.comment.body",
+            "body.head_commit.message"
+          ],
+          "url_path": [
+            "body.pull_request.html_url",
+            "body.issue.html_url",
+            "body.release.html_url",
+            "body.workflow_run.html_url",
+            "body.comment.html_url",
+            "body.head_commit.url"
+          ]
+        },
+        "target": {
+          "type": "repository",
+          "id_path": "body.repository.full_name",
+          "url_path": "body.repository.html_url"
+        }
+      },
+      "vendor_target_spec": {
+        "kind": "free_text",
+        "label": "Repository (owner/name)",
+        "placeholder": "octocat/hello-world",
+        "validation_regex": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+        "help_text": "You must have admin access on this repo to install webhooks."
+      },
+      "event_id_field": "headers.X-GitHub-Delivery"
+    }
+  },
+  "config": [],
+  "env": {
+    "MCP_PORT": "${platform.mcp_port}"
+  },
+  "path_env": {},
+  "agent_env": {},
+  "agent_context": [
+    {
+      "template": "## GitHub Identity\n\nYou are acting on GitHub as **${account.email}**. Your bearer token grants whatever access this account has on GitHub. When calling `repo`-scoped tools, default to repositories owned by this user unless the prompt explicitly names a different org.\n\nThe sidecar spawns one `github-mcp-server` subprocess per chat session with your token set in env — if the token rotates mid-session, start a new chat to pick up the refreshed credentials.",
+      "requires": ["account.email"]
+    }
+  ],
+  "exclude_from": [],
+  "skills": [
+    {
+      "id": "github-git-usage",
+      "file": "skills/git.md",
+      "description": "Local git in the shell: push/clone are pre-authenticated; how to set the commit identity from the connected account (overridable)."
+    }
+  ],
+  "hosted": {
+    "oauth_app": { "available": true, "default_mode": "self_managed" }
+  },
+  "patched": false,
+  "patch_note": null
+}

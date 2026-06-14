@@ -1,6 +1,6 @@
 # OtoDock Community MCPs
 
-The catalog of [Model Context Protocol](https://modelcontextprotocol.io/) servers (MCPs) that an [OtoDock](https://github.com/OtoDock) instance can install with one click. Each MCP gives agents a new capability — read email, drive a browser, query Prometheus, control Home Assistant, manage a UniFi network, and so on.
+The catalog of [Model Context Protocol](https://modelcontextprotocol.io/) servers (MCPs) that an [OtoDock](https://github.com/OtoDock) instance can install with one click. Each MCP gives agents a new capability — drive a browser, work in Notion, manage GitHub, read and send Gmail, and so on.
 
 This repo is the **source of truth** for what the OtoDock platform offers under the "Community" category. Operators don't clone it directly — the platform pulls `registry.json` from this repo's `main` branch and downloads individual MCP folders on demand.
 
@@ -14,14 +14,8 @@ This repo is the **source of truth** for what the OtoDock platform offers under 
 │   ├── README.md            ← required, shown in the install dialog
 │   ├── (source / Dockerfile / package.json / patches / skills)
 │   └── icon.png             ← optional, 256×256
-├── email-server/
-├── google-maps/
-├── ha-mcp/
-├── nextcloud/
-├── prometheus/
-├── ssh-server/
-├── unifi-network/
-├── uptime-kuma/
+├── github-mcp/
+├── notion-mcp/
 ├── workspace-mcp/
 ├── scripts/
 │   └── generate-registry.py ← regenerates registry.json from manifests
@@ -36,15 +30,9 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | MCP | Runtime | Upstream | Use case |
 |-----|---------|----------|----------|
 | [camoufox](./camoufox/) | docker | Camoufox + `@playwright/mcp` | Anti-detect browser automation |
-| [email-server](./email-server/) | node | `mcp-mail-server` | IMAP + SMTP per user |
-| [google-maps](./google-maps/) | python | `google-maps-mcp-server` (patched) | Places search, directions, geocoding |
-| [ha-mcp](./ha-mcp/) | python | `ha-mcp` | Home Assistant (~97 tools) |
-| [nextcloud](./nextcloud/) | node | `nextcloud-mcp-server` | WebDAV / Notes / Calendar |
-| [prometheus](./prometheus/) | node | `prometheus-mcp` | Metrics queries |
-| [ssh-server](./ssh-server/) | node | `@fangjunjie/ssh-mcp-server` | Remote shell via SSH |
-| [unifi-network](./unifi-network/) | python | `unifi-network-mcp` | UniFi management (~156 tools) |
-| [uptime-kuma](./uptime-kuma/) | node | `@davidfuchs/mcp-uptime-kuma` | Uptime Kuma v2 |
-| [workspace-mcp](./workspace-mcp/) | python | `workspace-mcp` | Gmail / Calendar / Contacts |
+| [github-mcp](./github-mcp/) | docker | official GitHub MCP (Dockerized) | Repos, issues, PRs, Actions, code search |
+| [notion-mcp](./notion-mcp/) | node | `@notionhq/notion-mcp-server` | Notion pages, databases, search |
+| [workspace-mcp](./workspace-mcp/) | python | `workspace-mcp` | Gmail / Drive / Calendar / Docs |
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 

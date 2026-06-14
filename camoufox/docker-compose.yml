@@ -1,6 +1,14 @@
 services:
   camoufox:
-    build: .
+    build:
+      context: .
+      # The streaming sidecar (SSE broker + session lifecycle) is shared across
+      # Docker MCPs and lives in mcps/_shared — pulled in as a named BuildKit
+      # build context rather than copied into this dir (mcps/ is too large to be
+      # a build context). The Dockerfile does `COPY --from=shared stream_sidecar.py`.
+      # Path is relative to this compose file. Requires BuildKit (Compose v2 default).
+      additional_contexts:
+        shared: ../../_shared
     container_name: camoufox-mcp
     restart: always
     shm_size: 2gb
@@ -8,3 +16,14 @@ services:
       - "8931:8931"
     volumes:
       - ./screenshots:/screenshots
+    # Deep health check: drives a real about:blank navigate (a plain HTTP probe
+    # misses the "server up but Firefox wedged" failure). Surfaces health in
+    # `docker ps` + for the proxy's core-MCP monitor; the entrypoint watchdog is
+    # what actually recycles on a sustained wedge (compose doesn't restart on
+    # `unhealthy` by itself).
+    healthcheck:
+      test: ["CMD", "python3", "/app/healthprobe.py"]
+      interval: 90s
+      timeout: 35s
+      retries: 2
+      start_period: 60s
