@@ -1,8 +1,8 @@
 {
   "name": "google-workspace",
   "label": "Google Workspace",
-  "description": "Gmail, Calendar, Contacts via OAuth",
-  "version": "1.18.0",
+  "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Google Tasks, Contacts, Chat, Apps Script via OAuth",
+  "version": "1.21.1",
   "category": "community",
   "server": {
     "runtime": "python",
@@ -10,41 +10,183 @@
     "command": "venv/bin/workspace-mcp",
     "args": [
       "--single-user",
-      "--tools",
-      "gmail",
-      "calendar",
-      "contacts",
       "--transport",
       "stdio"
     ],
-    "source": "pypi:workspace-mcp@1.18.0"
+    "source": "pypi:workspace-mcp@1.21.1"
   },
   "credentials": {
     "type": "per_user",
     "label": "Google Workspace",
-    "description": "Gmail, Calendar, Contacts",
+    "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Google Tasks, Contacts, Chat, Apps Script",
     "oauth": {
-      "provider": "google",
+      "provider_id": "google",
+      "flows": [
+        "authorization_code"
+      ],
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "revoke_url": "https://oauth2.googleapis.com/revoke",
+      "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
+      "userinfo_email_field": "email",
+      "userinfo_name_field": "name",
+      "userinfo_id_field": "sub",
+      "token_format": {
+        "schema": "generic_oauth_v1",
+        "filename_pattern": "{account_label}.json",
+        "aliases": {
+          "token": "access_token",
+          "token_uri": "token_url",
+          "expiry": "expires_at"
+        }
+      },
+      "refresh": {
+        "strategy": "lazy",
+        "min_remaining_seconds": 300
+      },
+      "supports_multi_account": true,
+      "registered_app_required": false,
+      "bearer_required": false,
       "app_credential": "google-oauth-app",
+      "account_credential_keys": {
+        "email": "GOOGLE_EMAIL",
+        "services": "GOOGLE_SERVICES"
+      },
       "app_credential_fields": [
-        {"key": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "input_type": "text"},
-        {"key": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "input_type": "password"}
+        {
+          "key": "GOOGLE_OAUTH_CLIENT_ID",
+          "label": "Client ID",
+          "input_type": "text"
+        },
+        {
+          "key": "GOOGLE_OAUTH_CLIENT_SECRET",
+          "label": "Client Secret",
+          "input_type": "password"
+        }
+      ],
+      "base_scopes": [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile"
       ],
       "services": [
         {
           "key": "gmail",
           "label": "Gmail",
-          "description": "Read and send emails"
+          "description": "Read, send, and manage emails",
+          "scopes": [
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/gmail.compose",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.labels",
+            "https://www.googleapis.com/auth/gmail.settings.basic"
+          ]
+        },
+        {
+          "key": "drive",
+          "label": "Drive",
+          "description": "Read and manage files and folders",
+          "scopes": [
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive.file"
+          ]
         },
         {
           "key": "calendar",
           "label": "Calendar",
-          "description": "View and manage events"
+          "description": "View and manage events",
+          "scopes": [
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events"
+          ]
+        },
+        {
+          "key": "docs",
+          "label": "Docs",
+          "description": "Read and edit Google Documents",
+          "scopes": [
+            "https://www.googleapis.com/auth/documents",
+            "https://www.googleapis.com/auth/documents.readonly",
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive.file"
+          ]
+        },
+        {
+          "key": "sheets",
+          "label": "Sheets",
+          "description": "Read and edit Google Spreadsheets",
+          "scopes": [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/drive.readonly"
+          ]
+        },
+        {
+          "key": "slides",
+          "label": "Slides",
+          "description": "Read and edit Google Presentations",
+          "scopes": [
+            "https://www.googleapis.com/auth/presentations",
+            "https://www.googleapis.com/auth/presentations.readonly"
+          ]
+        },
+        {
+          "key": "forms",
+          "label": "Forms",
+          "description": "Read and edit Google Forms",
+          "scopes": [
+            "https://www.googleapis.com/auth/forms.body",
+            "https://www.googleapis.com/auth/forms.body.readonly",
+            "https://www.googleapis.com/auth/forms.responses.readonly"
+          ]
+        },
+        {
+          "key": "tasks",
+          "label": "Google Tasks",
+          "description": "View and manage Google Tasks lists",
+          "scopes": [
+            "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/tasks.readonly"
+          ]
         },
         {
           "key": "contacts",
           "label": "Contacts",
-          "description": "View and manage contacts"
+          "description": "View and manage contacts",
+          "scopes": [
+            "https://www.googleapis.com/auth/contacts",
+            "https://www.googleapis.com/auth/contacts.readonly"
+          ]
+        },
+        {
+          "key": "chat",
+          "label": "Chat",
+          "description": "Read and send Google Chat messages",
+          "scopes": [
+            "https://www.googleapis.com/auth/chat.messages",
+            "https://www.googleapis.com/auth/chat.messages.readonly",
+            "https://www.googleapis.com/auth/chat.spaces",
+            "https://www.googleapis.com/auth/chat.spaces.readonly"
+          ]
+        },
+        {
+          "key": "appscript",
+          "label": "Apps Script",
+          "description": "Manage and run Google Apps Script projects",
+          "scopes": [
+            "https://www.googleapis.com/auth/script.projects",
+            "https://www.googleapis.com/auth/script.projects.readonly",
+            "https://www.googleapis.com/auth/script.deployments",
+            "https://www.googleapis.com/auth/script.deployments.readonly",
+            "https://www.googleapis.com/auth/script.processes",
+            "https://www.googleapis.com/auth/script.metrics",
+            "https://www.googleapis.com/auth/script.external_request",
+            "https://www.googleapis.com/auth/script.scriptapp",
+            "https://www.googleapis.com/auth/drive.file"
+          ]
         }
       ]
     },
@@ -52,18 +194,29 @@
   },
   "config": [],
   "env": {
-    "WORKSPACE_MCP_PORT": "18199"
+    "WORKSPACE_MCP_PORT": "18199",
+    "WORKSPACE_MCP_TOOLS": "gmail,drive,calendar,docs,sheets,slides,forms,tasks,contacts,chat,appscript"
   },
   "path_env": {
     "WORKSPACE_MCP_CREDENTIALS_DIR": {
       "role": "credentials_dir",
       "subpath": "google-tokens"
     },
+    "WORKSPACE_ATTACHMENT_DIR": {
+      "role": "workspace",
+      "subpath": "downloads/google-drive"
+    },
     "ALLOWED_FILE_DIRS": {
       "values": [
-        {"role": "user_root"},
-        {"role": "shared_workspace"},
-        {"role": "config"}
+        {
+          "role": "user_root"
+        },
+        {
+          "role": "shared_workspace"
+        },
+        {
+          "role": "config"
+        }
       ],
       "join": ":"
     }
@@ -71,21 +224,30 @@
   "agent_env": {
     "OAUTHLIB_INSECURE_TRANSPORT": "${platform.oauth_insecure_transport}"
   },
+  "agent_context": [
+    {
+      "template": "## Google Workspace Account\n\nFor every `mcp__google-workspace__*` tool call, pass `user_google_email=\"${account.email}\"`. That is the Google account currently connected for this agent \u2014 using any other email (including the platform user's OtoDock login email) will fail with an OAuth credentials error.",
+      "requires": [
+        "account.email"
+      ]
+    }
+  ],
   "exclude_from": [],
   "skills": [
     {
       "id": "google-workspace-usage",
       "file": "skills/google-workspace.md",
-      "description": "Gmail, Calendar, Contacts usage rules and safety guidelines",
+      "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat, Apps Script usage rules and safety guidelines",
       "default_exclude_from": [
-        "voice"
+        "phone"
       ]
     }
   ],
-  "hosted_service": {
-    "label": "OtoDock Google Relay",
-    "description": "Use OtoDock's verified Google OAuth app. No Google Cloud Console setup needed.",
-    "default_mode": "hosted"
+  "hosted": {
+    "oauth_app": {
+      "available": true,
+      "default_mode": "hosted"
+    }
   },
   "patched": false,
   "patch_note": null
