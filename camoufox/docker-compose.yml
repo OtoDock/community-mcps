@@ -12,8 +12,22 @@ services:
     container_name: camoufox-mcp
     restart: always
     shm_size: 2gb
+    # TEMPORARY: @playwright/mcp@0.0.55 (pinned for camoufox-Firefox connect compat)
+    # issues server→client requests (roots/list, ping) but fails to correlate the
+    # client's responses, blocking the first tool call for ~60s. This flag tells the
+    # shared stream_sidecar to suppress those requests (strip the client's `roots`
+    # capability + reject the standalone SSE GET) so navigate is fast. REMOVE this
+    # once camoufox can run an @playwright/mcp build that correlates correctly — then
+    # confirm `browser_navigate` is sub-second without it. See
+    # ../../_shared/stream_sidecar.py + proxy/docs/mcps/DOCKER-MCP-STREAMING.md.
+    environment:
+      - OTO_MCP_SUPPRESS_SERVER_REQUESTS=1
     ports:
-      - "8931:8931"
+      # Loopback-only: an unauthenticated headless browser must not be
+      # network-reachable (SSRF / cross-tenant drive-by). Local agents + the
+      # host-local proxy reach it on localhost. (Cloud uses the otodock network
+      # + session→pod sticky routing instead of a published port.)
+      - "127.0.0.1:8931:8931"
     volumes:
       - ./screenshots:/screenshots
     # Deep health check: drives a real about:blank navigate (a plain HTTP probe

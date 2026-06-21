@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-06-14T22:54:34Z",
+  "updated_at": "2026-06-21T09:54:31Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -25,7 +25,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 15912,
+      "size_bytes": 16940,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -52,7 +52,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 34079,
+      "size_bytes": 44470,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -62,9 +62,9 @@
       "label": "Notion",
       "description": "Notion pages, databases, blocks, and search via the official Notion MCP server",
       "category": "community",
-      "version": "1.0.0",
+      "version": "2.4.0",
       "runtime": "node",
-      "source": "npm:@notionhq/notion-mcp-server@2.2.1",
+      "source": "npm:@notionhq/notion-mcp-server@2.4.0",
       "manifest_url": "./notion-mcp/manifest.json",
       "readme_url": "./notion-mcp/README.md",
       "icon_url": null,
@@ -79,7 +79,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 87728,
+      "size_bytes": 88060,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -89,9 +89,9 @@
       "label": "Google Workspace",
       "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Google Tasks, Contacts, Chat, Apps Script via OAuth",
       "category": "community",
-      "version": "1.21.1",
+      "version": "1.21.3",
       "runtime": "python",
-      "source": "pypi:workspace-mcp@1.21.1",
+      "source": "pypi:workspace-mcp@1.21.3",
       "manifest_url": "./workspace-mcp/manifest.json",
       "readme_url": "./workspace-mcp/README.md",
       "icon_url": null,

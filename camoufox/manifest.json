@@ -12,7 +12,7 @@
     "docker_compose": "docker-compose.yml",
     "port": 8931,
     "health_endpoint": "/mcp",
-    "url_template": "http://localhost:${port}",
+    "url_template": "http://${docker_mcp_host}:${port}",
     "source": "docker:camoufox + @playwright/mcp@0.0.55"
   },
 

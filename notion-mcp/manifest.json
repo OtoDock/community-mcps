@@ -2,7 +2,7 @@
   "name": "notion-mcp",
   "label": "Notion",
   "description": "Notion pages, databases, blocks, and search via the official Notion MCP server",
-  "version": "1.0.0",
+  "version": "2.4.0",
   "category": "community",
   "server": {
     "runtime": "node",
@@ -11,7 +11,7 @@
     "args": [
       "${mcp_dir}/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs"
     ],
-    "source": "npm:@notionhq/notion-mcp-server@2.2.1"
+    "source": "npm:@notionhq/notion-mcp-server@2.4.0"
   },
   "credentials": {
     "type": "per_user",
@@ -20,15 +20,21 @@
     "service_account": true,
     "oauth": {
       "provider_id": "notion",
-      "flows": ["authorization_code"],
+      "flows": [
+        "authorization_code"
+      ],
       "authorization_url": "https://api.notion.com/v1/oauth/authorize",
       "token_url": "https://api.notion.com/v1/oauth/token",
       "userinfo_url": "https://api.notion.com/v1/users/me",
-      "userinfo_headers": { "Notion-Version": "2022-06-28" },
+      "userinfo_headers": {
+        "Notion-Version": "2022-06-28"
+      },
       "userinfo_email_field": "bot.owner.user.person.email",
       "userinfo_name_field": "bot.owner.user.name",
       "userinfo_id_field": "id",
-      "authorize_params": { "owner": "user" },
+      "authorize_params": {
+        "owner": "user"
+      },
       "token_format": {
         "schema": "generic_oauth_v1",
         "filename_pattern": "{account_label}.json"
@@ -39,7 +45,9 @@
       },
       "supports_multi_account": true,
       "registered_app_required": true,
-      "mcp_env_injection": ["NOTION_TOKEN"],
+      "mcp_env_injection": [
+        "NOTION_TOKEN"
+      ],
       "app_credential": "notion-oauth-app",
       "app_credential_fields": [
         {
@@ -145,8 +153,14 @@
           "id_path": "body.entity.id"
         },
         "target": {
-          "type_path": ["body.data.parent.type", "body.entity.type"],
-          "id_path": ["body.data.parent.id", "body.entity.id"]
+          "type_path": [
+            "body.data.parent.type",
+            "body.entity.type"
+          ],
+          "id_path": [
+            "body.data.parent.id",
+            "body.entity.id"
+          ]
         }
       },
       "vendor_target_spec": {
@@ -154,7 +168,7 @@
         "label": "Workspace ID",
         "placeholder": "d577f2af-2503-813e-89c3-0003b27a61ef",
         "validation_regex": "^[0-9a-fA-F-]{32,36}$",
-        "help_text": "Notion workspace ID — prefilled from your connected account. Hosted (via OtoDock) accounts need no vendor-console steps; self-managed integrations add the OtoDock webhook URL in the integration's Webhooks tab and complete the one-time verification-token dance (the token is captured automatically — reveal it from the subscription card).",
+        "help_text": "Notion workspace ID \u2014 prefilled from your connected account. Hosted (via OtoDock) accounts need no vendor-console steps; self-managed integrations add the OtoDock webhook URL in the integration's Webhooks tab and complete the one-time verification-token dance (the token is captured automatically \u2014 reveal it from the subscription card).",
         "account_extra_key": "workspace_id"
       },
       "event_id_field": "body.id",
@@ -170,11 +184,17 @@
                 "Authorization": "Bearer ${account.access_token}",
                 "Notion-Version": "2022-06-28"
               },
-              "expected_status": [200]
+              "expected_status": [
+                200
+              ]
             },
             "outputs": {
-              "actor.name": ["body.name"],
-              "actor.email": ["body.person.email"]
+              "actor.name": [
+                "body.name"
+              ],
+              "actor.email": [
+                "body.person.email"
+              ]
             },
             "ttl_seconds": 900
           },
@@ -187,14 +207,18 @@
                 "Authorization": "Bearer ${account.access_token}",
                 "Notion-Version": "2022-06-28"
               },
-              "expected_status": [200]
+              "expected_status": [
+                200
+              ]
             },
             "outputs": {
               "subject.title": [
                 "body.properties.title.title.0.plain_text",
                 "body.properties.Name.title.0.plain_text"
               ],
-              "subject.url": ["body.url"]
+              "subject.url": [
+                "body.url"
+              ]
             },
             "ttl_seconds": 300
           }
@@ -208,14 +232,19 @@
   "agent_env": {},
   "agent_context": [
     {
-      "template": "## Notion Account\n\nYou are connected to Notion as **${account.email}**. All `mcp__notion-mcp__*` tool calls operate in the pages and databases this user authorized when connecting. Authentication is handled by the platform — you never need to manage it.",
-      "requires": ["account.email"]
+      "template": "## Notion Account\n\nYou are connected to Notion as **${account.email}**. All `mcp__notion-mcp__*` tool calls operate in the pages and databases this user authorized when connecting. Authentication is handled by the platform \u2014 you never need to manage it.",
+      "requires": [
+        "account.email"
+      ]
     }
   ],
   "exclude_from": [],
   "skills": [],
   "hosted": {
-    "oauth_app": { "available": true, "default_mode": "hosted" }
+    "oauth_app": {
+      "available": true,
+      "default_mode": "hosted"
+    }
   },
   "patched": false,
   "patch_note": null

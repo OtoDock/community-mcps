@@ -10,7 +10,7 @@
     "docker_compose": "docker-compose.yml",
     "port": 8935,
     "health_endpoint": "/health",
-    "url_template": "http://localhost:${port}/mcp",
+    "url_template": "http://${docker_mcp_host}:${port}/mcp",
     "source": "docker:github-mcp"
   },
   "credentials": {
