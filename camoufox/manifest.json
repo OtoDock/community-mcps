@@ -13,6 +13,7 @@
     "port": 8931,
     "health_endpoint": "/mcp",
     "url_template": "http://${docker_mcp_host}:${port}",
+    "image": "ghcr.io/otodock/camoufox:0.0.55",
     "source": "docker:camoufox + @playwright/mcp@0.0.55"
   },
 

@@ -1,0 +1,78 @@
+name: build-mcp-images
+
+# Build the `runtime: docker` community MCPs and push their pre-built images to
+# GHCR. Self-hosted OtoDock installs on the Docker-Compose (T2) topology PULL
+# these images: a containerised proxy can't `docker build` (its docker-socket-
+# proxy blocks the build endpoint), so every Docker MCP in the launch catalog
+# must publish an image.
+#
+# The image tag is read from each MCP's manifest (`server.image`) — the manifest
+# is the single source of truth, so bumping the tag there is what drives CI to
+# publish a new tag. An MCP with no `server.image` is skipped (not an error).
+#
+# FIRST-RUN, ONE-TIME (per package): after the first successful push, open
+# Packages → <package> → Package settings and (a) set visibility to Public and
+# (b) link it to this repository. GHCR packages default to private + unlinked.
+# Auth uses the built-in GITHUB_TOKEN (packages: write) — no PAT required.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'camoufox/**'
+      - 'github-mcp/**'
+      - '.github/workflows/build-mcp-images.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcp: [camoufox, github-mcp]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag from manifest
+        id: meta
+        run: |
+          image=$(python3 -c "import json; print(json.load(open('${{ matrix.mcp }}/manifest.json'))['server'].get('image',''))")
+          if [ -z "$image" ]; then
+            echo "::notice::${{ matrix.mcp }} has no server.image — nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=$image" >> "$GITHUB_OUTPUT"
+            echo "latest=${image%:*}:latest" >> "$GITHUB_OUTPUT"
+            echo "::notice::building ${{ matrix.mcp }} -> $image"
+          fi
+
+      - name: Log in to GHCR
+        if: steps.meta.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: steps.meta.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        if: steps.meta.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.mcp }}
+          # amd64 only for launch; add linux/arm64 here (buildx multi-arch) later.
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.latest }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
