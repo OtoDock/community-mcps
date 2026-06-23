@@ -47,10 +47,11 @@ RUN useradd -m camoufox \
 COPY launch_server.py /app/launch_server.py
 COPY camoufox-mcp-config.json /app/mcp-config.json
 COPY healthprobe.py /app/healthprobe.py
-# The streaming sidecar is shared across Docker MCPs — pulled in at build time
-# from the `shared` build context (mcps/_shared), not copied into this dir. See
-# docker-compose.yml `additional_contexts` + mcps/_shared/README.md.
-COPY --from=shared stream_sidecar.py /app/stream_sidecar.py
+# The streaming sidecar (SSE broker + session lifecycle) is vendored into this
+# folder so the MCP builds standalone — no cross-folder build context. It's a
+# verbatim copy of oto-dock's mcps/_shared/stream_sidecar.py (the canonical
+# source); keep it in sync if that file changes.
+COPY stream_sidecar.py /app/stream_sidecar.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

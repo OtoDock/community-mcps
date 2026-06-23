@@ -1,14 +1,8 @@
 services:
   camoufox:
-    build:
-      context: .
-      # The streaming sidecar (SSE broker + session lifecycle) is shared across
-      # Docker MCPs and lives in mcps/_shared — pulled in as a named BuildKit
-      # build context rather than copied into this dir (mcps/ is too large to be
-      # a build context). The Dockerfile does `COPY --from=shared stream_sidecar.py`.
-      # Path is relative to this compose file. Requires BuildKit (Compose v2 default).
-      additional_contexts:
-        shared: ../../_shared
+    # Self-contained build: stream_sidecar.py is vendored into this folder, so
+    # the whole MCP builds from this single directory (no cross-folder context).
+    build: .
     container_name: camoufox-mcp
     restart: always
     shm_size: 2gb

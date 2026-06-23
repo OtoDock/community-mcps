@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-06-21T09:54:31Z",
+  "updated_at": "2026-06-23T05:46:38Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -25,7 +25,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 16940,
+      "size_bytes": 31856,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -52,7 +52,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 44470,
+      "size_bytes": 43357,
       "deprecated": false,
       "patched": false,
       "patch_note": null
