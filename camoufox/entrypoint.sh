@@ -28,7 +28,7 @@ echo "Camoufox ready, starting MCP server..."
 # Start playwright-mcp on an INTERNAL port (127.0.0.1:8930). The stream sidecar
 # (below) is the public listener on 8931 and forwards to it — see
 # stream_sidecar.py. --isolated gives each MCP session its own browser context.
-npx @playwright/mcp@0.0.55 \
+npx @playwright/mcp@0.0.68 \
   --config /app/mcp-config.json \
   --port 8930 \
   --host 127.0.0.1 \

@@ -7,7 +7,7 @@ Anti-detect browser automation over the Playwright MCP, using the Camoufox patch
 | Manifest name | `camoufox` |
 | Server name (MCP) | `playwright` |
 | Runtime | Docker |
-| Upstream | [`@playwright/mcp@0.0.55`](https://www.npmjs.com/package/@playwright/mcp) + [`camoufox`](https://camoufox.com/) |
+| Upstream | [`@playwright/mcp@0.0.68`](https://www.npmjs.com/package/@playwright/mcp) + [`camoufox`](https://camoufox.com/) |
 | Transport | HTTP (`/mcp` and `/sse`) on port `8931` |
 | Credentials | None |
 | Per-tool cost | None |

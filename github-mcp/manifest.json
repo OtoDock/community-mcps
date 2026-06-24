@@ -11,6 +11,7 @@
     "port": 8935,
     "health_endpoint": "/health",
     "url_template": "http://${docker_mcp_host}:${port}/mcp",
+    "image": "ghcr.io/otodock/github-mcp:1.0.0",
     "source": "docker:github-mcp"
   },
   "credentials": {

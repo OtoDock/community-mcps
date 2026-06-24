@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-06-23T06:05:44Z",
+  "updated_at": "2026-06-24T09:12:45Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -8,9 +8,9 @@
       "label": "Browser (Camoufox)",
       "description": "Anti-detect browser automation via Playwright MCP",
       "category": "community",
-      "version": "0.0.55",
+      "version": "0.0.68",
       "runtime": "docker",
-      "source": "docker:camoufox + @playwright/mcp@0.0.55",
+      "source": "docker:camoufox + @playwright/mcp@0.0.68",
       "manifest_url": "./camoufox/manifest.json",
       "readme_url": "./camoufox/README.md",
       "icon_url": null,
@@ -25,7 +25,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 31904,
+      "size_bytes": 32998,
       "deprecated": false,
       "patched": false,
       "patch_note": null

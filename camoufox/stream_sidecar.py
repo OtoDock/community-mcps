@@ -29,15 +29,20 @@ request) passes untouched so the client sees server messages immediately. An idl
 SSE stream gets periodic keepalive comments so an idle-read timeout on any hop
 can't drop it.
 
-What this sidecar deliberately does NOT do: it does not try to keep a session
-alive across the client's GET dropping or a think-gap. ``@playwright/mcp@0.0.55``
-evicts an isolated session after a short idle period **on its own** (verified
-directly against the server, with no sidecar in the path), so a sidecar-side
-"durable GET" buys nothing — a re-``initialize`` on the next call is the behaviour
-in both cases, and with the proxy streaming fix
-(``core/satellite_http_tunnel.py``) that re-init is sub-second. If preserving
-browser page-state across long think-gaps is ever wanted, the right tool is a
-small server-side keep-alive POST, not a stream broker. See
+This sidecar deliberately does NOT keep a session alive across a think-gap, and
+with ``@playwright/mcp@0.0.55`` it CANNOT: that build evicts an isolated session
+(its browser context) after a short, variable idle (~10-25s) whenever there is no
+open server→client ``GET`` stream — and the ``OTO_MCP_SUPPRESS_SERVER_REQUESTS``
+workaround MUST reject that GET (the server's broken request-correlation otherwise
+hangs every tool call ~60s, verified even when answered correctly). No POST-side
+keep-alive helps: a ``ping`` is processed but does not reset the eviction, and a
+real tool call only resets it while it lands before the session is already gone.
+So after a long think-gap the next call re-``initialize``s a FRESH, blank context
+— preserving page/tab state needs an ``@playwright/mcp`` build without the
+correlation bug (0.0.68+, blocked today on the camoufox↔playwright version pin).
+A wedged tool call returns an error after ``PER_CALL_TIMEOUT_S`` rather than
+hanging the agent forever (non-streaming requests only; the long-lived SSE ``GET``
+stays unbounded so real streams are never cut). See
 ``proxy/docs/mcps/DOCKER-MCP-STREAMING.md``.
 
 The MCP server always runs on the proxy host, so the proxy reaches
@@ -62,6 +67,11 @@ GC_INTERVAL_S = 60
 # an idle read-timeout doesn't drop a quiet long-lived stream.
 SSE_KEEPALIVE_S = int(os.environ.get("SSE_KEEPALIVE_S", "20"))
 _KEEPALIVE = b": keepalive\n\n"
+
+# Upstream read budget for NON-streaming requests: a wedged tools/call (e.g. a
+# screenshot of a stuck page) fails after this instead of hanging the agent forever.
+# The long-lived SSE GET stays unbounded (sock_read=None) so real streams aren't cut.
+PER_CALL_TIMEOUT_S = int(os.environ.get("OTO_MCP_CALL_TIMEOUT_S", "90"))
 
 # ---------------------------------------------------------------------------
 # TEMPORARY WORKAROUND — suppress server→client (server-initiated) requests.
@@ -249,7 +259,13 @@ async def proxy_handler(request):
     try:
         upstream = await _client.request(
             request.method, url, headers=fwd_headers, data=body or None,
-            timeout=ClientTimeout(total=None, sock_connect=10, sock_read=None),
+            # A streaming GET (server→client SSE) must never time out; a
+            # request/response call (POST/DELETE) is bounded so a wedged tool call
+            # surfaces an error instead of hanging the agent forever.
+            timeout=ClientTimeout(
+                total=None, sock_connect=10,
+                sock_read=None if request.method == "GET" else PER_CALL_TIMEOUT_S,
+            ),
         )
     except Exception as e:
         log.warning("upstream %s %s: %s", request.method, path, e)
