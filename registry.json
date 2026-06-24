@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-06-24T09:12:45Z",
+  "updated_at": "2026-06-24T14:28:03Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -25,7 +25,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 32998,
+      "size_bytes": 33872,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -35,7 +35,7 @@
       "label": "GitHub",
       "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
       "category": "community",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "runtime": "docker",
       "source": "docker:github-mcp",
       "manifest_url": "./github-mcp/manifest.json",
@@ -52,7 +52,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 43357,
+      "size_bytes": 43400,
       "deprecated": false,
       "patched": false,
       "patch_note": null
