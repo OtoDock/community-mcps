@@ -47,7 +47,7 @@ Top-level fields:
 | `name` | string | yes | Unique identifier. Matches folder name. Lowercase + hyphens. |
 | `label` | string | yes | Display name shown to operators. |
 | `description` | string | yes | One-line description for catalog cards. |
-| `version` | semver | yes | MCP version. Bumped on any user-visible change. |
+| `version` | string | yes | **node/python:** leave empty (`""`) — these are unpinned and install the latest published version (the platform records the resolved version into each install's local manifest). **docker/git+:** semver, bumped on any user-visible change. |
 | `category` | string | yes | Always `"community"` here. |
 | `server` | object | yes | Runtime + transport config (see below). |
 | `credentials` | object | no | `{ "type": "none" | "per_user" }` plus per-user fields if applicable. |
@@ -75,7 +75,8 @@ Top-level fields:
 | `transport` | yes | `"stdio"` for python/node MCPs, `"http"` for Docker MCPs (dual `/sse` and `/mcp`). |
 | `command` | conditional | Required for stdio. The binary or script to launch. |
 | `args` | conditional | Optional args list (supports `${mcp_dir}` token). |
-| `source` | yes | Install source — `npm:<pkg>@<version>`, `pypi:<pkg>@<version>`, or `docker:<image>`. |
+| `source` | yes | Install source. **node/python are UNPINNED** — `npm:<pkg>` / `pypi:<pkg>` (no `@version`; installs the latest published version, and the platform pins the resolved version into the install's local manifest). Pinned forms for the others: `docker:<image>` and `git+<url>@<ref>#subdirectory=<dir>`. |
+| `version_constraint` | no | (node/python only) Optional **auto-update bound** — a PEP 440 specifier set, e.g. `">=2,<3"` (NOT npm `^`/`~`/`x` ranges). Empty/absent ⇒ unbounded (tracks the absolute latest). When set, auto-update stays within the bound, so an upstream **major** can't auto-apply until you widen it here. See Versioning. |
 | `docker_compose` | conditional | For Docker MCPs — compose file name. |
 | `port` | conditional | For Docker MCPs — the HTTP port. |
 | `health_endpoint` | conditional | For Docker MCPs — `/mcp` or `/sse`. |
@@ -297,4 +298,10 @@ firewall rules to open, common gotchas, links to upstream docs.>
 
 ## Versioning
 
-This repo follows semver tags (`v0.1.0`, `v0.2.0`, …). OtoDock platform releases pin a specific tag in their `VERSIONS.md`; the platform Browse UI reads `registry.json` from that tag. Individual MCP versions inside the registry are independent — `google-maps@1.2.0` lives at one tagged commit; the next platform release might bring `google-maps@1.2.1` via a registry-only bump.
+This repo follows semver tags (`v0.1.0`, `v0.2.0`, …). OtoDock platform releases pin a specific tag in their `VERSIONS.md`; the platform Browse UI reads `registry.json` from that tag.
+
+**node/python MCPs are unpinned.** Their `source` is a bare package pointer (`npm:<pkg>` / `pypi:<pkg>`) and `version` is `""`. The upstream registry (npm / PyPI) is the version of record: a fresh install pulls the latest, the platform records the resolved concrete version into the install's local manifest, and a weekly auto-update keeps installs current. Do **not** bump these in the catalog when upstream publishes, and do **not** commit `package.json` / `package-lock.json` for node MCPs — the platform generates `package.json` from `source` at install time, and a committed lockfile would pin a stale version and defeat "pull latest".
+
+**docker and git+ MCPs stay pinned.** OtoDock owns the docker images (installs can't pull from upstream) and git+ MCPs pin a git ref, so their `source` carries the version/tag and `version` is the semver — bump these in the catalog on each new release.
+
+**Bounding node/python auto-update (`version_constraint`).** By default node/python track the absolute latest. If an upstream package makes breaking changes across majors, set `server.version_constraint` (e.g. `">=2,<3"`) so auto-update stays within the validated range. To adopt a new major: update the manifest's integration fields (e.g. `args`, `oauth`) for the new version **and** widen the bound in the same change — installs pick up both on the next update. Any catalog manifest edit (args/oauth/skills/constraint) is detected as an "integration update" and re-applied to installs automatically, so you don't need to bump a version to push an integration fix.

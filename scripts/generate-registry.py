@@ -15,7 +15,9 @@ The script is intentionally dependency-free so CI doesn't need a venv.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
+import hashlib
 import json
 import os
 import sys
@@ -40,6 +42,27 @@ def _iter_mcp_dirs() -> list[Path]:
         if (entry / "manifest.json").is_file():
             dirs.append(entry)
     return dirs
+
+
+def _manifest_hash(manifest: dict) -> str:
+    """Stable hash of a manifest, ignoring the two fields the platform pins
+    locally on install (`version` + `server.source`).
+
+    CONTRACT — must stay byte-identical to the platform's
+    ``proxy/services/community_catalog.normalized_manifest_hash``: the platform
+    compares this against the same hash of each install's manifest to detect
+    integration changes ("re-converge this MCP"). Dropping exactly version +
+    source makes a freshly-installed (pinned) manifest hash-equal to its catalog
+    source. The serialization is pinned (`sort_keys`, compact `separators`,
+    `ensure_ascii=True`) so contributor formatting doesn't affect the hash.
+    """
+    m = copy.deepcopy(manifest)
+    m.pop("version", None)
+    server = m.get("server")
+    if isinstance(server, dict):
+        server.pop("source", None)
+    blob = json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def _read_manifest(path: Path) -> dict:
@@ -117,6 +140,11 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
         "version": manifest["version"],
         "runtime": runtime,
         "source": server.get("source", ""),
+        # node/python auto-update bound (PEP 440 specifier; "" = unbounded latest).
+        "version_constraint": server.get("version_constraint", ""),
+        # Hash of the integration manifest (minus the locally-pinned version+source);
+        # lets the platform detect catalog changes and re-converge installs.
+        "manifest_hash": _manifest_hash(manifest),
         "manifest_url": f"./{mcp_dir.name}/manifest.json",
         "readme_url": f"./{mcp_dir.name}/README.md",
         "icon_url": f"./{mcp_dir.name}/icon.png" if has_icon else None,

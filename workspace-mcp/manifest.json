@@ -2,7 +2,7 @@
   "name": "google-workspace",
   "label": "Google Workspace",
   "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Google Tasks, Contacts, Chat, Apps Script via OAuth",
-  "version": "1.21.3",
+  "version": "",
   "category": "community",
   "server": {
     "runtime": "python",
@@ -13,7 +13,7 @@
       "--transport",
       "stdio"
     ],
-    "source": "pypi:workspace-mcp@1.21.3"
+    "source": "pypi:workspace-mcp"
   },
   "credentials": {
     "type": "per_user",
