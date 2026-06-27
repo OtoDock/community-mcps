@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# Make the /screenshots mount writable by the non-root browser, then drop
+# privileges. The mount source is created root-owned by Docker (T1 host bind /
+# T2 named volume / T3 pool storage), so only a root entrypoint can chown it —
+# this is the single, mount-type-agnostic write fix for every topology. The
+# browser itself MUST run non-root (camoufox crashes as root on Linux), so we
+# re-exec this same script as `camoufox` via gosu; the chown is the only thing
+# that runs privileged. The `id -u == 0` guard makes the re-exec a no-op.
+if [ "$(id -u)" = "0" ]; then
+  chown camoufox:camoufox /screenshots 2>/dev/null || true
+  exec gosu camoufox "$0" "$@"
+fi
+
 # Clean stale Xvfb lock files
 rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 

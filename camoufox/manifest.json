@@ -33,7 +33,7 @@
       "source": "${mcp_dir}/screenshots",
       "destination_template": "${workspace_dir}/.screenshots",
       "after_tools": ["*"],
-      "gc_after": "session_close"
+      "keep_recent": 15
     }
   ],
 

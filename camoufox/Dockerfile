@@ -1,9 +1,9 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # System deps for the patched Firefox + Xvfb. curl/gnupg/ca-certificates are
 # for the NodeSource setup below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg ca-certificates \
+    curl gnupg ca-certificates gosu \
     xvfb x11-utils \
     libgtk-3-0 libx11-xcb1 libasound2 libgbm1 libnss3 \
     libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 \
@@ -75,7 +75,12 @@ COPY stream_sidecar.py /app/stream_sidecar.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER camoufox
+# The container starts as ROOT so the entrypoint can chown the root-owned
+# /screenshots mount; it immediately drops to the `camoufox` user via gosu before
+# launching anything (camoufox crashes as root). HOME is set explicitly because
+# gosu does not, and camoufox/browserforge resolve the patched-Firefox cache via
+# ~ → it must point at the camoufox user's home (built at `useradd -m` above).
+ENV HOME=/home/camoufox
 
 EXPOSE 8931
 ENTRYPOINT ["/entrypoint.sh"]

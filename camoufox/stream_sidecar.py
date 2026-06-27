@@ -63,6 +63,15 @@ UPSTREAM = os.environ.get("MCP_UPSTREAM", "http://127.0.0.1:8930")
 LISTEN_PORT = int(os.environ.get("ROUTER_PORT", "8931"))
 SESSION_IDLE_S = int(os.environ.get("SESSION_IDLE_S", "600"))   # 10 min → idle-GC
 GC_INTERVAL_S = 60
+# Safety sweep of the SHARED /screenshots source. The proxy relocates each shot
+# into the user's workspace within seconds, so anything left past the age cutoff
+# is an orphan; a hard count cap bounds a concurrent-multi-user burst. The GRACE
+# floor guarantees the count cap can never reap a still-in-flight shot. (No-op
+# when SCREENSHOTS_DIR is absent — only the camoufox MCP populates it.)
+SCREENSHOTS_DIR = os.environ.get("SCREENSHOTS_DIR", "/screenshots")
+SCREENSHOTS_MAX_AGE_S = int(os.environ.get("SCREENSHOTS_MAX_AGE_S", str(40 * 60)))
+SCREENSHOTS_MAX_COUNT = int(os.environ.get("SCREENSHOTS_MAX_COUNT", "200"))
+SCREENSHOTS_GRACE_S = int(os.environ.get("SCREENSHOTS_GRACE_S", "180"))
 # Emit an SSE keepalive comment on an idle text/event-stream so a client/hop with
 # an idle read-timeout doesn't drop a quiet long-lived stream.
 SSE_KEEPALIVE_S = int(os.environ.get("SSE_KEEPALIVE_S", "20"))
@@ -191,6 +200,40 @@ async def _delete_upstream(mcp_sid: str) -> int:
         return 0
 
 
+def _sweep_screenshots() -> None:
+    """Bound the SHARED /screenshots source. Delete a file if it's older than
+    SCREENSHOTS_MAX_AGE_S (an orphan the proxy never relocated), OR — under a
+    burst — if it's beyond the newest SCREENSHOTS_MAX_COUNT *and* older than
+    SCREENSHOTS_GRACE_S (so a brand-new, still-relocating shot is never reaped)."""
+    try:
+        names = os.listdir(SCREENSHOTS_DIR)
+    except OSError:
+        return
+    entries = []
+    for name in names:
+        p = os.path.join(SCREENSHOTS_DIR, name)
+        try:
+            if os.path.isfile(p):
+                entries.append((p, os.path.getmtime(p)))
+        except OSError:
+            continue
+    now = time.time()
+    entries.sort(key=lambda e: e[1], reverse=True)  # newest first
+    removed = 0
+    for rank, (p, mtime) in enumerate(entries):
+        age = now - mtime
+        if age > SCREENSHOTS_MAX_AGE_S or (
+            rank >= SCREENSHOTS_MAX_COUNT and age > SCREENSHOTS_GRACE_S
+        ):
+            try:
+                os.remove(p)
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        log.info("screenshots sweep: removed %d orphan(s)", removed)
+
+
 async def _gc_loop() -> None:
     while True:
         await asyncio.sleep(GC_INTERVAL_S)
@@ -202,6 +245,7 @@ async def _gc_loop() -> None:
             log.info("idle-GC mcp=%s (idle %.0fs)", sid[:8], idle)
             await _delete_upstream(sid)
             _forget(sid)
+        _sweep_screenshots()
 
 
 async def close_session_handler(request):
