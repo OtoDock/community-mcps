@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-06-30T18:00:52Z",
+  "updated_at": "2026-06-30T18:10:38Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -41,7 +41,7 @@
       "runtime": "docker",
       "source": "docker:github-mcp",
       "version_constraint": "",
-      "manifest_hash": "8b30b64c2bbd7399",
+      "manifest_hash": "098196000e67f363",
       "manifest_url": "./github-mcp/manifest.json",
       "readme_url": "./github-mcp/README.md",
       "icon_url": null,
