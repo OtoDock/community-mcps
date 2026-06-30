@@ -1,0 +1,49 @@
+{
+  "name": "xquik",
+  "label": "Xquik",
+  "description": "X data API and automation tools through a hosted MCP server",
+  "version": "0.1.0",
+  "category": "community",
+  "author": "Xquik",
+  "author_url": "https://xquik.com",
+  "license": "MIT",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/mcp-remote/dist/proxy.js",
+      "https://xquik.com/mcp",
+      "--transport",
+      "http-only",
+      "--header",
+      "X-API-Key:${XQUIK_API_KEY}",
+      "--silent"
+    ],
+    "source": "npm:mcp-remote@0.1.38"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {
+        "key": "XQUIK_API_KEY",
+        "label": "Xquik API Key",
+        "input_type": "password",
+        "required": true,
+        "secret": true
+      }
+    ],
+    "max_instances": 0
+  },
+  "config": [],
+  "env": {},
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null
+}
