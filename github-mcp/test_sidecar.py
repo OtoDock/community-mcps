@@ -134,6 +134,28 @@ async def test_sidecar_auto_handshake_for_stateless_client(client):
 
 
 @pytest.mark.asyncio
+async def test_sidecar_skips_interleaved_notification(client):
+    """A server-emitted notification (no ``id``) arriving before the real
+    response must be discarded, not mis-returned as the response — the read
+    is id-correlated."""
+    proc = _build_mock_proc([
+        _INIT_RESP,  # internal handshake initialize response (discarded)
+        b'{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}\n',
+        b'{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}\n',  # the real response
+    ])
+    with patch(
+        "sidecar.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
+    ):
+        r = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={"Authorization": "Bearer t"},
+        )
+    assert r.status_code == 200
+    assert r.json()["result"] == {"tools": []}
+
+
+@pytest.mark.asyncio
 async def test_sidecar_notification_returns_202_empty_body(client):
     """A JSON-RPC notification (no ``id``) must get 202 Accepted + an EMPTY
     body — NOT 200 with ``{}``. Codex's Rust rmcp transport rejects a 200/{}

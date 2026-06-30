@@ -20,8 +20,7 @@ ARG GITHUB_MCP_REPO=https://github.com/github/github-mcp-server.git
 
 WORKDIR /src
 RUN git clone --depth 1 --branch "${GITHUB_MCP_REF}" "${GITHUB_MCP_REPO}" . \
-    || git clone --depth 50 "${GITHUB_MCP_REPO}" . \
-    && git checkout "${GITHUB_MCP_REF}"
+    || (git clone "${GITHUB_MCP_REPO}" . && git checkout "${GITHUB_MCP_REF}")
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" \
     -o /out/github-mcp-server ./cmd/github-mcp-server
 

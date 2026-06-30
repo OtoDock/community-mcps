@@ -51,6 +51,10 @@ SESSION_HEADER = "mcp-session-id"
 
 _MCP_PROTOCOL_VERSION = "2024-11-05"
 
+# Sentinel for _read(expect_id=...): the default returns the next JSON frame
+# without id-correlation (used where no specific response is being awaited).
+_NO_EXPECT_ID = object()
+
 
 class StdioSession:
     """One ``github-mcp-server stdio`` subprocess for one MCP session."""
@@ -114,13 +118,18 @@ class StdioSession:
         self.proc.stdin.write(line)
         await self.proc.stdin.drain()
 
-    async def _read(self) -> dict:
+    async def _read(self, expect_id=_NO_EXPECT_ID) -> dict:
         """Read one JSON-RPC frame from stdout, skipping any non-JSON noise.
 
         Some MCP servers (including github-mcp-server) print log lines
         to stdout interleaved with the JSON-RPC stream. The MCP spec
         forbids it, but real implementations do it anyway. We tolerate
         it by scanning until we find a line that parses as JSON.
+
+        When ``expect_id`` is given, keep scanning until a frame whose
+        ``id`` matches it — discarding JSON-RPC notifications (no ``id``)
+        and any out-of-order frames in between — so a stray server-emitted
+        notification can never be mis-returned as a request's response.
         """
         assert self.proc is not None and self.proc.stdout is not None
         while True:
@@ -141,7 +150,7 @@ class StdioSession:
             if not stripped:
                 continue  # blank line, skip
             try:
-                return json.loads(stripped)
+                frame = json.loads(stripped)
             except json.JSONDecodeError:
                 # Non-JSON log noise on stdout — log + keep scanning.
                 logger.debug(
@@ -149,6 +158,14 @@ class StdioSession:
                     self.session_id, stripped[:200],
                 )
                 continue
+            if expect_id is _NO_EXPECT_ID or frame.get("id") == expect_id:
+                return frame
+            # A notification (no id) or an out-of-order frame arrived before
+            # the response we're waiting for — discard it and keep scanning.
+            logger.debug(
+                "session %s: skipped stdout frame id=%r while awaiting id=%r",
+                self.session_id, frame.get("id"), expect_id,
+            )
 
     async def _internal_handshake(self) -> None:
         """Send initialize + notifications/initialized internally.
@@ -170,7 +187,7 @@ class StdioSession:
                 "clientInfo": {"name": "otodock-github-sidecar", "version": "1.0"},
             },
         })
-        await self._read()  # discard initialize response
+        await self._read(expect_id="_sidecar_init")  # discard initialize response
         # `notifications/*` are JSON-RPC notifications — no id, no response.
         await self._write({
             "jsonrpc": "2.0",
@@ -198,7 +215,7 @@ class StdioSession:
                     # send the `initialized` notification on its behalf
                     # (stateless clients sometimes omit it).
                     await self._write(payload)
-                    response = await self._read()
+                    response = await self._read(expect_id=payload.get("id"))
                     await self._write({
                         "jsonrpc": "2.0",
                         "method": "notifications/initialized",
@@ -211,7 +228,7 @@ class StdioSession:
             # JSON-RPC notifications have no `id` — no response is sent.
             if "id" not in payload:
                 return {}
-            return await self._read()
+            return await self._read(expect_id=payload.get("id"))
 
     async def close(self) -> None:
         if self._stderr_drain is not None and not self._stderr_drain.done():
