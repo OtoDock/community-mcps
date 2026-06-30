@@ -324,8 +324,7 @@ async def mcp_endpoint(request: Request) -> Response:
     # clients — Codex's Rust ``rmcp`` transport tries to parse the ``{}`` as a
     # JsonRpcMessage, fails ("data did not match any variant of untagged enum
     # JsonRpcMessage, when send initialized notification"), and tears the whole
-    # github-mcp session down. (Claude's SDK tolerated the 200/{}; Codex does
-    # not — and file-tools / playwright already answer notifications with 202.)
+    # github-mcp session down. (Claude's SDK tolerated the 200/{}; Codex does not.)
     if isinstance(payload, dict) and "id" not in payload:
         return Response(status_code=202, headers={SESSION_HEADER: session_id})
 

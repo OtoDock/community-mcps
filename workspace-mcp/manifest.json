@@ -233,16 +233,6 @@
     }
   ],
   "exclude_from": [],
-  "skills": [
-    {
-      "id": "google-workspace-usage",
-      "file": "skills/google-workspace.md",
-      "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat, Apps Script usage rules and safety guidelines",
-      "default_exclude_from": [
-        "phone"
-      ]
-    }
-  ],
   "hosted": {
     "oauth_app": {
       "available": true,

@@ -1,6 +1,6 @@
 # Google Workspace
 
-Gmail, Calendar, and Contacts access via Google OAuth, packaged as [`workspace-mcp`](https://pypi.org/project/workspace-mcp/).
+Google Workspace access (Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat, Apps Script) via Google OAuth, packaged as [`workspace-mcp`](https://pypi.org/project/workspace-mcp/).
 
 | Field | Value |
 |-------|-------|
@@ -15,7 +15,7 @@ Gmail, Calendar, and Contacts access via Google OAuth, packaged as [`workspace-m
 
 ## What it does
 
-Lets agents read/send mail, manage calendar events, and look up contacts on behalf of the signed-in user. Each user OAuths into Google individually; the agent only sees that user's data.
+Lets agents work across the user's Google Workspace — mail, Drive files, calendar, Docs/Sheets/Slides, Forms, Tasks, and Contacts — on behalf of the signed-in user. Each user OAuths into Google individually; the agent only sees that user's data.
 
 The platform's OAuth bridge handles the popup flow, token refresh, and writeback. The MCP itself only reads tokens from a per-session directory the platform populates.
 
@@ -23,13 +23,12 @@ The platform's OAuth bridge handles the popup flow, token refresh, and writeback
 
 Two ways to wire up Google OAuth:
 
-1. **Hosted (default)** — Use the OtoDock-operated Google OAuth app. No Google Cloud Console setup. The platform proxies the OAuth flow through `oto.dock`. Best for getting started.
+1. **Hosted (default)** — Use the OtoDock-operated Google OAuth app. No Google Cloud Console setup. The platform proxies the OAuth flow through the OtoDock relay. Best for getting started.
 2. **Self-hosted** — Create your own Google Cloud project, enable Gmail/Calendar/People API, configure an OAuth consent screen, and add a `Web application` client. Drop the client ID + secret into the admin page. Best when you don't want a third party to hold your refresh tokens.
 
 ## Install layout
 
 - `manifest.json` — MCP descriptor with `path_env` declarations for the per-user credentials dir.
-- `skills/google-workspace.md` — usage skill (default-excluded from voice channels; usage rules and safety guidelines).
 
 ## Operator notes
 

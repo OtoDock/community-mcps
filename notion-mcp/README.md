@@ -1,6 +1,6 @@
-# Notion MCP (remote)
+# Notion MCP
 
-Connects OtoDock agents to **Notion** via Notion's official remote MCP at `https://mcp.notion.com/mcp`. The OAuth dance happens in OtoDock; tool calls go directly from the agent to Notion's server with the user's bearer token.
+Connects OtoDock agents to **Notion** by running Notion's official local MCP server (`@notionhq/notion-mcp-server`) as a stdio subprocess. OtoDock runs the OAuth dance and injects the user's Notion token (`NOTION_TOKEN`) into the server's environment; the server then calls the Notion API directly with that token.
 
 ## What admins need to do
 
@@ -32,6 +32,6 @@ Notion rotates the refresh token on every refresh. The framework's `provider.ref
 
 ## Troubleshooting
 
-- **401 on tool calls** — bearer didn't reach Notion. Check Admin → Integrations → OAuth Bearer Allowlist contains `mcp.notion.com`.
+- **401 / "API token is invalid"** — the Notion token didn't reach the server, or the connection lapsed. Reconnect the account in User Settings.
 - **"object_not_found" on a page** — the integration doesn't have access. Share the page with the integration in Notion's UI.
 - **Connect popup goes blank** — Notion sometimes rejects redirect URIs with trailing slashes. Make sure the redirect URI in your integration matches `https://<dashboard>/v1/oauth/notion/callback` exactly.

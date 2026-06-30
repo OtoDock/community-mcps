@@ -28,10 +28,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN pip install --no-cache-dir "playwright==1.59.0" "camoufox[geoip]==0.4.11" \
     && python3 -m camoufox fetch --browserforge
 
-# @playwright/mcp 0.0.68 — fixes the server→client request-correlation bug 0.0.55
-# had (which forced the OTO_MCP_SUPPRESS_SERVER_REQUESTS sidecar workaround, now
-# removed). It is a thin shim over playwright/lib/mcp, which exists ONLY in the
-# nightly playwright build it bundles (playwright-core 1.59.0-alpha-1771104257000):
+# @playwright/mcp 0.0.68 is a thin shim over playwright/lib/mcp, which exists
+# ONLY in the nightly playwright build it bundles (playwright-core 1.59.0-alpha-1771104257000):
 # the MCP server is welded to that exact build and will NOT run on stable
 # playwright. 0.0.72+ need playwright 1.60+ (drops browserServerImpl), so 0.0.68 is
 # the ceiling for camoufox 0.4.11.
@@ -51,7 +49,7 @@ RUN MCP_CORE="$(npm root -g)/@playwright/mcp/node_modules/playwright-core" \
  && rm -rf "$PY_PKG" && cp -r "$MCP_CORE" "$PY_PKG" \
  && node -e "const v=require('$PY_PKG/package.json').version; console.log('camoufox launch core ->', v); if(!v.includes('alpha')) process.exit(1)"
 
-# aiohttp for the stream sidecar (SSE broker + per-session lifecycle).
+# aiohttp for the stream sidecar (stream pass-through + per-session lifecycle).
 RUN pip install --no-cache-dir aiohttp
 
 # Xvfb socket directory
@@ -67,10 +65,9 @@ RUN useradd -m camoufox \
 COPY launch_server.py /app/launch_server.py
 COPY camoufox-mcp-config.json /app/mcp-config.json
 COPY healthprobe.py /app/healthprobe.py
-# The streaming sidecar (SSE broker + session lifecycle) is vendored into this
-# folder so the MCP builds standalone — no cross-folder build context. It's a
-# verbatim copy of oto-dock's mcps/_shared/stream_sidecar.py (the canonical
-# source); keep it in sync if that file changes.
+# The streaming sidecar (stream pass-through + per-session lifecycle) is vendored
+# into this folder so the MCP builds standalone — no cross-folder build context.
+# It is kept in sync with the platform's shared sidecar source.
 COPY stream_sidecar.py /app/stream_sidecar.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

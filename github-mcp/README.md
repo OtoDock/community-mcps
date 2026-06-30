@@ -142,16 +142,10 @@ bound service account.
 
 ## Tools exposed by github-mcp-server
 
-(Subset — see `github-mcp-server --help-tools` for the canonical list.)
-
-- Repos: `list_my_repos`, `get_repo`, `list_branches`, `get_file_contents`
-- Issues: `list_issues`, `create_issue`, `add_issue_comment`, `update_issue`
-- PRs: `list_pull_requests`, `create_pull_request`, `merge_pull_request`,
-  `request_reviewers`
-- Actions: `list_workflows`, `list_workflow_runs`, `get_workflow_run_logs`,
-  `run_workflow_dispatch`
-- Code search: `search_code`
-- User: `get_authenticated_user`, `list_user_emails`
+This MCP exposes the upstream `github-mcp-server` toolset — repositories, issues,
+pull requests, Actions, code search, and user/org tools. For the exact,
+version-matched tool list and their parameters, see the upstream documentation:
+<https://github.com/github/github-mcp-server>.
 
 ## Troubleshooting
 

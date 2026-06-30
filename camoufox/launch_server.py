@@ -30,7 +30,7 @@ nodejs = get_nodejs()
 from camoufox.pkgman import LOCAL_DATA
 launch_script = LOCAL_DATA / "launchServer.js"
 
-print(f"Launching camoufox server...", flush=True)
+print("Launching camoufox server...", flush=True)
 
 process = subprocess.Popen(
     [nodejs, str(launch_script)],

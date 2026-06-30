@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-06-27T07:32:37Z",
+  "updated_at": "2026-06-30T17:30:43Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -27,7 +27,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 37455,
+      "size_bytes": 37246,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -56,7 +56,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 43648,
+      "size_bytes": 43348,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -85,7 +85,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 10492,
+      "size_bytes": 10579,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -99,7 +99,7 @@
       "runtime": "python",
       "source": "pypi:workspace-mcp",
       "version_constraint": "",
-      "manifest_hash": "5837cfb49f9597e9",
+      "manifest_hash": "e64ece3001b10e2a",
       "manifest_url": "./workspace-mcp/manifest.json",
       "readme_url": "./workspace-mcp/README.md",
       "icon_url": null,
@@ -115,7 +115,7 @@
       "requires_system_packages": [],
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
-      "size_bytes": 10682,
+      "size_bytes": 10392,
       "deprecated": false,
       "patched": false,
       "patch_note": null

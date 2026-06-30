@@ -8,7 +8,7 @@ Anti-detect browser automation over the Playwright MCP, using the Camoufox patch
 | Server name (MCP) | `playwright` |
 | Runtime | Docker |
 | Upstream | [`@playwright/mcp@0.0.68`](https://www.npmjs.com/package/@playwright/mcp) + [`camoufox`](https://camoufox.com/) |
-| Transport | HTTP (`/mcp` and `/sse`) on port `8931` |
+| Transport | HTTP (`/mcp`) on port `8931` |
 | Credentials | None |
 | Per-tool cost | None |
 
@@ -26,7 +26,7 @@ This folder contains:
 - `Dockerfile` — builds Python 3.13 + Node + Camoufox + `@playwright/mcp`.
 - `docker-compose.yml` — runs the container with shared memory tuned for Firefox.
 - `entrypoint.sh` + `launch_server.py` — start an Xvfb display and run Camoufox via its Playwright `launchServer` integration.
-- `mcp-config.json` / `camoufox-mcp-config.json` — Playwright MCP config templates.
+- `camoufox-mcp-config.json` — the Playwright MCP config template.
 - `skills/web-browsing.md` — best-practice skill loaded into agent prompts when this MCP is enabled.
 
 ## Operator notes
