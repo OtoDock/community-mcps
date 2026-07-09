@@ -1,0 +1,35 @@
+services:
+  camoufox:
+    # Self-contained build: stream_sidecar.py is vendored into this folder, so
+    # the whole MCP builds from this single directory (no cross-folder context).
+    build: .
+    container_name: camoufox-mcp
+    restart: always
+    shm_size: 2gb
+    # Hard memory bound (no swap escape): the browser accumulates even without
+    # user traffic (Firefox leaks per context lifecycle — the probe's session
+    # reuse removes the driver, this bounds whatever still creeps). Past the
+    # limit the kernel OOM-kills the biggest process (Firefox), the navigate
+    # probe fails, and the watchdog recycles via `restart: always` → the MCP
+    # self-heals instead of starving the host until session admission stalls.
+    mem_limit: 3g
+    memswap_limit: 3g
+    ports:
+      # Loopback-only: an unauthenticated headless browser must not be
+      # network-reachable (SSRF / cross-tenant drive-by). Local agents + the
+      # host-local proxy reach it on localhost. (Cloud uses the otodock network
+      # + session→pod sticky routing instead of a published port.)
+      - "127.0.0.1:8931:8931"
+    volumes:
+      - ./screenshots:/screenshots
+    # Deep health check: drives a real about:blank navigate (a plain HTTP probe
+    # misses the "server up but Firefox wedged" failure). Surfaces health in
+    # `docker ps` + for the proxy's core-MCP monitor; the entrypoint watchdog is
+    # what actually recycles on a sustained wedge (compose doesn't restart on
+    # `unhealthy` by itself).
+    healthcheck:
+      test: ["CMD", "python3", "/app/healthprobe.py"]
+      interval: 90s
+      timeout: 35s
+      retries: 2
+      start_period: 60s

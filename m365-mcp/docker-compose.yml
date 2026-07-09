@@ -1,0 +1,13 @@
+services:
+  m365-mcp:
+    build: .
+    container_name: m365-mcp
+    restart: always
+    ports:
+      # Loopback-only: the proxy reaches the MCP at 127.0.0.1; it must not be
+      # LAN-reachable. (In a containerised deployment the orchestrator may strip
+      # published ports and reach the container by service-DNS instead.)
+      - "127.0.0.1:3000:3000"
+    # MCP_PORT and ENABLED_TOOLS_FLAG are injected by the platform from
+    # manifest.env + the admin's tool-filter setting at deploy time.
+    env_file: .env

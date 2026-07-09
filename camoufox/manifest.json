@@ -1,0 +1,51 @@
+{
+  "name": "camoufox",
+  "server_name": "platform",
+  "label": "Browser (Camoufox)",
+  "description": "Anti-detect browser automation via Playwright MCP",
+  "version": "0.0.72",
+  "category": "community",
+
+  "server": {
+    "runtime": "docker",
+    "transport": "http",
+    "docker_compose": "docker-compose.yml",
+    "port": 8931,
+    "health_endpoint": "/mcp",
+    "url_template": "http://${docker_mcp_host}:${port}",
+    "image": "ghcr.io/otodock/camoufox:0.0.72",
+    "source": "docker:camoufox + @playwright/mcp@0.0.68"
+  },
+
+  "credentials": {
+    "type": "none"
+  },
+
+  "config": [],
+
+  "env": {},
+  "agent_env": {},
+
+  "exclude_from": [],
+
+  "outputs": [
+    {
+      "source": "${mcp_dir}/screenshots",
+      "destination_template": "${workspace_dir}/.screenshots",
+      "after_tools": ["*"],
+      "keep_recent": 15
+    }
+  ],
+
+  "skills": [
+    {
+      "id": "web-browsing",
+      "file": "skills/web-browsing.md",
+      "description": "Browser tool selection, best practices, screenshot handling",
+      "default_exclude_from": []
+    }
+  ],
+
+  "patched": false,
+  "patch_note": null
+}

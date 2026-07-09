@@ -1,0 +1,30 @@
+# Runtime install artifacts — must never be committed
+*/node_modules/
+*/venv/
+*/.venv/
+*/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Per-MCP runtime state
+*/keys/
+*/config/
+*/screenshots/
+*.log
+
+# Secrets — never commit
+*/.env
+.env
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

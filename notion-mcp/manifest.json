@@ -1,0 +1,251 @@
+{
+  "name": "notion-mcp",
+  "label": "Notion",
+  "description": "Notion pages, databases, blocks, and search via the official Notion MCP server",
+  "version": "",
+  "category": "community",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs"
+    ],
+    "source": "npm:@notionhq/notion-mcp-server"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "Notion Account",
+    "description": "Connect your Notion workspace.",
+    "service_account": true,
+    "oauth": {
+      "provider_id": "notion",
+      "flows": [
+        "authorization_code"
+      ],
+      "authorization_url": "https://api.notion.com/v1/oauth/authorize",
+      "token_url": "https://api.notion.com/v1/oauth/token",
+      "userinfo_url": "https://api.notion.com/v1/users/me",
+      "userinfo_headers": {
+        "Notion-Version": "2022-06-28"
+      },
+      "userinfo_email_field": "bot.owner.user.person.email",
+      "userinfo_name_field": "bot.owner.user.name",
+      "userinfo_id_field": "id",
+      "authorize_params": {
+        "owner": "user"
+      },
+      "token_format": {
+        "schema": "generic_oauth_v1",
+        "filename_pattern": "{account_label}.json"
+      },
+      "refresh": {
+        "strategy": "lazy",
+        "min_remaining_seconds": 300
+      },
+      "supports_multi_account": true,
+      "registered_app_required": true,
+      "mcp_env_injection": [
+        "NOTION_TOKEN"
+      ],
+      "app_credential": "notion-oauth-app",
+      "app_credential_fields": [
+        {
+          "key": "NOTION_CLIENT_ID",
+          "label": "OAuth Client ID",
+          "input_type": "text",
+          "help": "Get from notion.so/my-integrations after creating a public integration"
+        },
+        {
+          "key": "NOTION_CLIENT_SECRET",
+          "label": "OAuth Client Secret",
+          "input_type": "password"
+        }
+      ],
+      "services": [
+        {
+          "key": "pages",
+          "label": "Pages",
+          "description": "Read and write pages, blocks, comments",
+          "scopes": []
+        },
+        {
+          "key": "databases",
+          "label": "Databases",
+          "description": "Query and update database rows",
+          "scopes": []
+        },
+        {
+          "key": "search",
+          "label": "Search",
+          "description": "Search across the connected workspace",
+          "scopes": []
+        }
+      ]
+    },
+    "webhooks": {
+      "available": true,
+      "provider_id": "notion",
+      "signature": {
+        "algorithm": "hmac-sha256",
+        "header": "X-Notion-Signature",
+        "prefix": "sha256=",
+        "per_subscription_secret": true
+      },
+      "url_verification": {
+        "kind": "verification_token_capture",
+        "request_field": "verification_token",
+        "request_source": "body",
+        "response_field": "ok",
+        "response_content_type": "application/json"
+      },
+      "registration": {
+        "mode": "manual",
+        "manual_instructions_url": "https://developers.notion.com/reference/webhooks"
+      },
+      "event_catalog": [
+        {
+          "key": "page.created",
+          "label": "Pages created",
+          "description": "Fires when a page the integration can see is created."
+        },
+        {
+          "key": "page.properties_updated",
+          "label": "Page properties updated",
+          "description": "Fires when a page's properties change."
+        },
+        {
+          "key": "page.content_updated",
+          "label": "Page content edited",
+          "description": "Fires on page body edits. Notion batches these (~1 minute) to reduce noise."
+        },
+        {
+          "key": "page.deleted",
+          "label": "Pages moved to trash",
+          "description": "Fires when a page is moved to trash.",
+          "default_selected": false
+        },
+        {
+          "key": "comment.created",
+          "label": "Comments added",
+          "description": "Fires when a comment is added on a page or block the integration can see (integration needs the comment-read capability)."
+        },
+        {
+          "key": "data_source.schema_updated",
+          "label": "Data source schema changes",
+          "description": "Fires when a data source's schema changes (API version 2025-09-03+).",
+          "default_selected": false
+        },
+        {
+          "key": "database.schema_updated",
+          "label": "Database schema changes (legacy)",
+          "description": "Legacy twin of data_source.schema_updated for integrations on pre-2025-09-03 API versions.",
+          "default_selected": false
+        }
+      ],
+      "payload_normalization": {
+        "event_type_path": "body.type",
+        "actor": {
+          "id_path": "body.authors.0.id"
+        },
+        "subject": {
+          "type_path": "body.entity.type",
+          "id_path": "body.entity.id"
+        },
+        "target": {
+          "type_path": [
+            "body.data.parent.type",
+            "body.entity.type"
+          ],
+          "id_path": [
+            "body.data.parent.id",
+            "body.entity.id"
+          ]
+        }
+      },
+      "vendor_target_spec": {
+        "kind": "free_text",
+        "label": "Workspace ID",
+        "placeholder": "d577f2af-2503-813e-89c3-0003b27a61ef",
+        "validation_regex": "^[0-9a-fA-F-]{32,36}$",
+        "help_text": "Notion workspace ID \u2014 prefilled from your connected account. Hosted (via OtoDock) accounts need no vendor-console steps; self-managed integrations add the OtoDock webhook URL in the integration's Webhooks tab and complete the one-time verification-token dance (the token is captured automatically \u2014 reveal it from the subscription card).",
+        "account_extra_key": "workspace_id"
+      },
+      "event_id_field": "body.id",
+      "workspace_id_path": "body.workspace_id",
+      "enrichment": {
+        "lookups": [
+          {
+            "source_field": "actor.id",
+            "request": {
+              "method": "GET",
+              "url_template": "https://api.notion.com/v1/users/${value}",
+              "headers": {
+                "Authorization": "Bearer ${account.access_token}",
+                "Notion-Version": "2022-06-28"
+              },
+              "expected_status": [
+                200
+              ]
+            },
+            "outputs": {
+              "actor.name": [
+                "body.name"
+              ],
+              "actor.email": [
+                "body.person.email"
+              ]
+            },
+            "ttl_seconds": 900
+          },
+          {
+            "source_field": "subject.id",
+            "request": {
+              "method": "GET",
+              "url_template": "https://api.notion.com/v1/pages/${value}",
+              "headers": {
+                "Authorization": "Bearer ${account.access_token}",
+                "Notion-Version": "2022-06-28"
+              },
+              "expected_status": [
+                200
+              ]
+            },
+            "outputs": {
+              "subject.title": [
+                "body.properties.title.title.0.plain_text",
+                "body.properties.Name.title.0.plain_text"
+              ],
+              "subject.url": [
+                "body.url"
+              ]
+            },
+            "ttl_seconds": 300
+          }
+        ]
+      }
+    }
+  },
+  "config": [],
+  "env": {},
+  "path_env": {},
+  "agent_env": {},
+  "agent_context": [
+    {
+      "template": "## Notion Account\n\nYou are connected to Notion as **${account.email}**. All `mcp__notion-mcp__*` tool calls operate in the pages and databases this user authorized when connecting. Authentication is handled by the platform \u2014 you never need to manage it.",
+      "requires": [
+        "account.email"
+      ]
+    }
+  ],
+  "exclude_from": [],
+  "skills": [],
+  "hosted": {
+    "oauth_app": {
+      "available": true,
+      "default_mode": "hosted"
+    }
+  },
+  "patched": false,
+  "patch_note": null
+}

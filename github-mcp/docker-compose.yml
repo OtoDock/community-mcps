@@ -1,0 +1,13 @@
+services:
+  github-mcp:
+    build: .
+    container_name: github-mcp
+    restart: always
+    ports:
+      # Loopback-only: the proxy reaches the MCP at 127.0.0.1; it must not be
+      # LAN-reachable. (In a containerised deployment the orchestrator may strip
+      # published ports and reach the container by service-DNS instead.)
+      - "127.0.0.1:8935:8935"
+    # MCP_PORT is injected by the platform from manifest.env at deploy time.
+    # GITHUB_HOST (optional) for GitHub Enterprise; default = github.com.
+    env_file: .env
