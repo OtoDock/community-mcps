@@ -26,7 +26,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = REPO_ROOT / "registry.json"
 REGISTRY_VERSION = "1"
-PLATFORM_MIN_VERSION = "0.4.0"
+PLATFORM_MIN_VERSION = "1.0.0"
 
 REQUIRED_MANIFEST_FIELDS = ("name", "label", "description", "version", "server")
 ALLOWED_RUNTIMES = {"python", "node", "docker", "remote"}
