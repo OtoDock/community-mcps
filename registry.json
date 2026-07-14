@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-07-09T15:28:47Z",
+  "updated_at": "2026-07-14T02:00:00Z",
   "platform_min_version": "0.4.0",
   "mcps": [
     {
@@ -57,35 +57,6 @@
       "platform_min_version": "0.4.0",
       "assignment_mode": "auto",
       "size_bytes": 45265,
-      "deprecated": false,
-      "patched": false,
-      "patch_note": null
-    },
-    {
-      "name": "m365-mcp",
-      "label": "Microsoft 365",
-      "description": "Microsoft 365 (Mail, Calendar, Teams chat/meetings/transcripts, OneDrive, SharePoint, Contacts) via softeria/ms-365-mcp-server. Bearer-injected HTTP mode — upstream accepts Authorization: Bearer per request so no sidecar needed.",
-      "category": "community",
-      "version": "1.0.0",
-      "runtime": "docker",
-      "source": "docker:m365-mcp",
-      "version_constraint": "",
-      "manifest_hash": "ae05f44f5cf4fdd6",
-      "manifest_url": "./m365-mcp/manifest.json",
-      "readme_url": "./m365-mcp/README.md",
-      "icon_url": null,
-      "tags": [
-        "docker",
-        "microsoft"
-      ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
-      "license": "MIT",
-      "requires_credentials": true,
-      "requires_system_packages": [],
-      "platform_min_version": "0.4.0",
-      "assignment_mode": "auto",
-      "size_bytes": 19243,
       "deprecated": false,
       "patched": false,
       "patch_note": null

@@ -15,7 +15,6 @@ This repo is the **source of truth** for what the OtoDock platform offers under 
 │   ├── (source / Dockerfile / package.json / patches / skills)
 │   └── icon.png             ← optional, 256×256
 ├── github-mcp/
-├── m365-mcp/
 ├── notion-mcp/
 ├── scripts/
 │   └── generate-registry.py ← regenerates registry.json from manifests
@@ -31,7 +30,6 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 |-----|---------|----------|----------|
 | [camoufox](./camoufox/) | docker | Camoufox + `@playwright/mcp` | Anti-detect browser automation |
 | [github-mcp](./github-mcp/) | docker | official GitHub MCP (Dockerized) | Repos, issues, PRs, Actions, code search |
-| [m365-mcp](./m365-mcp/) | docker | `m365-mcp` (Dockerized) | Microsoft 365 mail, calendar, Teams, OneDrive |
 | [notion-mcp](./notion-mcp/) | node | `@notionhq/notion-mcp-server` | Notion pages, databases, search |
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
