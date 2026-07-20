@@ -1,0 +1,60 @@
+{
+  "name": "nextcloud",
+  "label": "Nextcloud",
+  "description": "Cloud file storage (WebDAV, Notes, Calendar)",
+  "version": "",
+  "category": "community",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/nextcloud-mcp-server/build/index.js"
+    ],
+    "source": "npm:nextcloud-mcp-server"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "Nextcloud",
+    "description": "Connect your Nextcloud account",
+    "fields": [
+      {
+        "key": "NEXTCLOUD_URL",
+        "label": "Nextcloud Server URL",
+        "input_type": "url"
+      },
+      {
+        "key": "NEXTCLOUD_USERNAME",
+        "label": "Username",
+        "input_type": "text"
+      },
+      {
+        "key": "NEXTCLOUD_PASSWORD",
+        "label": "Password",
+        "input_type": "password"
+      }
+    ],
+    "service_account": true
+  },
+  "env": {},
+  "agent_env": {},
+  "exclude_from": [],
+  "skills": [
+    {
+      "id": "nextcloud-usage",
+      "loading": "always",
+      "file": "skills/nextcloud.md",
+      "description": "Nextcloud file reading, editing workflow, and safety rules",
+      "default_exclude_from": []
+    }
+  ],
+  "patched": false,
+  "patch_note": null,
+  "network_targets": [
+    {
+      "source": "per_user_credential",
+      "host_key": "NEXTCLOUD_URL",
+      "port_default": 443
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "name": "unifi-network",
+  "label": "UniFi Network",
+  "description": "Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR)",
+  "version": "",
+  "category": "community",
+  "server": {
+    "runtime": "python",
+    "transport": "stdio",
+    "command": "venv/bin/unifi-network-mcp",
+    "args": [],
+    "source": "pypi:unifi-network-mcp"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {
+        "key": "UNIFI_HOST",
+        "label": "Controller Host",
+        "input_type": "text",
+        "required": true
+      },
+      {
+        "key": "UNIFI_USERNAME",
+        "label": "Username",
+        "input_type": "text",
+        "required": true
+      },
+      {
+        "key": "UNIFI_PASSWORD",
+        "label": "Password",
+        "input_type": "password",
+        "required": true,
+        "secret": true
+      },
+      {
+        "key": "UNIFI_PORT",
+        "label": "HTTPS Port",
+        "input_type": "text",
+        "default": "443"
+      },
+      {
+        "key": "UNIFI_SITE",
+        "label": "Site",
+        "input_type": "text",
+        "default": "default"
+      },
+      {
+        "key": "UNIFI_VERIFY_SSL",
+        "label": "Verify SSL",
+        "input_type": "text",
+        "default": "false"
+      }
+    ],
+    "max_instances": 0
+  },
+  "config": [],
+  "env": {
+    "UNIFI_TOOL_REGISTRATION_MODE": "eager"
+  },
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null,
+  "network_targets": [
+    {
+      "source": "instance",
+      "host_key": "UNIFI_HOST",
+      "port_key": "UNIFI_PORT",
+      "port_default": 443
+    }
+  ]
+}

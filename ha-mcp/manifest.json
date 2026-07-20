@@ -1,0 +1,60 @@
+{
+  "name": "home-assistant",
+  "label": "Home Assistant",
+  "description": "Smart home control (~97 tools)",
+  "version": "",
+  "category": "community",
+  "server": {
+    "runtime": "python",
+    "transport": "stdio",
+    "command": "venv/bin/ha-mcp",
+    "args": [],
+    "source": "pypi:ha-mcp"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {
+        "key": "HOMEASSISTANT_URL",
+        "label": "Home Assistant URL",
+        "input_type": "url",
+        "default": "http://localhost:8123",
+        "required": true
+      },
+      {
+        "key": "HOMEASSISTANT_TOKEN",
+        "label": "Long-Lived Token",
+        "input_type": "password",
+        "required": true,
+        "secret": true
+      }
+    ],
+    "max_instances": 0
+  },
+  "config": [],
+  "env": {},
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "skills": [
+    {
+      "id": "home-assistant-usage",
+      "loading": "always",
+      "file": "skills/home-assistant.md",
+      "description": "Showing camera snapshots to the user (download-then-display, off-network safe)",
+      "default_exclude_from": []
+    }
+  ],
+  "patched": false,
+  "patch_note": null,
+  "network_targets": [
+    {
+      "source": "instance",
+      "host_key": "HOMEASSISTANT_URL",
+      "port_default": 8123
+    }
+  ]
+}
