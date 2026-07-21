@@ -51,7 +51,7 @@ def test_group_words_splits_on_gap_and_punctuation():
 
 def test_group_words_splits_on_phrase_pause():
     # A ~0.6s pause is a spoken phrase break — the old 0.8s threshold glued
-    # "…cove" + "Crystal…" into one cue (Phase-4 social rehearsal).
+    # "…cove" + "Crystal…" into one cue (social-cut rehearsal).
     words = [
         {"word": "perfect", "start": 0.0, "end": 0.4},
         {"word": "cove", "start": 0.4, "end": 0.8},

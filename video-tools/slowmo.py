@@ -12,7 +12,7 @@ Modes (clip field ``interpolate``, only meaningful when ``speed`` < 1):
               consumes the mezzanine like ordinary media.
 
 Native-first: when source_fps × speed ≥ timeline fps the retimed native
-frames already fill every output frame (the operator shoots 60/120 for
+frames already fill every output frame (shoot 60/120 for
 planned slow-mo) — no interpolation runs at all, whatever the mode.
 
 Baking the stretch into the mezzanine keeps minterpolate's target at the

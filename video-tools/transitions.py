@@ -51,7 +51,7 @@ def needs_rgb(ttype) -> bool:
 
 
 def _whip_expr(direction: str) -> str:
-    """Adjacent-strip whip (operator-corrected 2026-07-20): the two shots
+    """Adjacent-strip whip: the two shots
     are one continuous strip — whip_left rushes the frame LEFT and the
     next shot slides in attached on the right (whip_right mirrors). The
     pan covers exactly one frame-width on the eased slow-fast-slow ramp,
@@ -62,15 +62,15 @@ def _whip_expr(direction: str) -> str:
 
     Everything is INLINED: st()/ld() in a per-pixel xfade expr share one
     variable store across the filter's threads — a data race that renders
-    as full-frame static (hit live 2026-07-20). Per-frame exprs (zoompan)
+    as full-frame static (seen in production). Per-frame exprs (zoompan)
     can keep st/ld; per-pixel exprs cannot."""
     # xfade's P runs 1 → 0 (1 at the transition START — the documented
     # dissolve is 'A*P+B*(1-P)'), so progress is (1-P). Using P directly
     # played the whip BACKWARD: snap to B, slide back to A, snap to B —
-    # the operator's "I immediately see the other clip, then everything
-    # slides, the order is reversed" (and the earlier "four changes").
+    # the other clip appeared immediately, then everything slid in
+    # reverse order.
     e = "((1-P)*(1-P)*(3-2*(1-P)))"
-    # Direction = the CAMERA pan (operator-corrected 2026-07-20):
+    # Direction = the CAMERA pan:
     # whip_left pans left → content slides right → the next shot is
     # attached on the LEFT and slides in from there; whip_right mirrors.
     if direction == "left":
@@ -149,12 +149,12 @@ def _ease_in(q_expr: str) -> str:
 def _ease_out(q_expr: str) -> str:
     """Decelerate: max at the window start → rest. The incoming side of a
     split ramp — together with _ease_in the speed is one continuous bell
-    across the cut, not fast-STOP-fast (the 'bump' the operator saw when
+    across the cut, not fast-STOP-fast (the visible 'bump' when
     both sides ran full smoothstep)."""
     return f"st(0,{q_expr});st(0,1-(1-ld(0))*(1-ld(0)))"
 
 
-# Zoom timing split (operator-tuned): the MIRRORED phase is the giveaway,
+# Zoom timing split (tuned by review): the MIRRORED phase is the giveaway,
 # so it gets less of the duration than the clean phase. zoom_in mirrors on
 # the incoming side (head short); zoom_out mirrors on the outgoing (tail
 # short). (tail_frac, head_frac) of the transition duration.

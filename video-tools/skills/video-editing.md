@@ -46,7 +46,7 @@ the final full-speed watch.
   cut and the timeline doesn't shorten. Rules: land them ON a beat
   (ideally a drop), 0.2–0.4s duration, at most one every few cuts — a
   reel where every cut whips reads amateur. **First picks for social:
-  `glitch` and `shake`** (operator-verified on real footage — the RGB
+  `glitch` and `shake`** (verified on real footage — the RGB
   glitch pop and the impact drop). `flash_cut`/`zoom_punch` dip to BLACK
   by default; add `"flash": "white"` on the transition for the classic
   white pop. Match energy: whip presets/spin for camera-motion joins,

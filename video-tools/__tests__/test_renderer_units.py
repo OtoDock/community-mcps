@@ -3,7 +3,7 @@
 The loudnorm pass-1 parse is exercised with a monkeypatched ``run_ffmpeg``:
 a silent mix measures ``input_i = -inf``, which pass 2 rejects outright
 ("Value -inf for parameter 'measured_I' out of range" — ffmpeg exit 222,
-killing the whole render; hit live 2026-07-20 on silent drone footage), so
+killing the whole render; hit live on silent drone footage), so
 ``_measure_loudnorm`` must return ``None`` (= skip normalization) instead of
 interpolating -inf into the filter string.
 """

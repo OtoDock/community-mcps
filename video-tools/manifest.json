@@ -2,9 +2,8 @@
   "name": "video-tools",
   "label": "Video Tools",
   "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "category": "community",
-
   "server": {
     "runtime": "docker",
     "transport": "http",
@@ -12,26 +11,21 @@
     "port": 8933,
     "health_endpoint": "/health",
     "url_template": "http://${docker_mcp_host}:${port}",
-    "image": "ghcr.io/otodock/video-tools:0.1.0",
+    "image": "ghcr.io/otodock/video-tools:0.2.0",
     "source": "docker:video-tools-mcp (ffmpeg + libass)",
     "proxy_callbacks": true
   },
-
   "credentials": {
     "type": "none"
   },
-
   "config": [],
-
   "env": {
     "PROXY_URL": "${platform.proxy_url_for_docker}",
     "HOST_AGENTS_DIR": "${platform.host_agents_dir}",
     "MCP_PORT": "${platform.mcp_port}"
   },
   "agent_env": {},
-
   "exclude_from": [],
-
   "skills": [
     {
       "id": "video-editing",
@@ -41,7 +35,6 @@
       "default_exclude_from": []
     }
   ],
-
   "permissions": {
     "default_tier": "standard",
     "rules": [

@@ -79,7 +79,7 @@ _MAX_CUE_SPAN = 3.4       # seconds a multi-word cue may cover
 # Silence gap that forces a new cue. Within-phrase word gaps in real speech
 # sit under ~0.3s; a phrase pause runs 0.5-0.9s. The original 0.8 let a
 # 0.79s pause glue two phrases into one cue ("...cove CRYSTAL") — found in
-# the Phase-4 social dress rehearsal.
+# a full-length social-cut dress rehearsal.
 _CUE_GAP_SPLIT = 0.45
 
 

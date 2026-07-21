@@ -129,7 +129,7 @@ async def handle_render_composition(args: dict):
 
     # Without this, satellite installs never receive the RENDER — the main
     # deliverable — and the advertised display_video step 400s on a missing
-    # file (hit live 2026-07-20).
+    # file (seen in production).
     await _notify_file_written(result["output"])
 
     lines = [

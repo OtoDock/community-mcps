@@ -179,7 +179,7 @@ def test_segmented_render_bounds_memory_and_matches_single_pass(
     windows at hard cuts, (b) produce the same timeline as the single
     graph, and (c) hold ffmpeg's peak RSS well under the single-graph
     render, which buffers ~the whole decoded timeline in filtergraph
-    queues (the 2026-07-20 OOM: a 70 s 1080p comp at 12.7 GB on a 15 GB
+    queues (the original OOM: a 70 s 1080p comp at 12.7 GB on a 15 GB
     host — scaled down here to 48 s at 320x180)."""
     import fftools
 
@@ -825,7 +825,7 @@ def test_quickops_match_color(tinted_clips, monkeypatch):
 def test_render_composition_handler_notifies_file_written(demo_comp, monkeypatch):
     """The render handler must push the output through the file-written
     hook — without it, satellite installs never receive the deliverable
-    and the advertised display_video step 400s (hit live 2026-07-20)."""
+    and the advertised display_video step 400s (hit live)."""
     import project
 
     notified = []
@@ -889,7 +889,7 @@ def test_whip_and_luma_wipe_render(assets):
          "transition_in": {"type": "luma_wipe", "duration": 0.8}},
         # An xfade AFTER the wipe: the wipe's concat reassembly must keep
         # CFR metadata or this xfade kills the graph with EINVAL (-22) —
-        # hit live 2026-07-20 on the premium reel.
+        # hit live on the premium reel.
         {"src": str(assets["clip2"]), "in": 2.5, "out": 4.5, "mute": True,
          "transition_in": {"type": "fadeblack", "duration": 0.5}},
     ]
@@ -926,7 +926,7 @@ def test_final_render_on_silent_timeline_skips_loudnorm(assets):
     """All-silent mix (fill clips synthesize anullsrc audio): loudnorm
     pass 1 measures input_i = -inf, which pass 2 rejects outright ("Value
     -inf for parameter 'measured_I' out of range" → ffmpeg exit 222 killed
-    the whole render; hit live 2026-07-20 on silent drone footage). The
+    the whole render; hit live on silent drone footage). The
     renderer must skip normalization, flag it, and still deliver."""
     comp = comp_mod.new_composition({"width": 320, "height": 180, "fps": 30})
     comp["tracks"][0]["clips"] = [

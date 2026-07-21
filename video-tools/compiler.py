@@ -413,7 +413,7 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
     if m and m.get("a"):
         # Ramped two-endpoint match (AI-bridge joins): dissolve between two
         # GRADES of the same footage — an invisible grade ramp; the cuts
-        # themselves stay hard cuts (operator decision 2026-07-20 over a
+        # themselves stay hard cuts (chosen over a
         # concealer micro-crossfade). T is clip-local after setpts, so the
         # blend weight runs 0→1 across the clip's duration.
         pre = g.chain(f"{idx}:v", filters + motion, g.label("vpre"))
@@ -469,7 +469,7 @@ def _fold_luma_wipe(g: _GraphBuilder, va: str, vb: str,
     # Every segment ends on an explicit format pin: format constraints
     # back-propagate through format-agnostic filters (split/trim/setpts),
     # and an unpinned graph let the mask's gray requirement grayscale the
-    # ENTIRE upstream timeline (hit live 2026-07-20). extractplanes=y
+    # ENTIRE upstream timeline (seen in production). extractplanes=y
     # (not format=gray) taps the luma without constraining its input.
     end = offset + tdur
     vaM, vaO = g.label("vw"), g.label("vw")
@@ -939,7 +939,7 @@ def compile_render(
 # ffmpeg runs the whole composition as ONE filtergraph, and its scheduler
 # lets decoded frames pile up in unbounded filtergraph queues at the
 # fold/overlay junctions — peak RSS ≈ every decoded SOURCE frame of the
-# render window at once (measured 2026-07-20: a 70 s 1080p timeline
+# render window at once (measured: a 70 s 1080p timeline
 # buffered ~12.7 GB and OOM-killed a 15 GB host; a 72 s toy comp buffered
 # exactly timeline × fps × frame_size, and a 6 s time_range slice cost the
 # same as the full render because nothing was pruned). The fix: render the

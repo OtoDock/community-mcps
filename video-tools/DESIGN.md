@@ -1,10 +1,8 @@
 # video-tools — agent-driven video editing MCP (design)
 
-> Status: SHIPPED (P1 `ea0f45d` + P2 `c1756dd` + smart reframe `e6c4955`,
-> 2026-07-06; 97 tests; image container-smoked). The platform-side canonical
-> reference is now `oto-dock/proxy/docs/mcps/VIDEO-TOOLS.md` — read that
-> first; this doc remains as the original design + landscape research.
-> Remaining: catalog registry entry, image publish path, internal dogfood.
+> Design doc for the shipped implementation: the original architecture,
+> landscape research, and the rationale behind the tool surface. The
+> manifest, README and skills are the operational reference.
 
 ## Goal
 
@@ -17,8 +15,8 @@ self-hosted, no cloud editing service, no desktop NLE required. Output quality t
 
 The slot is open. Mature agent-editing options either drive a paid desktop NLE
 (`samuelgursky/davinci-resolve-mcp`, needs Resolve Studio) or a cloud account
-(Shotstack/Opus Clip MCPs); the 2025 ffmpeg-wrapper MCPs are abandoned or young.
-Patterns adopted from the products that work:
+(Shotstack/Opus Clip MCPs); the 2025 ffmpeg-wrapper MCPs were unmaintained as
+of this research. Patterns adopted from the products that work:
 
 - **Text is the timeline** (Descript): the model reasons over word-timestamped
   transcripts + structured metadata, never over pixels/audio directly.
@@ -34,8 +32,8 @@ Patterns adopted from the products that work:
 
 ## Architecture
 
-Mirrors file-tools (`oto-dock/mcps/custom/file-tools-mcp` + `proxy/docs/mcps/FILE-TOOLS.md`)
-— the proven stateless docker-sidecar pattern, shared-pool-safe for T3 cloud:
+Mirrors the platform's file-tools MCP — the proven stateless docker-sidecar
+pattern, shared-pool-safe for T3 cloud:
 
 - `runtime: docker`, `transport: http`, `StreamableHTTPSessionManager(stateless=True)`,
   `(session_id, auth)` bound into request-scoped contextvars.
@@ -44,10 +42,9 @@ Mirrors file-tools (`oto-dock/mcps/custom/file-tools-mcp` + `proxy/docs/mcps/FIL
   goes through the proxy `resolve-path` hook (scope-aware, satellite-cache, NFC/NFD).
   On containerized (T2) installs the platform's compose rewrite maps this bind onto
   the shared `otodock-agents` named volume — the interpolated host path there is an
-  empty dir (live 2026-07-19: probe_media saw no agent files until the volume mapping).
+  empty dir, so the volume mapping is what makes agent files visible.
 - Loopback-only port bind (the container RW-mounts the agents tree).
-- `server.image` on GHCR, built by the community-mcps CI (`build-mcp-images.yml`) —
-  never hand-pushed, never built on the dev box (disk).
+- `server.image` on GHCR, built by CI.
 - **Explicit `mem_limit: 4g`** in the compose (chromium + ffmpeg; the injected 2g
   default would OOM renders). Explicit limits always win over the injected default.
 - No session state in the container. Render temp lives under container-local
@@ -139,11 +136,10 @@ guide ships in the skill.
 ## Captions
 
 Consume word-level transcript JSON / SRT / ASS from the workspace and burn via libass.
-transcribe-mcp already emits `<stem>.transcript.json` (word timestamps) + karaoke ASS —
-the natural producer on installs that have it. **No hard dependency**: transcribe-mcp is
-staged R3 (excluded from the public cut), so video-tools accepts caption sources from
-anywhere; styled presets (karaoke word-pop, Hormozi-style, minimal lower-third) are
-applied here. Optional later: a built-in `transcribe` convenience that calls the proxy's
+The platform's transcribe MCP emits `<stem>.transcript.json` (word timestamps) + karaoke
+ASS — the natural producer on installs that have it. **No hard dependency**: video-tools
+accepts caption sources from anywhere; styled presets (karaoke word-pop, Hormozi-style,
+minimal lower-third) are applied here. Optional later: a built-in `transcribe` convenience that calls the proxy's
 `/v1/audio/transcribe` hook with the per-session JWT (same endpoint transcribe-mcp uses).
 
 ## Looks / LUTs
@@ -169,7 +165,7 @@ Security posture: per-render throwaway context, **network egress blocked** excep
 `file://`/`data:` and an in-container asset endpoint serving the mounted workspace
 (no external fetch, no LAN probing from agent-authored JS); frame-count/duration caps.
 
-## Out of scope v1 (companions, tracked in oto-dock `dev/ROADMAP.md`)
+## Out of scope v1 (companions)
 
 - **Music/SFX sourcing & generation** — separate future music-gen MCP (ElevenLabs
   Music/SFX API first — licensed training data, commercial-safe; self-hosted Stable
@@ -181,7 +177,7 @@ Security posture: per-render throwaway context, **network egress blocked** excep
   via the Blender `companion_app` pattern; needs paid Resolve Studio.
 - **Auto-shorts pipeline** (P3) — long-form → scored clips (Opus-style explained
   rubric), rides on P1/P2 primitives.
-- **computer-mcp screen recording** — monorepo change, not this MCP (see ROADMAP).
+- **Screen recording** — a platform capability, not this MCP.
 - GPU/hardware encode — env knob later; CPU libx264 is the portable default.
 
 ## Phasing
@@ -195,7 +191,7 @@ Security posture: per-render throwaway context, **network egress blocked** excep
   look library.
 - **P3 (later)**: OTIO export, Resolve connector, auto-shorts, music-gen MCP,
   hw-encode knob.
-- **0.2.0 "pro" pack (2026-07, plan: oto-dock `dev/plans/video-tools-pro.md`)**:
+- **0.2.0 "pro" pack**:
   - *Stabilization* (`stab.py`): vidstab two-pass. The detect pass is a
     RENDERER pre-pass (`_prepare_stabilization`) — the compiler stays pure
     and only consumes an injected `_stab` field carrying a tmp-staged .trf
@@ -244,8 +240,8 @@ Security posture: per-render throwaway context, **network egress blocked** excep
     cubes; the match LUT applies BEFORE creative grades. Bridge mode
     `{ramp_from: "A@t", ramp_to: "B@t"}` bakes TWO LUTs and the compiler
     split/blends between the two grades across the clip
-    (blend=all_expr with clip-local T) — the AI-bridge join fix the
-    operator chose over a concealing micro-crossfade; cuts stay hard.
+    (blend=all_expr with clip-local T) — the AI-bridge join approach,
+    chosen over a concealing micro-crossfade; cuts stay hard.
     Assumes similar content between target and reference samples (true at
     junctions — documented in the skill).
   - *Filmic finishing*: `vignette`/`grain`/`sharpen` 0–1 knobs on base
@@ -263,11 +259,11 @@ Security posture: per-render throwaway context, **network egress blocked** excep
     exactly 1.0 — no end pop). compute_timeline gives presets ZERO
     overlap, so the fold concats and timeline math is untouched. Preset
     duration capped at 2.5s by validation; skill carries the taste rules
-    (on a beat, 0.2–0.4s, sparingly). Operator feedback 2026-07-20:
-    glitch + shake are the social first picks (skill says so);
+    (on a beat, 0.2–0.4s, sparingly). Field feedback: glitch + shake
+    are the social first picks (skill says so);
     flash_cut/zoom_punch dip to BLACK by default ({flash: "white"} for
-    the classic pop). KOLDER ZOOMS (zoom_in/zoom_out, cut presets,
-    5 operator review rounds): 2×2 mirror tile (pad+fillborders=mirror —
+    the classic pop). KOLDER ZOOMS (zoom_in/zoom_out, cut
+    presets): 2×2 mirror tile (pad+fillborders=mirror —
     Premiere's Motion Tile) + eased zoompan; ONE continuous motion across
     the cut (outgoing ease-IN so max speed lands ON the cut, incoming
     ease-OUT), mirrored phase gets 40% of the duration vs 60% clean.
@@ -283,7 +279,7 @@ Security posture: per-render throwaway context, **network egress blocked** excep
     the timeline; fps= after the concat or a later xfade EINVALs). Plus
     clip-level motion_blur: tmix frame stacking (strongest on
     high-fps/flow footage) + an edit_video op.
-  - *Speed ramps* (`speedramp.py`, shipped 99cc77e): `speed_ramp:
+  - *Speed ramps* (`speedramp.py`): `speed_ramp:
     {from, to, curve: linear|ease_in|ease_out}` on base media clips
     (replaces `speed`), compiled as 6 constant-speed sub-clips over equal
     SOURCE-time slices — speeds sampled at segment midpoints on the curve
@@ -296,8 +292,8 @@ Security posture: per-render throwaway context, **network egress blocked** excep
     EDGE SEGMENT (1/6) of room. Plus a one-shot edit_video `speed_ramp`
     op (duplicate-frame quick path). Ramped audio steps per segment —
     skill says mute + music below 0.5×.
-  - *VFR duration pin* (compiler, shipped 3a76c71 — found by the Phase-4
-    dress rehearsal): trimmed spans of VFR sources decode SHORT of
+  - *VFR duration pin* (compiler — found in a full-length dress
+    rehearsal): trimmed spans of VFR sources decode SHORT of
     span/speed (last pts < out; slow motion divides the deficit by the
     speed) — a 6-segment ramp came out 0.8s short, xfade offsets fired
     late, the final fade truncated, and the sample-exact audio drifted
@@ -305,25 +301,24 @@ Security posture: per-render throwaway context, **network egress blocked** excep
     duration after the fps CFR conversion: tpad=stop_mode=clone +
     trim=end=<computed> + re-asserted fps= (the trim clears the CFR rate
     metadata xfade requires). True-VFR execution regression included.
-  - *Caption cue pacing* (622e439): _CUE_GAP_SPLIT 0.8→0.45s — a 0.79s
-    phrase pause must break a karaoke cue (within-phrase gaps are <0.3s).
-  - *Phase 4 verdict (2026-07-20)*: stress matrix complete (incl. live
-    native-60fps retiming) + two dress rehearsals operator-reviewed
-    (cinematic montage; beat-synced 9:16 social cut with TTS VO + karaoke
-    captions). Review round added two SKILL taste rules (a46ff6c): zoom
-    presets need different scenes on the two sides (same-scene = jump-cut
-    read; whips/glitch hide same-scene jumps), and faceless subjects need
-    a subject-position check + crop bias (smart_reframe center-crops
-    without faces) until Phase-3 track_object lands. Release decision:
-    stays PRIVATE; 0.2.0 CI publish deferred to its own launch beat.
+  - *Caption cue pacing*: _CUE_GAP_SPLIT 0.8→0.45s — a 0.79s phrase
+    pause must break a karaoke cue (within-phrase gaps are <0.3s).
+  - *Validation*: stress matrix complete (incl. live native-60fps
+    retiming) + two full dress rehearsals reviewed (cinematic montage;
+    beat-synced 9:16 social cut with TTS VO + karaoke captions). The
+    review added two SKILL taste rules: zoom presets need different
+    scenes on the two sides (same-scene = jump-cut read; whips/glitch
+    hide same-scene jumps), and faceless subjects need a
+    subject-position check + crop bias (smart_reframe center-crops
+    without faces) until object tracking lands.
 
-## Low-RAM windowed rendering (2026-07-20)
+## Low-RAM windowed rendering
 
 A composition renders as ONE ffmpeg filtergraph, and ffmpeg's scheduler lets
 decoded frames pile up in unbounded filtergraph queues at the fold/overlay
 junctions: peak RSS ≈ every decoded SOURCE frame of the render window at
-once. Measured on the hero-v4 launch video (70 s, 1080p30, 24 base clips +
-10 overlays): 12.7 GB anon-rss → OOM-killed a 15 GB host; the planner's
+once. Measured on a real 70 s 1080p30 timeline (24 base clips + 10
+overlays): 12.7 GB anon-rss → OOM-killed a 15 GB host; the planner's
 decode estimate for the same timeline is 14.1 GB. Toy-scale experiments
 confirmed the shape: a 72 s 12-clip fold at 320x180 buffers exactly
 timeline × fps × frame_size (+190 MB over a 70 MB floor), the pile does NOT
