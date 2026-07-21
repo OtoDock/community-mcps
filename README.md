@@ -30,7 +30,13 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 |-----|---------|----------|----------|
 | [camoufox](./camoufox/) | docker | Camoufox + `@playwright/mcp` | Anti-detect browser automation |
 | [github-mcp](./github-mcp/) | docker | official GitHub MCP (Dockerized) | Repos, issues, PRs, Actions, code search |
+| [ha-mcp](./ha-mcp/) | python | `pypi:ha-mcp` | Home Assistant smart-home control |
+| [nextcloud](./nextcloud/) | node | `nextcloud-mcp-server` | Nextcloud files, Notes, Calendar |
 | [notion-mcp](./notion-mcp/) | node | `@notionhq/notion-mcp-server` | Notion pages, databases, search |
+| [prometheus](./prometheus/) | node | `prometheus-mcp` | Metrics and monitoring queries |
+| [unifi-network](./unifi-network/) | python | `pypi:unifi-network-mcp` | UniFi network management and monitoring |
+| [uptime-kuma](./uptime-kuma/) | node | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring (Kuma v2) |
+| [video-tools](./video-tools/) | docker | OtoDock (FFmpeg + libass) | Agent-driven video editing: timelines, transitions, captions, grading |
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 

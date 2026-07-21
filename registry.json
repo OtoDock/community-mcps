@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-07-20T16:56:43Z",
+  "updated_at": "2026-07-21T06:27:59Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -234,6 +234,36 @@
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
       "size_bytes": 2818,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "video-tools",
+      "label": "Video Tools",
+      "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
+      "category": "community",
+      "version": "0.1.1",
+      "runtime": "docker",
+      "source": "docker:video-tools-mcp (ffmpeg + libass)",
+      "version_constraint": "",
+      "manifest_hash": "446b33442f502f34",
+      "manifest_url": "./video-tools/manifest.json",
+      "readme_url": "./video-tools/README.md",
+      "icon_url": null,
+      "tags": [
+        "docker",
+        "tools",
+        "video"
+      ],
+      "author": "OtoDock",
+      "author_url": "https://github.com/OtoDock",
+      "license": "MIT",
+      "requires_credentials": false,
+      "requires_system_packages": [],
+      "platform_min_version": "1.0.0",
+      "assignment_mode": "auto",
+      "size_bytes": 1053377,
       "deprecated": false,
       "patched": false,
       "patch_note": null

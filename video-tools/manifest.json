@@ -1,0 +1,72 @@
+{
+  "name": "video-tools",
+  "label": "Video Tools",
+  "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
+  "version": "0.1.1",
+  "category": "community",
+
+  "server": {
+    "runtime": "docker",
+    "transport": "http",
+    "docker_compose": "docker-compose.yml",
+    "port": 8933,
+    "health_endpoint": "/health",
+    "url_template": "http://${docker_mcp_host}:${port}",
+    "image": "ghcr.io/otodock/video-tools:0.1.0",
+    "source": "docker:video-tools-mcp (ffmpeg + libass)",
+    "proxy_callbacks": true
+  },
+
+  "credentials": {
+    "type": "none"
+  },
+
+  "config": [],
+
+  "env": {
+    "PROXY_URL": "${platform.proxy_url_for_docker}",
+    "HOST_AGENTS_DIR": "${platform.host_agents_dir}",
+    "MCP_PORT": "${platform.mcp_port}"
+  },
+  "agent_env": {},
+
+  "exclude_from": [],
+
+  "skills": [
+    {
+      "id": "video-editing",
+      "loading": "on_demand",
+      "file": "skills/video-editing.md",
+      "description": "Video editing workflow: analyze first, compose declaratively, verify frames, beat-sync arithmetic, caption presets, color restraint",
+      "default_exclude_from": []
+    }
+  ],
+
+  "permissions": {
+    "default_tier": "standard",
+    "rules": [
+      {
+        "tool": "analyze_audio",
+        "tier": "open"
+      },
+      {
+        "tool": "analyze_video",
+        "tier": "open"
+      },
+      {
+        "tool": "probe_media",
+        "tier": "open"
+      },
+      {
+        "tool": "validate_composition",
+        "tier": "open"
+      },
+      {
+        "tool": "sample_frames",
+        "tier": "open"
+      }
+    ]
+  },
+  "patched": false,
+  "patch_note": null
+}

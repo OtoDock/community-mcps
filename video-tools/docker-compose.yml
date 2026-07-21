@@ -1,0 +1,32 @@
+services:
+  video-tools:
+    build: .
+    container_name: video-tools-mcp
+    restart: always
+    # Renders are memory-heavy (ffmpeg filtergraphs buffer frames at every
+    # xfade/overlay junction) — bound explicitly so the platform's injected
+    # 2g default never applies and a runaway render OOM-kills ffmpeg inside
+    # the container instead of starving the host.
+    mem_limit: 4g
+    memswap_limit: 4g
+    ports:
+      # Loopback-only: video-tools RW-mounts the whole agents tree, so its
+      # port must never be reachable off-host. The host-local proxy reaches
+      # it on localhost; nothing external should.
+      - "127.0.0.1:8933:8933"
+    volumes:
+      # HOST_AGENTS_DIR is consumed at compose time only — the bind-mount
+      # source. Inside the container the mount is hardcoded at /agents
+      # (see shared.py).
+      - ${HOST_AGENTS_DIR:-../../../agents}:/agents:rw
+    env_file: .env
+    # MCP_PORT is delivered via .env (auto-generated from the manifest by the
+    # platform's docker manager).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8933/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

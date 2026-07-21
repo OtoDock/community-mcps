@@ -1,0 +1,19 @@
+mcp[cli]>=1.0,<2.0
+httpx>=0.27,<1.0
+Pillow>=10.0
+numpy>=1.26
+librosa>=0.10
+# Floor numba so uv never backtracks into ancient llvmlite (<3.10-only) to
+# satisfy a too-new numpy; numpy resolves down to numba's cap instead.
+numba>=0.60
+soundfile>=0.12
+# Held below 0.7: the 0.7 line hard-depends on full opencv-python (needs
+# libGL — no headless extra), while 0.6.x leaves opencv as an extra and we
+# supply the headless build ourselves.
+scenedetect>=0.6.4,<0.7
+opencv-python-headless>=4.9
+starlette
+uvicorn
+# Motion-graphics rendering (render_motion_clip): deterministic HTML→frames
+# via headless Chromium. The image installs chromium-headless-shell.
+playwright>=1.45,<2
