@@ -18,6 +18,7 @@ D overlaps the incoming clip D seconds into its predecessor, so the xfade
 `offset` is exactly the incoming clip's timeline start.
 """
 
+import math
 from dataclasses import dataclass, field
 
 import audiofx as audiofx_mod
@@ -64,19 +65,26 @@ class _GraphBuilder:
         self._n += 1
         return f"{prefix}{self._n}"
 
-    def media_input(self, path: str) -> int:
+    def media_input(self, path: str, seek: float = 0.0) -> int:
         """Shared input for a media path (trim happens in-graph). Alpha WebM
         needs the libvpx decoder forced or transparency decodes as opaque
-        black. NOTE: shared inputs preclude per-clip `-ss` fast seeks; for
-        hour-long sources a per-clip seeking optimization can come later."""
-        if path not in self._media_index:
+        black. ``seek`` emits an input-level `-ss` (decode-accurate: ffmpeg
+        seeks to the prior keyframe and decodes forward) so a windowed
+        sub-clip never decodes the whole source; the caller rebases its
+        in-graph trims by the same amount. Inputs are shared per
+        (path, seek) — two sub-clips of one source at different seeks stay
+        distinct inputs."""
+        key = (path, round(seek, 6))
+        if key not in self._media_index:
             opts: list[str] = []
+            if seek > 0:
+                opts += ["-ss", _f(seek)]
             alpha_codec = (self._media_info.get(path) or {}).get("alpha_codec")
             if alpha_codec:
-                opts = ["-c:v", alpha_codec]
-            self._media_index[path] = len(self.inputs)
+                opts += ["-c:v", alpha_codec]
+            self._media_index[key] = len(self.inputs)
             self.inputs.append((opts, path))
-        return self._media_index[path]
+        return self._media_index[key]
 
     def still_input(self, path: str, duration: float) -> int:
         idx = len(self.inputs)
@@ -396,8 +404,12 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
         filters = ["setpts=PTS-STARTPTS"]
     else:
         cin, cout, _ = _clip_span(clip, media_info)
-        idx = g.media_input(clip["src"])
-        filters = [f"trim=start={_f(cin)}:end={_f(cout)}"]
+        # A windowed sub-clip carries _seek (window_pruned): the input is
+        # opened with -ss, so its timestamps are rebased — the trim must
+        # subtract the same amount or it would skip past the whole piece.
+        seek = float(clip.get("_seek", 0.0))
+        idx = g.media_input(clip["src"], seek=seek)
+        filters = [f"trim=start={_f(cin - seek)}:end={_f(cout - seek)}"]
         if speed != 1.0:
             filters.append(f"setpts=(PTS-STARTPTS)/{_f(speed)}")
         else:
@@ -447,7 +459,12 @@ def _base_audio_chain(g: _GraphBuilder, clip: dict, media_info: dict,
 
     cin, cout, _ = _clip_span(clip, media_info)
     speed = float(clip.get("speed", 1.0))
-    filters = [f"atrim=start={_f(cin)}:end={_f(cout)}", "asetpts=PTS-STARTPTS"]
+    # The time_range slice path compiles pruned comps with audio, so a
+    # sub-clip's -ss rebase applies to its audio trim too (same shared
+    # (path, seek) input as the video branch).
+    seek = float(clip.get("_seek", 0.0))
+    filters = [f"atrim=start={_f(cin - seek)}:end={_f(cout - seek)}",
+               "asetpts=PTS-STARTPTS"]
     filters += atempo_chain(speed)
     vol = clip.get("volume_db")
     if vol:
@@ -455,7 +472,7 @@ def _base_audio_chain(g: _GraphBuilder, clip: dict, media_info: dict,
     filters += audiofx_mod.clip_chain(clip.get("audio"))
     filters.append(_AUDIO_NORM)
     filters.append("asettb=AVTB")
-    idx = g.media_input(clip["src"])
+    idx = g.media_input(clip["src"], seek=seek)
     return g.chain(f"{idx}:a", filters, out)
 
 
@@ -947,35 +964,98 @@ def compile_render(
 # window-pruned sub-composition so far-away media is never even opened.
 
 
+# Sub-clip pruning: real footage kept around the window on each side (covers
+# transition styling, motion-blur tmix warm-up and boundary rounding), and
+# the input -ss preroll before the sub-clip's in-point (input seeking is
+# decode-accurate; the preroll only cushions demuxer edge cases).
+SUBCLIP_PAD = 0.5
+SEEK_PREROLL = 1.0
+# A side is only trimmed when it saves a worthwhile stretch of decode —
+# sub-second slivers would add fill churn for nothing.
+MIN_TRIM = 2.0
+
+
+def _subclip_eligible(clip: dict) -> bool:
+    """Sub-clip trimming must not change output or reset stateful chains:
+    only plain real-time media clips qualify. Everything else keeps the
+    whole-clip decode (still RAM-safe — a single live branch streams — just
+    not decode-pruned): speed/interpolate chains retime from the clip head,
+    _slomo mezzanines and _stab .trf files index SOURCE frames from 0,
+    _match ramps and transform keyframes run on clip-local time."""
+    return (comp_mod.clip_source_kind(clip) == "media"
+            and float(clip.get("speed", 1.0)) == 1.0
+            and not clip.get("speed_ramp")
+            and not clip.get("interpolate")
+            and not clip.get("_slomo")
+            and not clip.get("_stab")
+            and not clip.get("_match")
+            and not (clip.get("transform") or {}).get("keyframes"))
+
+
 def window_pruned(comp: dict, media_info: dict, t0: float, t1: float,
                   pad: float = 0.0) -> dict:
     """Sub-composition that renders [t0, t1] only: base clips that cannot
     contribute frames to the (padded) window become solid-color fills of
     IDENTICAL duration — timeline math, fold structure and every transition
     offset stay bit-identical, the substituted spans are trimmed away —
-    and overlays outside the window are dropped. Audio clips stay: audio
-    frames are never the memory problem, and pruning them would change the
-    loudnorm/duck mix. This is what makes a windowed render cheap: the
-    pruned comp no longer references the far media, so those inputs are
-    never opened or decoded."""
+    and overlays outside the window are dropped. A plain media clip that
+    only PARTIALLY overlaps the window is reduced to fill + sub-clip
+    (+ fill) with the same total duration: the sub-clip advances its
+    in-point onto the window (input -ss via _seek), so a long continuous
+    source never decodes beyond the window it is rendered in. Audio clips
+    stay: audio frames are never the memory problem, and pruning them
+    would change the loudnorm/duck mix."""
     import copy
 
     out = copy.deepcopy(comp)
     entries = comp_mod.compute_timeline(out, media_info)["base"]
     bg = out["project"].get("background", "#000000")
+    fps = float(out["project"].get("fps", 30))
     lo, hi = t0 - pad, t1 + pad
     clips = comp_mod.base_track(out)["clips"]
+    new_clips: list[dict] = []
     for i, clip in enumerate(clips):
         e = entries[i]
-        if e["end"] > lo and e["start"] < hi:
+        if not (e["end"] > lo and e["start"] < hi):
+            # transition_in rides along: it drives the fold's xfade offsets
+            # and the tail styling of the PREVIOUS clip (_preset_fx) —
+            # dropping it would change kept clips.
+            fill = {"fill": bg, "duration": e["duration"]}
+            if clip.get("transition_in") is not None:
+                fill["transition_in"] = copy.deepcopy(clip["transition_in"])
+            new_clips.append(fill)
             continue
-        # transition_in rides along: it drives the fold's xfade offsets and
-        # the tail styling of the PREVIOUS clip (_preset_fx) — dropping it
-        # would change kept clips.
-        fill = {"fill": bg, "duration": e["duration"]}
-        if clip.get("transition_in") is not None:
-            fill["transition_in"] = copy.deepcopy(clip["transition_in"])
-        clips[i] = fill
+        # Timeline seconds of this clip outside the padded window, snapped
+        # DOWN to the frame grid so the kept footage always covers the
+        # window. Each side trims independently and only when it saves a
+        # worthwhile stretch of decode; durations are computed as exact
+        # differences so the pieces always sum to the original entry.
+        lead = max(0.0, lo - SUBCLIP_PAD - e["start"])
+        lead = math.floor(lead * fps) / fps
+        tail = max(0.0, e["end"] - (hi + SUBCLIP_PAD))
+        tail = math.floor(tail * fps) / fps
+        if lead < MIN_TRIM:
+            lead = 0.0
+        if tail < MIN_TRIM:
+            tail = 0.0
+        if (lead == 0.0 and tail == 0.0) or not _subclip_eligible(clip):
+            new_clips.append(clip)
+            continue
+        cin, cout, _ = _clip_span(clip, media_info)
+        sub = copy.deepcopy(clip)
+        if lead:
+            fill = {"fill": bg, "duration": lead}
+            if clip.get("transition_in") is not None:
+                fill["transition_in"] = copy.deepcopy(clip["transition_in"])
+                sub.pop("transition_in", None)
+            new_clips.append(fill)
+            sub["in"] = cin + lead
+            sub["_seek"] = max(0.0, sub["in"] - SEEK_PREROLL)
+        sub["out"] = cout - tail if tail else cout
+        new_clips.append(sub)
+        if tail:
+            new_clips.append({"fill": bg, "duration": tail})
+    comp_mod.base_track(out)["clips"] = new_clips
     for track in out.get("tracks", []):
         if track.get("kind") != "overlay":
             continue
@@ -1031,25 +1111,111 @@ def estimate_window_bytes(comp: dict, media_info: dict,
         for clip in track["clips"]:
             start = float(clip.get("start", 0.0))
             dur = comp_mod.clip_duration(clip, media_info)
-            if start < t1 and start + dur > t0:
-                total += dur * fps * src_pixels(clip) * 4
+            overlap = min(start + dur, t1) - max(start, t0)
+            if overlap > 0:
+                total += overlap * fps * src_pixels(clip) * 4
     return total
+
+
+# Synthetic split placement: windows never shrink below MIN_WINDOW (the
+# per-window ffmpeg spawn has fixed cost), a render never explodes past
+# MAX_SEGMENTS (backstop far above any real timeline), and no split lands
+# within GUARD of a transition's overlap (the blend needs real footage on
+# both sides — see _no_split_zones).
+MIN_WINDOW = 4.0
+MAX_SEGMENTS = 512
+SPLIT_GUARD = 0.5
+
+
+def _no_split_zones(comp: dict, media_info: dict) -> list[tuple[float, float]]:
+    """Timeline spans a window boundary must not land in: around every
+    non-cut join — xfades/wipes overlap the boundary and cut presets style
+    the frames on both sides of it."""
+    clips = comp_mod.base_track(comp).get("clips", [])
+    entries = comp_mod.compute_timeline(comp, media_info)["base"]
+    zones = []
+    for i in range(1, len(clips)):
+        tr = clips[i].get("transition_in")
+        if not tr or tr.get("type", "cut") == "cut":
+            continue
+        d = float(tr.get("duration", 0.3))
+        s = entries[i]["start"]
+        zones.append((s - d - SPLIT_GUARD, s + d + SPLIT_GUARD))
+    return zones
+
+
+def _synthetic_points(comp: dict, media_info: dict, a: float, b: float,
+                      budget_bytes: float, fps: float,
+                      zones: list[tuple[float, float]]) -> list[float]:
+    """Frame-grid split points inside the cut-less span [a, b] so each piece
+    fits the budget. Greedy forward walk with a bisection for the furthest
+    in-budget end; points that land in a no-split zone shift before it, or
+    past it when that would violate MIN_WINDOW (that window runs slightly
+    over budget — bounded by the zone width — rather than cutting through
+    a blend)."""
+    pts: list[float] = []
+    cur = a
+    while b - cur > 2 * MIN_WINDOW and len(pts) < MAX_SEGMENTS:
+        if estimate_window_bytes(comp, media_info, cur, b) <= budget_bytes:
+            break
+        lo_e, hi_e = cur + MIN_WINDOW, b
+        for _ in range(20):
+            mid = (lo_e + hi_e) / 2
+            if estimate_window_bytes(comp, media_info, cur, mid) <= budget_bytes:
+                lo_e = mid
+            else:
+                hi_e = mid
+        # Snap UP to the frame grid: ceil overshoots the budget by at most
+        # one frame per window (well inside the estimate's safety margin),
+        # while floor would shed a frame per window and drift every later
+        # boundary off the natural step.
+        p = math.ceil(lo_e * fps - 1e-6) / fps
+        for zs, ze in zones:
+            if zs < p < ze:
+                before = math.floor(zs * fps) / fps
+                p = before if before >= cur + MIN_WINDOW \
+                    else math.ceil(ze * fps) / fps
+                break
+        if p <= cur + MIN_WINDOW - 1e-6 or p >= b - MIN_WINDOW:
+            break
+        pts.append(p)
+        cur = p
+    return pts
 
 
 def plan_segments(comp: dict, media_info: dict,
                   budget_bytes: float) -> list[tuple[float, float]]:
-    """Split the timeline at bare cuts so no window's estimate exceeds the
-    budget. Returns [] when the whole timeline fits (single-pass render).
-    A span between adjacent bare cuts that alone exceeds the budget stays
-    one segment — there is nowhere safe to split it."""
+    """Split the timeline so no window's estimate exceeds the budget.
+    Returns [] when the whole timeline fits (single-pass render). Bare cuts
+    are the preferred (free) split points; a span between adjacent bare
+    cuts that alone exceeds the budget gains synthetic frame-grid points
+    inside it — window_pruned reduces the spanning clips to seekable
+    sub-clips, so any continuous source can window. Only a span whose
+    MIN_WINDOW-sized pieces still bust the budget stays over (pathological
+    resolutions — the renderer warns)."""
     duration = comp_mod.compute_timeline(comp, media_info)["duration"]
     if duration <= 0:
         return []
     if estimate_window_bytes(comp, media_info, 0.0, duration) <= budget_bytes:
         return []
+    fps = float(comp["project"].get("fps", 30))
+    zones = _no_split_zones(comp, media_info)
+    cuts = [c for c in bare_cut_points(comp, media_info)
+            if 1e-6 < c < duration - 1e-6]
+    points: list[float] = []
+    prev_cut = 0.0
+    for c in [*cuts, duration]:
+        if (c - prev_cut > 2 * MIN_WINDOW
+                and estimate_window_bytes(comp, media_info, prev_cut, c)
+                > budget_bytes):
+            points.extend(_synthetic_points(
+                comp, media_info, prev_cut, c, budget_bytes, fps, zones))
+        if c < duration:
+            points.append(c)
+        prev_cut = c
     segs: list[tuple[float, float]] = []
     seg_start, prev = 0.0, None
-    for b in [*bare_cut_points(comp, media_info), duration]:
+    for b in [*points, duration]:
         if b <= seg_start + 1e-6:
             continue
         if (prev is not None

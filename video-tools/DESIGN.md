@@ -330,18 +330,31 @@ The fix (renderer + compiler, `plan_segments`/`window_pruned`/
 `estimate_window_bytes`/`bare_cut_points`):
 
 - **Windowed final render.** When the whole-timeline decode estimate
-  exceeds the memory budget (default 40% of physical RAM;
+  exceeds the memory budget (default 40% of physical RAM, cgroup-aware;
   `VIDEO_TOOLS_RENDER_BUDGET_MB` overrides), the timeline renders in
-  windows split at BARE cuts only (no xfade overlap, no preset styling —
-  those joins must stay inside one window), then the windows concat
-  losslessly (`-c copy`) and mux with the audio.
+  windows and the windows concat losslessly (`-c copy`) and mux with the
+  audio. Bare cuts are the preferred (free) split points; a span between
+  adjacent bare cuts that alone busts the budget gains SYNTHETIC frame-grid
+  points inside it (`MIN_WINDOW` 4 s floor, `MAX_SEGMENTS` backstop), so a
+  single long continuous take or two long clips joined by an xfade window
+  like anything else. Synthetic points never land within `SPLIT_GUARD` of a
+  transition's overlap — the blend keeps real footage on both sides.
 - **Window pruning.** Each window compiles from a sub-composition where
   out-of-window base clips become fills of IDENTICAL duration (timeline
   math, fold structure and transition offsets stay bit-identical — the
   substituted spans are trimmed away) and out-of-window overlays are
-  dropped, so far media is never opened or decoded. Every window recomputes
-  the same timeline, so frame pts partition exactly at the edges: the
-  concat is frame-exact, cuts stay cuts.
+  dropped, so far media is never opened or decoded. A plain media clip that
+  only PARTIALLY overlaps the window (the long-take case) is reduced to
+  fill + sub-clip (+ fill) with the same total duration: the sub-clip's
+  in-point advances onto the window and its input opens with a
+  decode-accurate `-ss` (`_seek`, trims rebased), so the source decodes
+  only the window plus a small preroll — not from zero. Sides shorter than
+  `MIN_TRIM` stay untrimmed; stateful clips (speed ≠ 1, flow/blend
+  interpolation, `_slomo`, `_stab`, `_match`, transform keyframes) always
+  keep the whole-clip decode — a single live branch streams, so they are
+  RAM-safe, just not decode-pruned. Every window recomputes the same
+  timeline, so frame pts partition exactly at the edges: the concat is
+  frame-exact, cuts stay cuts.
 - **Audio renders once.** One full-timeline audio-only pass (frames are
   ~KB) keeps amix, sidechain ducking and two-pass loudnorm semantics
   identical to a single-pass render.
@@ -350,12 +363,12 @@ The fix (renderer + compiler, `plan_segments`/`window_pruned`/
   or QC frame no longer opens the whole timeline. The final-trim tail also
   re-pins `fps=`: trim clears the CFR metadata and the sink silently
   resampled slices to 25 fps.
-- **Limits.** A span between adjacent bare cuts that alone busts the
-  budget renders as one window (nowhere safe to split); the render warns.
-  Project-level `grain` is temporally random, so its pattern reseeds at
-  window edges (invisible in practice). Future work if a real cut-less
-  long-take timeline hits the wall: split mid-span with re-encode handles,
-  or per-clip `-ss` input seeking.
+- **Limits.** Only a span whose MIN_WINDOW-sized pieces still bust the
+  budget renders as one window (pathological resolutions); the render
+  warns that the container's memory cap may kill it. Project-level `grain`
+  is temporally random, so its pattern reseeds at window edges (invisible
+  in practice). Stateful clips keep whole-clip decode (see above): their
+  decode CPU is unpruned, never their RAM.
 
 ## Open questions (decide at impl)
 

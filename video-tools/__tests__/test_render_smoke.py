@@ -218,7 +218,7 @@ def test_segmented_render_bounds_memory_and_matches_single_pass(
         str(path), lambda p: p, mode="preview",
         output_path=str(fold_assets["root"] / "seg.mp4")))
     seg_peak = peak_rss_kb()
-    assert any("windows split at hard cuts" in w["message"]
+    assert any("windows" in w["message"] and "memory budget" in w["message"]
                for w in seg["warnings"]), seg["warnings"]
 
     assert abs(seg["duration"] - single["duration"]) < 0.1
@@ -260,7 +260,7 @@ def test_segmented_final_render_keeps_loudness_and_streams(
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "20")
     result = _run(renderer.render_composition(str(path), lambda p: p,
                                               mode="final"))
-    assert any("windows split at hard cuts" in w["message"]
+    assert any("windows" in w["message"] and "memory budget" in w["message"]
                for w in result["warnings"]), result["warnings"]
 
     out = result["output"]

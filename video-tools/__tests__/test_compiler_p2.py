@@ -485,3 +485,127 @@ def test_estimate_counts_overlays_rgba_and_skips_fills():
     # 4 s of source frames (project-size fallback) + the overlay in rgba;
     # the fill costs nothing — generated on demand, never buffered.
     assert est == 4 * 30 * 640 * 360 * 1.5 + 2 * 30 * 200 * 100 * 4
+
+
+LONG = dict(MEDIA)
+LONG["long.mp4"] = {"duration": 60.0, "has_video": True, "has_audio": True}
+_PER_S = 30 * 640 * 360 * 1.5   # estimate bytes per timeline second
+
+
+def test_estimate_overlay_clamped_to_window_overlap():
+    comp = _comp(
+        [{"src": "long.mp4"}],
+        tracks_extra=[{"kind": "overlay", "clips": [
+            {"image": "logo.png", "duration": 60, "start": 0}]}])
+    media = dict(LONG)
+    media["logo.png"] = {"duration": 0.0, "still": True, "has_video": True,
+                         "has_audio": False, "width": 200, "height": 100}
+    est = estimate_window_bytes(comp, media, 10.0, 12.0)
+    # Only the overlay's 2 s inside the window count — a long watermark
+    # must not mark every window over-budget.
+    assert est == 2 * _PER_S + 2 * 30 * 200 * 100 * 4
+
+
+def test_plan_segments_synthetic_points_in_cutless_span():
+    comp = _comp([{"src": "long.mp4"}])
+    budget = 12 * _PER_S
+    segs = plan_segments(comp, LONG, budget)
+    assert len(segs) >= 4
+    assert segs[0][0] == 0.0 and segs[-1][1] == 60.0
+    assert all(segs[i][1] == segs[i + 1][0] for i in range(len(segs) - 1))
+    from compiler import MIN_WINDOW
+    one_frame = _PER_S / 30
+    for a, b in segs:
+        assert b - a >= MIN_WINDOW - 1e-6
+        # Grid ceil may overshoot by at most one frame per window.
+        assert estimate_window_bytes(comp, LONG, a, b) <= budget + one_frame
+        # Synthetic points sit on the frame grid.
+        assert abs(a * 30 - round(a * 30)) < 1e-6
+
+
+def test_plan_segments_synthetic_points_avoid_transition_zones():
+    comp = _comp([
+        {"src": "long.mp4", "in": 0, "out": 30},
+        {"src": "long.mp4", "in": 30, "out": 60,
+         "transition_in": {"type": "fade", "duration": 1.0}},
+    ])
+    # 59 s timeline (1 s xfade overlap), join at t=29 — no bare cuts at
+    # all. A 6 s budget forces a point right at the join, which must jump
+    # the zone rather than cut through the blend.
+    budget = 6 * _PER_S
+    segs = plan_segments(comp, LONG, budget)
+    assert len(segs) >= 6
+    zone = (29.0 - 1.0 - 0.5, 29.0 + 1.0 + 0.5)
+    boundaries = [a for a, _ in segs[1:]]
+    assert all(not (zone[0] < p < zone[1]) for p in boundaries)
+    # The zone jump actually happened: some boundary sits at/after the
+    # zone end and before the next natural 6 s step.
+    assert any(zone[1] <= p < zone[1] + 6 for p in boundaries)
+
+
+def test_plan_segments_pathological_span_stays_single():
+    comp = _comp([{"src": "a.mp4", "in": 0, "out": 6}])
+    # Even MIN_WINDOW-sized pieces bust this budget: nothing to gain from
+    # splitting — single-pass render with the renderer's warning.
+    assert plan_segments(comp, MEDIA, _PER_S) == []
+
+
+def test_window_pruned_subclips_long_clip_with_seek():
+    comp = _comp([{"src": "long.mp4"}])
+    pruned = window_pruned(comp, LONG, 24.0, 36.0)
+    clips = comp_mod.base_track(pruned)["clips"]
+    assert [comp_mod.clip_source_kind(c) for c in clips] == \
+        ["fill", "media", "fill"]
+    lead, sub, tail = clips
+    # Pieces sum exactly to the original clip; the sub-clip covers the
+    # window plus the pad on each side (snapped down to the frame grid).
+    assert lead["duration"] + (sub["out"] - sub["in"]) + tail["duration"] == 60.0
+    assert sub["in"] <= 24.0 - 0.5 < sub["in"] + 1 / 30 + 1e-9
+    assert sub["out"] >= 36.0 + 0.5
+    assert sub["_seek"] == sub["in"] - 1.0
+    assert comp_mod.compute_timeline(pruned, LONG)["duration"] == 60.0
+    # Compiled: the input opens with -ss and the trim is rebased.
+    plan = compile_render(pruned, LONG, streams="v")
+    opts = dict((p, o) for o, p in plan.inputs)["long.mp4"]
+    assert opts[:2] == ["-ss", f"{sub['_seek']:.6g}"]
+    assert f"trim=start={sub['in'] - sub['_seek']:.6g}" in plan.graph
+
+
+def test_window_pruned_subclip_moves_transition_to_lead_fill():
+    comp = _comp([
+        {"src": "a.mp4", "in": 0, "out": 4},
+        {"src": "long.mp4",
+         "transition_in": {"type": "fade", "duration": 0.5}},
+    ])
+    pruned = window_pruned(comp, LONG, 30.0, 40.0)
+    clips = comp_mod.base_track(pruned)["clips"]
+    # a.mp4 is far → fill; long.mp4 head → fill CARRYING the transition
+    # (it drives the fold offset), then the seekable sub-clip.
+    assert clips[0]["fill"] and clips[1]["fill"]
+    assert clips[1]["transition_in"]["type"] == "fade"
+    assert clips[2]["src"] == "long.mp4" and "transition_in" not in clips[2]
+    assert comp_mod.compute_timeline(pruned, LONG)["duration"] == \
+        comp_mod.compute_timeline(comp, LONG)["duration"]
+
+
+def test_window_pruned_keeps_stateful_clips_whole():
+    for extra in ({"speed": 0.5},
+                  {"interpolate": "blend", "speed": 0.5},
+                  {"_stab": {"trf": "x.trf"}},
+                  {"_slomo": {"src": "mezz.mp4"}},
+                  {"transform": {"keyframes": [{"t": 0, "scale": 1}]}}):
+        clip = {"src": "long.mp4", **extra}
+        pruned = window_pruned(_comp([clip]), LONG, 24.0, 36.0)
+        clips = comp_mod.base_track(pruned)["clips"]
+        assert len(clips) == 1 and clips[0].get("src") == "long.mp4"
+        assert "_seek" not in clips[0]
+
+
+def test_window_pruned_skips_subsecond_trims():
+    comp = _comp([{"src": "a.mp4", "in": 0, "out": 4},
+                  {"src": "b.mp4", "in": 0, "out": 4}])
+    # 1.5 s of tail is under MIN_TRIM — not worth the fill churn, and the
+    # pruned timeline stays entry-for-entry identical.
+    pruned = window_pruned(comp, MEDIA, 0.0, 6.0)
+    assert (comp_mod.compute_timeline(pruned, MEDIA)
+            == comp_mod.compute_timeline(comp, MEDIA))

@@ -572,10 +572,11 @@ async def render_composition(
                         "level": "warning", "where": "render",
                         "message": (f"estimated decode footprint "
                                     f"{est / 1e6:.0f} MB exceeds the "
-                                    f"{budget / 1e6:.0f} MB memory budget but "
-                                    "the timeline has no hard cuts to split "
-                                    "at — the render may need substantial "
-                                    "RAM"),
+                                    f"{budget / 1e6:.0f} MB memory budget and "
+                                    "the timeline cannot be windowed any "
+                                    "finer — the render may need substantial "
+                                    "RAM and can be killed by the "
+                                    "container's memory cap"),
                     })
 
         if segments:
@@ -585,8 +586,9 @@ async def render_composition(
                 luts=luts, crf=crf, segments=segments)
             issues.append({
                 "level": "warning", "where": "render",
-                "message": (f"rendered in {len(segments)} windows split at "
-                            f"hard cuts to stay inside the "
+                "message": (f"rendered in {len(segments)} windows (split at "
+                            f"cuts, plus synthetic in-clip points where "
+                            f"needed) to stay inside the "
                             f"{budget / 1e6:.0f} MB memory budget "
                             "(VIDEO_TOOLS_RENDER_BUDGET_MB overrides)"),
             })
