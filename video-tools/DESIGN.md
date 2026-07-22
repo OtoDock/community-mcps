@@ -311,6 +311,59 @@ Security posture: per-render throwaway context, **network egress blocked** excep
     hide same-scene jumps), and faceless subjects need a
     subject-position check + crop bias (smart_reframe center-crops
     without faces) until object tracking lands.
+- **0.3.0 tracking pack (2026-07-22, `track.py`)**:
+  - `track_object` tool (open tier): frame-by-frame span tracking (cv2),
+    median-5 + EMA path smoothing, emits ready-to-paste
+    `transform.keyframes` — subject-center offset from the FRAME center
+    in source px, span-relative t — for tracked callouts/labels on
+    overlays. Spans must stay within one shot (a cut loses the target;
+    the result says where).
+  - `smart_reframe {track_box, track_start?, smoothness?}`:
+    subject-FOLLOWING crop covering the WHOLE clip — tracking runs
+    backward AND forward from wherever the box was drawn
+    (`track_span_full`), and the crop path comes from a DEADZONE
+    controller: perfectly still while the subject sits near center,
+    proportional glide past the deadzone, and a hard safety pull that
+    guarantees the subject center never leaves the crop's central 80%.
+    `smoothness` 0–1 (default 0.7) trades deadzone width + glide speed
+    against responsiveness. (v1 used a plain damped velocity clamp — the
+    review caught an accelerating boat lagging right out of frame, and
+    the untracked lead-in parking the crop; both are the controller's
+    and the backward pass's reasons to exist.) The face-based per-shot
+    static plan stays the default.
+  - **The backward pass is fixed-template NCC, not MIL** (h264 can't
+    decode in reverse): buffered forward decode in downscaled chunks
+    (per-frame POS_MSEC seeks fed keyframe-quantized duplicates on VFR
+    sources), template auto-tightened to the box's most STRUCTURED
+    sub-patch (user boxes carry slack water; water texture decorrelates
+    NCC within frames), template kept FIXED (updating is how drift
+    creeps in), 0.45 NCC floor stops HONESTLY with `covered_from`
+    reporting the reach. Reverse-MIL slid onto the subject's own wake —
+    a boat retraces INTO its white streak — and reported success.
+  - **box_distinctiveness guard**: (Sobel energy vs 8-neighbor median) ×
+    (peak-subwindow concentration), measured on the init frame; below
+    1.9 every tracking surface WARNS the box may not contain a subject.
+    Born from a live demo shipped with a box that contained only water —
+    MIL has no confidence signal, so nothing else would ever complain.
+  - `edit_video` `blur_faces {start?, end?, pixelate?}`: YuNet on EVERY
+    frame, ±3-frame union smoothing (detector dropouts stay covered —
+    privacy over-covers, never under-covers); `blur_region {box, start?,
+    end?, pixelate?}`: tracked blur patch (plates/logos/bystanders).
+    Both render through a cv2-decode → blur-ROI → rawvideo-stdin →
+    ffmpeg x264 pipeline that muxes the original audio back.
+  - ENGINE: TrackerMIL. The vendored VitTracker ONNX (opencv_zoo,
+    Apache-2.0, models/) is DISABLED by default: opencv-python-headless
+    5.0.0's new DNN graph engine mangles it — zero boxes, constant ~0.11
+    score on real and synthetic footage alike, no engine opt-out env
+    works (measured 2026-07-22). `VIDEO_TOOLS_TRACKER=vit` re-enables it
+    after an opencv fix. MIL trade-offs documented: no scale adaptation
+    (box keeps its initial size), no confidence score (weak lost-target
+    detection).
+  - Test lesson: flat or noise-dusted synthetic frames are PATHOLOGICAL
+    for appearance trackers — MIL slid freely inside a flat white square
+    and latched onto encode ghosts. The execution fixture is a
+    multicolor blob over static SMPTE bars (real gradients, known
+    ground-truth path); tolerances are ±40 px on a 640-wide frame.
 
 ## Low-RAM windowed rendering
 

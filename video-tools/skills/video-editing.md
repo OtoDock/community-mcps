@@ -88,13 +88,19 @@ the final full-speed watch.
   file. A plain center crop beheads off-center subjects.
 - **When the subject has no face** (boats, cars, animals, products),
   smart_reframe falls back to a center crop — its result note says which
-  shots were subject-tracked. Do NOT accept the fallback blind: sample
-  frames of the source, see where the subject actually sits, and bias the
-  crop yourself — `crop {x, y}` in edit_video, or `fit: "cover"` +
-  `transform.pos: [dx, dy]` on the clip (positive x shifts the picture
-  right, so a subject on the LEFT of frame needs positive dx to come to
-  center). Re-check with render_frames after. The same rule applies to any
-  aspect mismatch (vertical source on a landscape canvas too).
+  shots were subject-tracked. Do NOT accept the fallback blind: give it
+  the subject instead — `smart_reframe {aspect: "9:16", track_box:
+  [x, y, w, h]}` tracks that box and the crop FOLLOWS it for the WHOLE
+  clip (tracking runs backward AND forward from wherever you drew the
+  box, so draw it where the subject is clearest). The window uses a
+  deadzone glide: still while the subject is near center, accelerating
+  as it drifts, and the subject is guaranteed never to leave the frame.
+  `smoothness` 0–1 (default 0.7) trades calm cinematic motion against
+  responsiveness — lower it for erratic subjects. Box coordinates are
+  SOURCE pixels at `track_start` (default 0): probe_media for
+  dimensions, sample_frames to eyeball the position. Track one shot at
+  a time — a cut loses the target (the note says where). Re-check with
+  render_frames after.
 - **Music first:** place the track, read its beat grid, then cut picture to
   it. Duck music under speech with `duck: true` on the music clip.
 - **Levels:** speech-led videos target the default −14 LUFS master; music
@@ -245,6 +251,30 @@ the final full-speed watch.
   clips, so a music bed dips under a separate voice-over clip too.
 - Stills (`image`) and solid fills (`fill: "#0a0a12"`) are first-class base
   clips — title cards, background beds.
+
+## Motion tracking (callouts, follow crops, privacy blur)
+
+- **Tracked callout/label**: `track_object {path, box, start?, end?}`
+  returns smoothed `transform.keyframes` — paste them onto an overlay
+  (motion-graphics label from render_motion_clip, an arrow PNG, a
+  highlight box) whose `start` matches the tracked span, and it follows
+  the subject. `pos` values are source-pixel offsets from the frame
+  center: scale them by canvas_width/source_width when the project canvas
+  differs, and ADD a constant offset (e.g. [0, -120]) to hover the label
+  above the subject instead of covering it.
+- Getting the box: probe_media for the source dimensions, sample_frames
+  near the start time, estimate [x, y, w, h] in source pixels. A tight
+  box on a distinct subject tracks best; track WITHIN one shot.
+- `smoothing` 0–1: 0.5 default; 0.8+ for cinematic drifting labels; low
+  values track snappy subjects closely.
+- **Privacy blur**: `edit_video` `blur_faces {start?, end?, pixelate?}`
+  (detects every frame, ±3-frame smoothing so faces never flash through)
+  and `blur_region {box, start?, end?}` (tracked patch — license plates,
+  logos, bystanders' screens). Gaussian by default; `pixelate: true` for
+  the deliberate mosaic look.
+- Tracking walks every frame — expect roughly real-time speed. If the
+  result says the target was lost mid-span (occlusion, cut, subject
+  exiting), re-run from just after that time with a fresh box.
 
 ## Movement (Ken Burns) and keying
 

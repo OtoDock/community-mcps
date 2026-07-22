@@ -60,6 +60,18 @@ def detect_faces_bgr(frame, detector=None) -> list[tuple[float, float, float]]:
     return out
 
 
+def detect_face_boxes_bgr(frame, detector=None) -> list[tuple[float, float, float, float]]:
+    """BGR frame → [(x, y, w, h)] face boxes (score-filtered by the
+    detector). Module-level so tests can substitute a fake (blur_faces)."""
+    h, w = frame.shape[:2]
+    det = detector or _detector(w, h)
+    _, faces = det.detect(frame)
+    if faces is None:
+        return []
+    return [(float(r[0]), float(r[1]), float(r[2]), float(r[3]))
+            for r in faces]
+
+
 def plan_segments(path: str, shots: list[tuple[float, float]],
                   crop_w: int, crop_h: int, src_w: int, src_h: int) -> list[dict]:
     """Per-shot crop plan → [{"start", "end", "x", "y", "faces"}].

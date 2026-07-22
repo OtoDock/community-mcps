@@ -172,6 +172,40 @@ TOOLS = [
         },
     ),
     Tool(
+        name="track_object",
+        description=(
+            "Follow a subject through a video span and return its SMOOTHED "
+            "motion path as ready-to-paste transform.keyframes — the way to "
+            "make an overlay (label, arrow, highlight, callout box) FOLLOW a "
+            "moving subject. box = [x, y, width, height] in SOURCE pixels at "
+            "the start time (probe_media gives dimensions; sample_frames to "
+            "eyeball coordinates — its grid is scaled, so convert back to "
+            "source pixels). Tracks frame-by-frame (VitTracker NN; MIL "
+            "fallback) WITHIN ONE SHOT — a cut in the span loses the target "
+            "and the result says where. smoothing 0-1 (0.5 default; higher = "
+            "heavier cinematic damping), keyframe_interval seconds (0.25 "
+            "default). Related: edit_video smart_reframe {aspect, track_box} "
+            "= subject-FOLLOWING vertical crop (faceless subjects: boats, "
+            "cars, products); edit_video blur_region = tracked blur patch."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Video file path"},
+                "box": {
+                    "type": "array", "items": {"type": "number"},
+                    "description": "[x, y, width, height] source px at start",
+                },
+                "start": {"type": "number", "default": 0},
+                "end": {"type": "number",
+                        "description": "Stop time (default: end of file)"},
+                "smoothing": {"type": "number", "default": 0.5},
+                "keyframe_interval": {"type": "number", "default": 0.25},
+            },
+            "required": ["path", "box"],
+        },
+    ),
+    Tool(
         name="create_composition",
         description=(
             "Create a composition project file (<name>.vproj.json) — the "
@@ -406,9 +440,20 @@ TOOLS = [
             "Operations run in sequence (pipeline stops on first error):\n"
             "trim {start, end} · remove {start, end} (cut a segment OUT) · "
             "crop {aspect '9:16' centered, or x/y/width/height} · "
-            "smart_reframe {aspect: '9:16'} (subject-aware: face detection "
+            "smart_reframe {aspect: '9:16', track_box?: [x,y,w,h], "
+            "track_start?, smoothness?: 0-1} (subject-aware: face detection "
             "picks a stable crop center per shot — the right way to turn "
-            "landscape footage into vertical; plain crop centers blindly) · "
+            "landscape footage into vertical; with track_box the crop "
+            "FOLLOWS a tracked subject for the WHOLE clip — bidirectional "
+            "tracking from wherever the box was drawn, deadzone glide, and "
+            "the subject is guaranteed to stay in frame; smoothness 0.7 "
+            "default, higher = calmer, lower = snappier — use for faceless "
+            "subjects like boats/cars/products, box in source px at "
+            "track_start) · "
+            "blur_faces {start?, end?, pixelate?} (YuNet per frame, "
+            "±3-frame smoothing — privacy blur) · "
+            "blur_region {box, start?, end?, pixelate?} (tracked blur "
+            "patch — plates, logos, bystanders) · "
             "stabilize {strength: low|medium|high, smoothing?, zoom?} "
             "(vidstab two-pass shake removal for handheld/drone footage; "
             "slight zoom-in) · "
@@ -496,6 +541,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "edit_video":
         from quickops import handle_edit_video
         handlers = {"edit_video": handle_edit_video}
+    elif name == "track_object":
+        from track import handle_track_object
+        handlers = {"track_object": handle_track_object}
     elif name == "render_motion_clip":
         from motion import handle_render_motion_clip
         handlers = {"render_motion_clip": handle_render_motion_clip}

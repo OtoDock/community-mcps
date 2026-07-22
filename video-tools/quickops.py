@@ -41,10 +41,10 @@ async def handle_edit_video(args: dict):
     operations = _normalize_operations(args.get("operations"))
     if not operations:
         return ("Error: no operations given. Supported: trim, remove, crop, "
-                "smart_reframe, stabilize, resize, speed, speed_ramp, fps, "
-                "concat, extract_audio, replace_audio, enhance_audio, "
-                "match_color, mute, volume, loudness_normalize, "
-                "burn_subtitles, to_gif, to_webp")
+                "smart_reframe, blur_faces, blur_region, stabilize, resize, "
+                "speed, speed_ramp, fps, concat, extract_audio, "
+                "replace_audio, enhance_audio, match_color, mute, volume, "
+                "loudness_normalize, burn_subtitles, to_gif, to_webp")
 
     notes: list[str] = []
     tmp = Path(tempfile.mkdtemp(prefix="vt-edit-"))
@@ -327,6 +327,44 @@ async def _op_smart_reframe(src: str, base, op: dict):
     if (w, h) == (W, H):
         raise ValueError(f"source is already {aspect} — nothing to reframe")
 
+    track_box = op.get("track_box")
+    if track_box:
+        # Follow mode: a tracked subject box drives the crop — the answer
+        # for FACELESS subjects (boats/cars/products) that the face-based
+        # per-shot plan center-crops. Bidirectional tracking covers the
+        # WHOLE clip regardless of where the box was drawn, and a deadzone
+        # controller keeps the window still near center, gliding after the
+        # subject and hard-pulling if it nears the frame edge. Track
+        # within one shot — a cut in the span loses the target.
+        import track as track_mod
+        from compiler import piecewise
+        smoothness = min(1.0, max(0.0, float(op.get("smoothness", 0.7))))
+        result = await asyncio.to_thread(
+            track_mod.track_span_full, src, track_box,
+            float(op.get("track_start", 0.0)), None)
+        smoothed = track_mod.smooth_path(result["points"],
+                                         0.35 + 0.5 * smoothness)
+        xs, ys = track_mod.follow_crop_keypoints(smoothed, w, h, W, H,
+                                                 smoothness=smoothness)
+        out = str(base) + ".mp4"
+        await _step(["-i", src, "-vf",
+                     f"crop={w}:{h}:x='{piecewise(xs, 't')}'"
+                     f":y='{piecewise(ys, 't')}'", *_ENCODE, out],
+                    timeout=3600)
+        note = (f"reframed to {aspect} ({w}x{h}) — subject-FOLLOW crop, "
+                f"whole clip, smoothness {smoothness:g} "
+                f"({result['engine']} tracker, {len(xs)} keypoints)")
+        warn = track_mod.distinct_warning(result["distinctiveness"])
+        if warn:
+            note += "; " + warn
+        if result["covered_from"] > 0.1:
+            note += (f"; backward tracking reached {result['covered_from']:.2f}s "
+                     "— before that the crop holds its earliest position")
+        if result["lost_at"] is not None:
+            note += (f"; target lost at {result['lost_at']:.2f}s — the crop "
+                     "holds its last position after that")
+        return out, note
+
     import analysis
     import reframe
     # More sensitive than analyze_video's default 27: a missed cut blends two
@@ -346,6 +384,107 @@ async def _op_smart_reframe(src: str, base, op: dict):
     tracked = sum(1 for s in segments if s["faces"])
     return out, (f"reframed to {aspect} ({w}x{h}) — {len(segments)} shot(s), "
                  f"{tracked} subject-tracked, others center-cropped")
+
+
+def _op_box(op: dict, key: str = "box") -> list[float]:
+    box = op.get(key)
+    if (not isinstance(box, (list, tuple)) or len(box) != 4
+            or not all(isinstance(v, (int, float)) for v in box)):
+        raise ValueError(f"{key} must be [x, y, width, height] in source "
+                         "pixels (probe_media for dimensions)")
+    return [float(v) for v in box]
+
+
+async def _op_blur_faces(src: str, base, op: dict):
+    """YuNet per frame + ±3-frame union smoothing → gaussian/pixelate.
+    Privacy op: single-frame detector dropouts stay covered."""
+    import asyncio as _aio
+
+    import reframe
+    import track as track_mod
+
+    start = float(op.get("start", 0.0))
+    end = op.get("end")
+    end_f = float(end) if end is not None else None
+    info = await probe(src)
+    vs = video_stream(info)
+    if vs is None:
+        raise ValueError("no video stream")
+    W, H = int(vs["width"]), int(vs["height"])
+    has_audio = audio_stream(info) is not None
+
+    def detect_all() -> list[list]:
+        import cv2
+
+        cap = cv2.VideoCapture(src)
+        det = reframe._detector(W, H)
+        per_frame = []
+        try:
+            while True:
+                t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if t < start or (end_f is not None and t > end_f):
+                    per_frame.append([])
+                else:
+                    per_frame.append(reframe.detect_face_boxes_bgr(frame, det))
+        finally:
+            cap.release()
+        return per_frame
+
+    per_frame = await _aio.to_thread(detect_all)
+    hits = sum(1 for boxes in per_frame if boxes)
+    if not hits:
+        raise ValueError("no faces detected in the range — nothing to blur")
+    smoothed = track_mod.union_window(per_frame, radius=3)
+    out = str(base) + ".mp4"
+    frames = await track_mod.render_blurred(
+        src, out, lambda n, t: smoothed[n] if n < len(smoothed) else [],
+        has_audio, bool(op.get("pixelate")))
+    return out, (f"faces blurred on {sum(1 for b in smoothed if b)}/{frames} "
+                 f"frames ({'pixelate' if op.get('pixelate') else 'gaussian'}, "
+                 "±3-frame smoothing)")
+
+
+async def _op_blur_region(src: str, base, op: dict):
+    """Tracked blur patch (plates/logos/bystanders): follow the given box
+    and blur what it covers."""
+    import asyncio as _aio
+    import bisect
+
+    import track as track_mod
+
+    box = _op_box(op)
+    start = float(op.get("start", 0.0))
+    end = op.get("end")
+    info = await probe(src)
+    has_audio = audio_stream(info) is not None
+    result = await _aio.to_thread(
+        track_mod.track_span, src, box, start,
+        float(end) if end is not None else None)
+    smoothed = track_mod.smooth_path(result["points"], 0.3)
+    ts = [p["t"] for p in smoothed]
+
+    def boxes_at(n: int, t: float) -> list:
+        if not ts or t < ts[0] - 0.05 or t > ts[-1] + 0.05:
+            return []
+        i = min(len(ts) - 1, bisect.bisect_left(ts, t))
+        p = smoothed[i]
+        return [(p["cx"] - p["w"] / 2, p["cy"] - p["h"] / 2, p["w"], p["h"])]
+
+    out = str(base) + ".mp4"
+    await track_mod.render_blurred(src, out, boxes_at, has_audio,
+                                   bool(op.get("pixelate")))
+    note = (f"blur followed the region {ts[0]:.2f}-{ts[-1]:.2f}s "
+            f"({result['engine']} tracker)")
+    warn = track_mod.distinct_warning(result["distinctiveness"])
+    if warn:
+        note += "; " + warn
+    if result["lost_at"] is not None:
+        note += (f"; target lost at {result['lost_at']:.2f}s — blur stops "
+                 "there (re-run with a fresh box to continue)")
+    return out, note
 
 
 async def _op_stabilize(src: str, base, op: dict):
@@ -546,6 +685,8 @@ _OPS = {
     "remove": _op_remove,
     "crop": _op_crop,
     "smart_reframe": _op_smart_reframe,
+    "blur_faces": _op_blur_faces,
+    "blur_region": _op_blur_region,
     "stabilize": _op_stabilize,
     "resize": _op_resize,
     "speed": _op_speed,
