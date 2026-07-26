@@ -3,7 +3,7 @@
   "server_name": "platform",
   "label": "Browser (Camoufox)",
   "description": "Anti-detect browser automation via Playwright MCP",
-  "version": "0.0.72",
+  "version": "0.0.73",
   "category": "community",
 
   "server": {
@@ -13,7 +13,7 @@
     "port": 8931,
     "health_endpoint": "/mcp",
     "url_template": "http://${docker_mcp_host}:${port}",
-    "image": "ghcr.io/otodock/camoufox:0.0.72",
+    "image": "ghcr.io/otodock/camoufox:0.0.73",
     "source": "docker:camoufox + @playwright/mcp@0.0.68"
   },
 

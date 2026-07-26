@@ -279,7 +279,9 @@ async def proxy_handler(request):
         )
     except Exception as e:
         log.warning("upstream %s %s: %s", request.method, path, e)
-        return web.Response(status=502, text=f"sidecar upstream error: {e}")
+        # Detail is already logged; the body stays generic so upstream
+        # failure text can never leak through the proxied response.
+        return web.Response(status=502, text="sidecar upstream error")
 
     # Register the session id the server assigns on initialize.
     resp_sid = upstream.headers.get("mcp-session-id", "")
