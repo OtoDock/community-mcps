@@ -165,6 +165,21 @@ Security posture: per-render throwaway context, **network egress blocked** excep
 `file://`/`data:` and an in-container asset endpoint serving the mounted workspace
 (no external fetch, no LAN probing from agent-authored JS); frame-count/duration caps.
 
+Authoring contract (0.3.2, 2026-08): the tool runs PLATFORM-side, so `file://`
+references in the document are localized through `_resolve_path` before load —
+use workspace paths; any unresolvable ref is a hard preflight error listing every
+offender (historically these failed silently: broken images, fallback fonts, a
+"successful" capture). A rewrite into a tmp copy injects `<base href>` to the
+original directory so relative refs keep working; failed sub-resource loads are
+surfaced as a WARNING in the result. Timing: capture starts after a
+`SETTLE_SECONDS` (1.0 s) virtual-clock settle; `window.VT_T0` (ms) is injected
+before page scripts run, `<html>` gains class `vt-capture` and a
+`vt:capture-start` event fires at frame 0 — JS timelines anchor
+`t = (Date.now() - (window.VT_T0 ?? 0)) / 1000` (on clock-install failure VT_T0
+re-anchors to the real clock at capture start). CSS/WAAPI animations are seeked
+0-based per frame and need no anchor. Stills (`render_still`) run 0-anchored
+with no settle.
+
 ## Out of scope v1 (companions)
 
 - **Music/SFX sourcing & generation** — separate future music-gen MCP (ElevenLabs
@@ -408,6 +423,28 @@ The fix (renderer + compiler, `plan_segments`/`window_pruned`/
   RAM-safe, just not decode-pruned. Every window recomputes the same
   timeline, so frame pts partition exactly at the edges: the concat is
   frame-exact, cuts stay cuts.
+- **Frame-grid invariant (0.3.2, 2026-08).** "Identical duration" must hold
+  in FRAMES, not just seconds, or window heads drift onto bare background:
+  an unpinned `color=…:d=X` source emits **ceil(X·fps)** frames while the
+  media pin (`tpad`/`trim=end`/`fps`) emits **round-half-away(X·fps)** —
+  one extra frame per fill whose `frac(d·fps) ∈ (0, 0.5)` (speeded clips
+  land there systematically: `span/speed` is rarely on the grid). Three
+  guarantees now enforce the invariant: (1) fills and image clips carry a
+  `trim=end_frame=N` pin with `N = composition.frames_for(d, fps)` —
+  half-AWAY rounding, matching ffmpeg; never Python's banker's `round()`;
+  (2) `compute_timeline` quantizes every clip duration and xfade overlap to
+  the frame grid, so entry boundaries and window splits are frame-aligned
+  by construction; (3) when a `time_range` render has overlays, one cloned
+  `tpad` frame on the main branch before compositing keeps framesync's
+  EOF-status pts past the final frame (otherwise the fps re-stamp in the
+  window tail flushes everything strictly below that status and the LAST
+  timeline frame vanishes whenever an overlay is still active at stream
+  end). Regression suite: `__tests__/test_frame_grid.py` (windowed vs
+  single frame-for-frame identity on off-grid durations, an exact-half
+  3.75 s clip, a speeded clip, and a spanning alpha overlay). Known
+  remaining nit: at one bare-cut window boundary a first frame can differ
+  slightly in CONTENT (not count) from the single graph — pre-existing
+  before 0.3.2, single-frame, tracked upstream.
 - **Audio renders once.** One full-timeline audio-only pass (frames are
   ~KB) keeps amix, sidechain ducking and two-pass loudnorm semantics
   identical to a single-pass render.

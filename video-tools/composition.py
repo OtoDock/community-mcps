@@ -28,6 +28,7 @@ plus asset-aware when a `media_info` map (path → probe summary) is supplied.
 
 import copy
 import json
+import math
 from pathlib import Path
 
 import captions as captions_mod
@@ -207,6 +208,15 @@ def base_track(comp: dict) -> dict:
     raise CompositionError("composition has no base 'video' track")
 
 
+def frames_for(dur: float, fps: float) -> int:
+    """Frame count ffmpeg's CFR pipeline produces for a duration: half-AWAY
+    rounding (112.5 → 113 at fps=30), matching the tpad/trim=end/fps= media
+    pin. Python's round() is banker's (112.5 → 112) — never use it for frame
+    math, and never let a duration reach ffmpeg unpinned: color sources emit
+    ceil(d·fps), one frame MORE than media for frac(d·fps) ∈ (0, 0.5)."""
+    return int(math.floor(dur * fps + 0.5))
+
+
 def compute_timeline(comp: dict, media_info: dict | None = None) -> dict:
     """Resolve timeline placement.
 
@@ -216,15 +226,22 @@ def compute_timeline(comp: dict, media_info: dict | None = None) -> dict:
     predecessor (xfade), shortening the total.
     """
     clips = base_track(comp).get("clips", [])
+    fps = float((comp.get("project") or {}).get("fps", 30) or 30)
     placed = []
     cursor = 0.0
     for i, clip in enumerate(clips):
+        # Quantize every duration (and xfade overlap) to the frame grid so
+        # entry boundaries, fill substitutions and window splits land on
+        # frame pts by construction. Media frame counts are unchanged (the
+        # per-clip pin reads the clip, not this entry); a sub-half-frame
+        # clip clamps to one frame rather than vanishing.
         d = clip_duration(clip, media_info)
+        d = max(1, frames_for(d, fps)) / fps
         trans = clip.get("transition_in") or None
         tdur = 0.0
         if (trans and i > 0
                 and trans.get("type", "cut") not in ("cut",) + PRESET_TRANSITIONS):
-            tdur = float(trans.get("duration", 0.5))
+            tdur = frames_for(float(trans.get("duration", 0.5)), fps) / fps
         start = cursor - tdur
         placed.append({
             "index": i,

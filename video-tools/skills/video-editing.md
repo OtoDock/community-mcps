@@ -309,7 +309,15 @@ deterministic clip back:
   opacity, 2–4 elements max per clip, match the video's color palette and
   fonts (Inter/Roboto/Noto/emoji available), end states via
   `animation-fill-mode: forwards`. No network — inline everything;
-  workspace images via `file://` absolute paths.
+  reference workspace assets by WORKSPACE path in `file://` refs (the
+  renderer runs platform-side and resolves them; an unresolvable ref fails
+  the render loudly before capture — fix the path or inline the asset as a
+  data: URI).
+- JS timing contract: capture starts after a 1s virtual-clock settle.
+  Anchor rAF/JS timelines as `const t = (Date.now() - (window.VT_T0 ?? 0))
+  / 1000` — `VT_T0` is injected before your scripts run, `<html>` gains
+  class `vt-capture` and a `vt:capture-start` event fires at frame 0.
+  CSS/WAAPI animations need no anchor (each frame is seeked 0-based).
 - **Stills** (`render_still`): the same engine, one frame — thumbnails
   (1280×720 with `scale: 2` for crisp text), social cards, photo collages,
   quote cards. Layer real photos with `background-image`/`object-fit`, CSS

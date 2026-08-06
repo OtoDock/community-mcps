@@ -380,10 +380,21 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
 
     if kind == "fill":
         dur = float(clip["duration"])
+        # color=…:d=X emits ceil(X·fps) frames while the media pin emits
+        # round-half-away(X·fps) — for frac(d·fps) ∈ (0, 0.5) that is one
+        # frame MORE per fill, and window_pruned's fill substitutions
+        # accumulated the overshoot until every window opened on bare
+        # background frames (the windowed "black flash" bug, 2026-08). Over-generate
+        # one frame, then pin to the exact media frame count; the source
+        # runs at r=fps so end_frame counts project frames exactly, and the
+        # trailing fps= re-stamps the rate metadata trim clears.
         src = (f"color=c={ff_color(clip['fill'])}:s={w}x{h}:r={_f(fps)}"
-               f":d={_f(dur)}")
+               f":d={_f(dur + 1.0 / fps)}")
+        pin = [f"trim=end_frame={comp_mod.frames_for(dur, fps)}",
+               f"fps={_f(fps)}"]
         return g.source_chain(
-            src, ["format=yuv420p", "setsar=1"] + grade + ["settb=AVTB"], out)
+            src, pin + ["format=yuv420p", "setsar=1"] + grade + ["settb=AVTB"],
+            out)
 
     if kind == "image":
         dur = float(clip["duration"])
@@ -392,7 +403,12 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
         # stream's CFR metadata, and xfade rejects a non-constant-rate input
         # ("current rate of 1/0 is invalid") — an image clip on either side
         # of a transition killed the whole graph with EINVAL (-22).
-        filters = ["setpts=PTS-STARTPTS", f"fps={_f(fps)}"]
+        # The end_frame pin makes the count demuxer-independent: `-loop 1
+        # -t D` happens to emit round(d·fps) on ffmpeg 7.x, but that is
+        # image2 behavior, not a contract — pin it like fills and media.
+        filters = ["setpts=PTS-STARTPTS", f"fps={_f(fps)}",
+                   f"trim=end_frame={comp_mod.frames_for(dur, fps)}",
+                   f"fps={_f(fps)}"]
         filters += _fit_filters(clip.get("fit", "cover"), w, h, bg)
         return g.chain(f"{idx}:v", filters + tail, out)
 
@@ -794,6 +810,18 @@ def compile_render(
 
     vout = ""
     if want_v:
+        has_overlays = any(t.get("kind") == "overlay" and t.get("clips")
+                           for t in comp.get("tracks", []))
+        if time_range and has_overlays:
+            # framesync (the overlay filter) forwards EOF downstream with a
+            # status pts equal to the LAST main frame's pts, and the window
+            # tail's fps re-stamp flushes only frames strictly below that
+            # status — so the final timeline frame of a windowed/sliced
+            # render vanished whenever an overlay was still active at
+            # stream end (2026-08). One cloned pad frame on
+            # the MAIN branch moves the status pts one frame past the end;
+            # the window trim (end=t1, exclusive) never emits the clone.
+            v = g.chain(v, ["tpad=stop=1:stop_mode=clone"], g.label("vpad"))
         # Overlays composite in track order, then clip order (z-order).
         for track in comp.get("tracks", []):
             if track.get("kind") != "overlay":
@@ -998,7 +1026,10 @@ def window_pruned(comp: dict, media_info: dict, t0: float, t1: float,
     contribute frames to the (padded) window become solid-color fills of
     IDENTICAL duration — timeline math, fold structure and every transition
     offset stay bit-identical, the substituted spans are trimmed away —
-    and overlays outside the window are dropped. A plain media clip that
+    and overlays outside the window are dropped. Duration identity holds in
+    FRAMES, not just seconds, only because the fill chain pins its frame
+    count to the media rounding (see _base_video_chain) — do not relax that
+    pin. A plain media clip that
     only PARTIALLY overlaps the window is reduced to fill + sub-clip
     (+ fill) with the same total duration: the sub-clip advances its
     in-point onto the window (input -ss via _seek), so a long continuous
@@ -1042,6 +1073,10 @@ def window_pruned(comp: dict, media_info: dict, t0: float, t1: float,
             new_clips.append(clip)
             continue
         cin, cout, _ = _clip_span(clip, media_info)
+        # lead/tail are TIMELINE seconds; in/out are SOURCE seconds. They
+        # only coincide because _subclip_eligible pins speed to 1.0 — the
+        # explicit factor keeps this correct if that guard is ever relaxed.
+        clip_speed = float(clip.get("speed", 1.0))
         sub = copy.deepcopy(clip)
         if lead:
             fill = {"fill": bg, "duration": lead}
@@ -1049,9 +1084,9 @@ def window_pruned(comp: dict, media_info: dict, t0: float, t1: float,
                 fill["transition_in"] = copy.deepcopy(clip["transition_in"])
                 sub.pop("transition_in", None)
             new_clips.append(fill)
-            sub["in"] = cin + lead
+            sub["in"] = cin + lead * clip_speed
             sub["_seek"] = max(0.0, sub["in"] - SEEK_PREROLL)
-        sub["out"] = cout - tail if tail else cout
+        sub["out"] = cout - tail * clip_speed if tail else cout
         new_clips.append(sub)
         if tail:
             new_clips.append({"fill": bg, "duration": tail})
@@ -1084,11 +1119,13 @@ def bare_cut_points(comp: dict, media_info: dict) -> list[float]:
 def estimate_window_bytes(comp: dict, media_info: dict,
                           t0: float, t1: float) -> float:
     """Worst-case decoded-frame bytes ffmpeg buffers while rendering
-    [t0, t1): the window's base frames at SOURCE resolution (the pile sits
-    before the canvas scale) plus every overlapping overlay's full clip in
-    rgba. A deliberate over-estimate — the cost of an extra segment split
-    is a few seconds of re-opened inputs, the cost of an under-estimate is
-    an OOM-killed host."""
+    [t0, t1): the window's base frames at SOURCE resolution and rate (the
+    pile sits before the canvas scale; a speeded or non-prunable clip
+    decodes its source span, not its timeline overlap) plus every
+    overlapping overlay's in-window overlap in rgba. A deliberate
+    over-estimate — the cost of an extra segment split is a few seconds of
+    re-opened inputs, the cost of an under-estimate is an OOM-killed
+    host."""
     proj = comp["project"]
     fps = float(proj.get("fps", 30))
 
@@ -1104,7 +1141,19 @@ def estimate_window_bytes(comp: dict, media_info: dict,
         overlap = min(e["end"], t1) - max(e["start"], t0)
         if overlap <= 0 or comp_mod.clip_source_kind(clip) == "fill":
             continue
-        total += overlap * fps * src_pixels(clip) * 1.5
+        # Count SOURCE frames decoded, not timeline frames shown: the
+        # source's own fps (60fps footage on a 30fps timeline decodes 2×),
+        # and a speeded clip consumes `speed` source seconds per timeline
+        # second. Non-sub-clip-eligible clips decode their FULL source span
+        # in any window that touches them (frames drop only at the final
+        # tail trim), so their cost is span-shaped, not overlap-shaped.
+        mi = media_info.get(clip.get("src") or clip.get("image")) or {}
+        src_fps = float(mi.get("fps") or 0) or fps
+        if _subclip_eligible(clip):
+            decoded = overlap
+        else:
+            decoded = e["duration"] * float(clip.get("speed", 1.0))
+        total += decoded * src_fps * src_pixels(clip) * 1.5
     for track in comp.get("tracks", []):
         if track.get("kind") != "overlay":
             continue
@@ -1113,6 +1162,13 @@ def estimate_window_bytes(comp: dict, media_info: dict,
             dur = comp_mod.clip_duration(clip, media_info)
             overlap = min(start + dur, t1) - max(start, t0)
             if overlap > 0:
+                # Deliberately the in-window OVERLAP, not the full clip:
+                # overlay frames stream through the compositor and drop at
+                # the window trim (FIFO footprint), and charging a long
+                # watermark's full span would mark every window over-budget
+                # (see test_estimate_overlay_clamped_to_window_overlap).
+                # The decode-from-0 cost of unpruned overlays is CPU, not
+                # buffered RAM.
                 total += overlap * fps * src_pixels(clip) * 4
     return total
 

@@ -124,8 +124,10 @@ def test_clip_duration_uses_ramp_math():
     assert comp_mod.clip_duration(clip, MEDIA) == pytest.approx(
         speedramp.output_duration(6.0, {"from": 1.0, "to": 0.4}))
     tl = comp_mod.compute_timeline(_comp([clip]), MEDIA)
+    # compute_timeline quantizes durations to the frame grid (2026-08).
+    exact = speedramp.output_duration(6.0, {"from": 1.0, "to": 0.4})
     assert tl["duration"] == pytest.approx(
-        speedramp.output_duration(6.0, {"from": 1.0, "to": 0.4}), abs=1e-4)
+        comp_mod.frames_for(exact, 30) / 30, abs=1e-5)
 
 
 def _errors(comp):
@@ -229,9 +231,11 @@ def test_compile_expands_ramp_into_segments():
     # 7 chains → 6 pairwise concat folds, source span sliced contiguously.
     assert g.count("concat=n=2:v=1:a=0") == 6
     assert "trim=start=1:end=2" in g and "trim=start=5:end=6" in g
-    assert plan.duration == pytest.approx(
-        3.0 + speedramp.output_duration(6.0, {"from": 1.0, "to": 0.4}),
-        abs=1e-3)
+    # Each expanded segment quantizes to the frame grid independently
+    # (2026-08), so the total is the sum of per-segment frame counts.
+    seg_frames = sum(comp_mod.frames_for(1.0 / s, 30)
+                     for s in (0.95, 0.85, 0.75, 0.65, 0.55, 0.45))
+    assert plan.duration == pytest.approx((90 + seg_frames) / 30, abs=1e-5)
 
 
 def test_compile_preset_tail_lands_on_last_segment():
@@ -246,5 +250,5 @@ def test_compile_preset_tail_lands_on_last_segment():
     g = plan.graph
     # flash_cut tail = eq dip enabled at clip_dur - max(1.5/fps, 0.03);
     # clip_dur here is the LAST SEGMENT's duration (1 s source at 0.45x).
-    last_seg_dur = round(1.0 / 0.45, 6)
+    last_seg_dur = comp_mod.frames_for(1.0 / 0.45, 30) / 30
     assert f"gte(t,{last_seg_dur - 0.05:.6g}" in g

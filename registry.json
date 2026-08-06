@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-07-22T19:14:18Z",
+  "updated_at": "2026-08-06T15:44:51Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -8,11 +8,11 @@
       "label": "Browser (Camoufox)",
       "description": "Anti-detect browser automation via Playwright MCP",
       "category": "community",
-      "version": "0.0.72",
+      "version": "0.0.73",
       "runtime": "docker",
       "source": "docker:camoufox + @playwright/mcp@0.0.68",
       "version_constraint": "",
-      "manifest_hash": "e8ea38f034c98b6a",
+      "manifest_hash": "7df2d1a997b5085f",
       "manifest_url": "./camoufox/manifest.json",
       "readme_url": "./camoufox/README.md",
       "icon_url": null,
@@ -27,7 +27,7 @@
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 48750,
+      "size_bytes": 48883,
       "deprecated": false,
       "patched": false,
       "patch_note": null
@@ -243,11 +243,11 @@
       "label": "Video Tools",
       "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
       "category": "community",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "runtime": "docker",
       "source": "docker:video-tools-mcp (ffmpeg + libass)",
       "version_constraint": "",
-      "manifest_hash": "fe43f98047e74155",
+      "manifest_hash": "c19f8c6d121d8750",
       "manifest_url": "./video-tools/manifest.json",
       "readme_url": "./video-tools/README.md",
       "icon_url": null,
@@ -263,7 +263,7 @@
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 1833463,
+      "size_bytes": 1860177,
       "deprecated": false,
       "patched": false,
       "patch_note": null

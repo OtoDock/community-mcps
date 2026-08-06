@@ -375,9 +375,17 @@ TOOLS = [
             "composition as an OVERLAY clip src), full-frame title cards, "
             "and standalone social assets (gif/webp/mp4).\n"
             "Rules: design for the exact width×height given; the page has NO "
-            "network access — inline all CSS/JS, reference workspace images "
-            "with file:// absolute paths; system fonts (Inter, Roboto, Noto, "
-            "color emoji, JetBrains Mono) are available by name; for "
+            "network access — inline all CSS/JS. file:// references are "
+            "resolved through the agent WORKSPACE (use workspace paths — "
+            "host/satellite absolute paths do not exist here); any "
+            "unresolvable file:// ref fails the render loudly before "
+            "capture. Timing contract: capture starts after a "
+            "1s virtual-clock settle — anchor JS timelines with "
+            "t=(Date.now()-(window.VT_T0??0))/1000 (VT_T0 is injected; a "
+            "'vt:capture-start' event fires and <html> gets class "
+            "'vt-capture' at frame 0). CSS/WAAPI animations need no anchor "
+            "(stepped 0-based automatically). System fonts (Inter, Roboto, "
+            "Noto, color emoji, JetBrains Mono) are available by name; for "
             "transparent output leave the page background unset."
         ),
         inputSchema={
@@ -413,10 +421,12 @@ TOOLS = [
             "social post cards, photo collages, quote cards, OG images. "
             "transparent=true → alpha PNG usable as a composition overlay "
             "or for further compositing.\n"
-            "Same rules as motion clips: no network — inline CSS, reference "
-            "workspace images by absolute file:// path; system fonts by "
-            "name; 'at' freezes any animation at that second. The result is "
-            "shown inline to the user automatically."
+            "Same rules as motion clips: no network — inline CSS; file:// "
+            "refs resolve through the agent workspace and unresolvable ones "
+            "fail loudly before capture; system fonts by name; 'at' freezes "
+            "any animation at that second (stills run on a 0-anchored "
+            "clock — no settle, no VT_T0 offset). The result is shown "
+            "inline to the user automatically."
         ),
         inputSchema={
             "type": "object",

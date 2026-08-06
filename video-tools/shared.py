@@ -157,16 +157,22 @@ def _resolve_path(path: str) -> str:
     the proxy normalizes them all. Works for output paths too (the target file
     need not exist; its resolved parent is what matters).
     """
+    # Boundary check needs the trailing slash: a bare startswith("/agents")
+    # admits sibling escapes like /agents/../agentsevil/x → /agentsevil/x.
+    def _inside_mount(resolved: str) -> bool:
+        return (resolved == MOUNT_AGENTS_DIR
+                or resolved.startswith(MOUNT_AGENTS_DIR + "/"))
+
     if path.startswith(MOUNT_AGENTS_DIR + "/") or path == MOUNT_AGENTS_DIR:
         resolved = str(Path(path).resolve())
-        if resolved.startswith(MOUNT_AGENTS_DIR):
+        if _inside_mount(resolved):
             return _unicode_match_on_disk(resolved)
 
     agents_rel, reason = _resolve_via_proxy(path)
     if agents_rel:
         cp = MOUNT_AGENTS_DIR + ("/" + agents_rel.lstrip("/"))
         resolved = str(Path(cp).resolve())
-        if resolved.startswith(MOUNT_AGENTS_DIR):
+        if _inside_mount(resolved):
             return _unicode_match_on_disk(resolved)
 
     raise ValueError(

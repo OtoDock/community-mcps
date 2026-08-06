@@ -108,3 +108,55 @@ def test_motion_rejects_bad_args(tmp_path, monkeypatch):
         "html": "<html/>", "duration": 999,
         "output_path": str(tmp_path / "x.mp4")}))
     assert "duration" in too_long
+
+
+def test_motion_vt_t0_anchor(tmp_path, monkeypatch):
+    """The capture-anchor contract: window.VT_T0 is injected before page
+    scripts run, equals the settle offset (1000 ms), Date.now() at capture
+    start equals it, and the vt:capture-start event fires with the same t0.
+    The page turns red only when every condition holds."""
+    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    out = str(tmp_path / "anchor.mp4")
+    html = """<!doctype html><html><head><style>
+      body { margin: 0; background: #000; }
+    </style></head><body><script>
+      const early = window.VT_T0;   // must exist before any page script
+      window.addEventListener('vt:capture-start', (e) => {
+        if (early === 1000 && e.detail.t0 === 1000
+            && Math.abs(Date.now() - window.VT_T0) < 1)
+          document.body.style.background = '#ff0000';
+      });
+    </script></body></html>"""
+    text = _run(motion.handle_render_motion_clip({
+        "html": html, "width": 64, "height": 64,
+        "fps": 10, "duration": 0.4, "output_path": out,
+    }))
+    assert not text.startswith("Error"), text
+
+    import subprocess
+    from fftools import FFMPEG
+    png = tmp_path / "anchor.png"
+    subprocess.run(
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+         "-i", out, "-frames:v", "1", str(png)],
+        check=True, timeout=120)
+    from PIL import Image
+    r, g, b = Image.open(png).convert("RGB").resize((1, 1)).getpixel((0, 0))
+    assert r > 180 and g < 60 and b < 60, (r, g, b)
+
+
+def test_motion_reports_failed_subresources(tmp_path, monkeypatch):
+    """A file:// ref that RESOLVES but points at a missing file renders,
+    but the result must carry the sub-resource warning (silent breakage
+    was the original bug's cost)."""
+    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    out = str(tmp_path / "warn.mp4")
+    missing = tmp_path / "missing-asset.png"
+    html = (f'<!doctype html><html><body style="background:#101014">'
+            f'<img src="{missing.as_uri()}"></body></html>')
+    text = _run(motion.handle_render_motion_clip({
+        "html": html, "width": 64, "height": 64,
+        "fps": 10, "duration": 0.3, "output_path": out,
+    }))
+    assert not text.startswith("Error"), text
+    assert "WARNING" in text and "missing-asset.png" in text

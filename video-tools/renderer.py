@@ -458,10 +458,15 @@ async def _render_segmented(resolved: dict, media_info: dict,
     audio. Audio renders in ONE cheap full-timeline pass — audio frames
     are never the memory problem, and splitting the mix would break amix,
     ducking and two-pass loudnorm semantics. Every window recomputes the
-    identical timeline (fills preserve every duration and transition
-    offset), so frame pts partition exactly at the window edges: the
-    concat is frame-exact and cuts stay cuts. Returns the last window's
-    RenderPlan (canvas/fps are identical across windows)."""
+    identical timeline, and frame pts partition exactly at the window edges
+    ONLY because fills are frame-count pinned to the media rounding
+    (trim=end_frame in _base_video_chain) and compute_timeline quantizes
+    durations to the frame grid — an unpinned color source emits ceil(d·fps)
+    frames, one more than media for off-grid durations, which drifted every
+    window head onto bare background (found on a real 52 s production
+    render, 2026-08). The concat is
+    frame-exact and cuts stay cuts. Returns the last window's RenderPlan
+    (canvas/fps are identical across windows)."""
     aplan = compile_render(resolved, media_info, mode=mode, streams="a")
     agraph = aplan.graph
     if aplan.loudnorm:
