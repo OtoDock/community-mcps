@@ -12,8 +12,14 @@ services:
     # limit the kernel OOM-kills the biggest process (Firefox), the navigate
     # probe fails, and the watchdog recycles via `restart: always` → the MCP
     # self-heals instead of starving the host until session admission stalls.
-    mem_limit: 3g
-    memswap_limit: 3g
+    # Overridable per install (set the var in this folder's .env — the
+    # platform's env writer preserves undeclared keys); memswap tracks
+    # mem_limit so an override never opens swap headroom. NOTE: the entrypoint
+    # watchdog's 2.5 GiB memory-recycle threshold (MEM_RECYCLE_BYTES,
+    # entrypoint.sh) is tuned to the 3g default — raising the env above 3g
+    # should come with a matching review of that threshold.
+    mem_limit: ${OTODOCK_CAMOUFOX_MEM_LIMIT:-3g}
+    memswap_limit: ${OTODOCK_CAMOUFOX_MEM_LIMIT:-3g}
     ports:
       # Loopback-only: an unauthenticated headless browser must not be
       # network-reachable (SSRF / cross-tenant drive-by). Local agents + the

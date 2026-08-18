@@ -6,9 +6,12 @@ services:
     # Renders are memory-heavy (ffmpeg filtergraphs buffer frames at every
     # xfade/overlay junction) — bound explicitly so the platform's injected
     # 2g default never applies and a runaway render OOM-kills ffmpeg inside
-    # the container instead of starving the host.
-    mem_limit: 4g
-    memswap_limit: 4g
+    # the container instead of starving the host. Overridable per install
+    # (set the var in this folder's .env — the platform's env writer preserves
+    # undeclared keys); memswap tracks mem_limit so an override never opens
+    # swap headroom.
+    mem_limit: ${OTODOCK_VIDEOTOOLS_MEM_LIMIT:-4g}
+    memswap_limit: ${OTODOCK_VIDEOTOOLS_MEM_LIMIT:-4g}
     ports:
       # Loopback-only: video-tools RW-mounts the whole agents tree, so its
       # port must never be reachable off-host. The host-local proxy reaches
