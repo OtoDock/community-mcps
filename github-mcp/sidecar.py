@@ -307,9 +307,32 @@ async def mcp_endpoint(request: Request) -> Response:
         raise HTTPException(400, "Invalid JSON body")
 
     session_id = request.headers.get(SESSION_HEADER, "") or str(uuid.uuid4())
+    method = payload.get("method") if isinstance(payload, dict) else None
 
     async with SESSIONS_LOCK:
         sess = SESSIONS.get(session_id)
+        # Streamable-HTTP spec: a non-`initialize` request on an unknown (or
+        # expired/evicted) session id MUST get 404 so the client falls back
+        # to a fresh `initialize` and re-negotiates the protocol revision.
+        # The old behavior — silently minting a subprocess and auto-
+        # handshaking it — masked the server's real (older) revision from
+        # newer clients doing the 2026-07-28 initialize-less reconnect: the
+        # relayed call SUCCEEDED, the client concluded the server implements
+        # the new revision, then failed every result on schema validation
+        # ("missing required resultType"). Observed live with Claude Code
+        # 2.1.243 resuming sessions against github-mcp-server ≤ 2025-11-25.
+        if sess is None and method != "initialize":
+            raise HTTPException(404, "Unknown or expired Mcp-Session-Id")
+        if sess is not None and method == "initialize":
+            # Re-initialize on a live session (client resumed/reconnected):
+            # the upstream binary rejects a duplicate `initialize` on its
+            # stdin, so restart the subprocess and let the handshake run
+            # for real — the client gets a genuine negotiation, not an error.
+            await sess.close()
+            logger.info(
+                "session %s: re-initialize, restarting subprocess", session_id,
+            )
+            sess = None
         if sess is None or sess.bearer != bearer:
             if sess is not None:
                 # Same session id, different bearer → token refresh upstream.

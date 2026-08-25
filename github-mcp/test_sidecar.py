@@ -103,27 +103,90 @@ async def test_sidecar_spawns_subprocess_with_bearer_in_env(client):
 
 
 @pytest.mark.asyncio
-async def test_sidecar_auto_handshake_for_stateless_client(client):
-    """Stateless client sends a non-initialize method as its first request.
-    Sidecar must do the initialize handshake internally before routing,
-    consuming one extra stdout line (the init response)."""
-    proc = _build_mock_proc([
-        _INIT_RESP,  # internal initialize response (discarded)
-        b'{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}\n',  # real response
-    ])
-    with patch(
-        "sidecar.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
-    ):
-        r = await client.post(
+async def test_sidecar_unknown_session_non_initialize_404(client):
+    """Streamable-HTTP spec: a non-initialize request on an unknown (or
+    absent) Mcp-Session-Id gets 404 so the client falls back to a real
+    ``initialize`` and re-negotiates the protocol revision. The old silent
+    auto-handshake here masked the server's revision from newer clients
+    doing the 2026-07-28 initialize-less reconnect (observed live: Claude
+    Code 2.1.243 then required ``resultType`` the old binary never sends)."""
+    spawn = AsyncMock()
+    with patch("sidecar.asyncio.create_subprocess_exec", spawn):
+        r1 = await client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-            headers={"Authorization": "Bearer t"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "never-seen"},
+        )
+        r2 = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            headers={"Authorization": "Bearer t"},  # no session header at all
+        )
+    assert r1.status_code == 404
+    assert r2.status_code == 404
+    spawn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sidecar_reinitialize_restarts_subprocess(client):
+    """``initialize`` on a LIVE session (client resumed/reconnected) restarts
+    the subprocess and passes the handshake through for real — the upstream
+    binary would reject a duplicate ``initialize`` on the same stdin."""
+    proc_a = _build_mock_proc([
+        b'{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}\n',
+    ])
+    proc_b = _build_mock_proc([
+        b'{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25"}}\n',
+    ])
+    spawn_mock = AsyncMock(side_effect=[proc_a, proc_b])
+    with patch("sidecar.asyncio.create_subprocess_exec", spawn_mock):
+        r1 = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-ri"},
+        )
+        r2 = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "initialize"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-ri"},
+        )
+    assert r1.status_code == r2.status_code == 200
+    assert r2.json()["result"]["protocolVersion"] == "2025-11-25"
+    assert spawn_mock.call_count == 2
+    proc_a.terminate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sidecar_auto_handshake_after_bearer_rotation(client):
+    """The internal auto-handshake still covers the one legitimate
+    non-initialize cold start: a KNOWN session whose bearer rotated (the
+    subprocess restarts under the client's feet mid-conversation). The new
+    child must be initialized internally before the client's request is
+    routed."""
+    proc_a = _build_mock_proc([
+        b'{"jsonrpc":"2.0","id":1,"result":{}}\n',  # client-driven initialize
+    ])
+    proc_b = _build_mock_proc([
+        _INIT_RESP,  # internal initialize response (discarded)
+        b'{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}\n',  # real response
+    ])
+    spawn_mock = AsyncMock(side_effect=[proc_a, proc_b])
+    with patch("sidecar.asyncio.create_subprocess_exec", spawn_mock):
+        await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            headers={"Authorization": "Bearer old", "Mcp-Session-Id": "sess-ah"},
+        )
+        r = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            headers={"Authorization": "Bearer new", "Mcp-Session-Id": "sess-ah"},
         )
     assert r.status_code == 200
     assert r.json()["result"] == {"tools": []}
     # Verify the internal handshake actually wrote initialize +
-    # notifications/initialized to the child's stdin.
-    writes = [call.args[0] for call in proc.stdin.write.call_args_list]
+    # notifications/initialized to the NEW child's stdin.
+    writes = [call.args[0] for call in proc_b.stdin.write.call_args_list]
     method_calls = []
     for raw in writes:
         try:
@@ -139,17 +202,22 @@ async def test_sidecar_skips_interleaved_notification(client):
     response must be discarded, not mis-returned as the response — the read
     is id-correlated."""
     proc = _build_mock_proc([
-        _INIT_RESP,  # internal handshake initialize response (discarded)
+        b'{"jsonrpc":"2.0","id":0,"result":{}}\n',  # client-driven initialize
         b'{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}\n',
         b'{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}\n',  # the real response
     ])
     with patch(
         "sidecar.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
     ):
+        await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 0, "method": "initialize"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-n"},
+        )
         r = await client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-            headers={"Authorization": "Bearer t"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-n"},
         )
     assert r.status_code == 200
     assert r.json()["result"] == {"tools": []}
@@ -163,15 +231,20 @@ async def test_sidecar_notification_returns_202_empty_body(client):
     untagged enum JsonRpcMessage") and tears the whole session down. The
     notification is still forwarded to the child's stdin."""
     proc = _build_mock_proc([
-        _INIT_RESP,  # internal handshake initialize response (discarded)
+        b'{"jsonrpc":"2.0","id":0,"result":{}}\n',  # client-driven initialize
     ])
     with patch(
         "sidecar.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
     ):
+        await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 0, "method": "initialize"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-202"},
+        )
         r = await client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={"Authorization": "Bearer t"},
+            headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-202"},
         )
     assert r.status_code == 202
     assert r.content == b""
@@ -189,13 +262,18 @@ async def test_sidecar_reuses_subprocess_for_same_session(client):
     """Two requests with the same Mcp-Session-Id reuse one subprocess; the
     initialize handshake only fires on the first."""
     proc = _build_mock_proc([
-        _INIT_RESP,
+        b'{"jsonrpc":"2.0","id":0,"result":{}}\n',  # client-driven initialize
         b'{"jsonrpc":"2.0","id":1,"result":"a"}\n',
         b'{"jsonrpc":"2.0","id":2,"result":"b"}\n',
     ])
     with patch(
         "sidecar.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
     ) as spawn:
+        await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 0, "method": "initialize"},
+            headers={"Authorization": "Bearer same", "Mcp-Session-Id": "sess-1"},
+        )
         r1 = await client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "x"},
@@ -217,7 +295,7 @@ async def test_sidecar_bearer_change_restarts_subprocess(client):
     """Same session id with a different bearer = token rotated upstream;
     sidecar tears down the old child and spawns a new one with the new env."""
     proc_a = _build_mock_proc([
-        _INIT_RESP, b'{"jsonrpc":"2.0","id":1,"result":"old"}\n',
+        b'{"jsonrpc":"2.0","id":1,"result":"old"}\n',  # client-driven initialize
     ])
     proc_b = _build_mock_proc([
         _INIT_RESP, b'{"jsonrpc":"2.0","id":2,"result":"new"}\n',
@@ -226,7 +304,7 @@ async def test_sidecar_bearer_change_restarts_subprocess(client):
     with patch("sidecar.asyncio.create_subprocess_exec", spawn_mock):
         await client.post(
             "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": "x"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
             headers={"Authorization": "Bearer old-token", "Mcp-Session-Id": "sess-r"},
         )
         await client.post(
@@ -244,14 +322,14 @@ async def test_sidecar_bearer_change_restarts_subprocess(client):
 async def test_sidecar_delete_tears_down_session(client):
     """DELETE /mcp with a session id kills the subprocess + drops the entry."""
     proc = _build_mock_proc([
-        _INIT_RESP, b'{"jsonrpc":"2.0","id":1,"result":"x"}\n',
+        b'{"jsonrpc":"2.0","id":1,"result":"x"}\n',  # client-driven initialize
     ])
     with patch(
         "sidecar.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
     ):
         await client.post(
             "/mcp",
-            json={"jsonrpc": "2.0", "id": 1, "method": "x"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
             headers={"Authorization": "Bearer t", "Mcp-Session-Id": "sess-d"},
         )
         assert "sess-d" in sidecar.SESSIONS

@@ -2,7 +2,7 @@
   "name": "github-mcp",
   "label": "GitHub",
   "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "category": "community",
   "server": {
     "runtime": "docker",
@@ -11,7 +11,7 @@
     "port": 8935,
     "health_endpoint": "/health",
     "url_template": "http://${docker_mcp_host}:${port}/mcp",
-    "image": "ghcr.io/otodock/github-mcp:1.0.2",
+    "image": "ghcr.io/otodock/github-mcp:1.1.0",
     "source": "docker:github-mcp"
   },
   "credentials": {

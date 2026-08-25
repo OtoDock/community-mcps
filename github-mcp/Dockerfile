@@ -15,7 +15,10 @@ FROM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache git
 
-ARG GITHUB_MCP_REF=main
+# v1.10.1 (2026-08): first pinned ref — upstream ≥v1.7.0 ships the MCP
+# 2026-07-28 spec (go-sdk 1.7.x), which newer CLI clients (Claude Code
+# ≥2.1.24x) assume on initialize-less reconnects. Bump deliberately.
+ARG GITHUB_MCP_REF=v1.10.1
 ARG GITHUB_MCP_REPO=https://github.com/github/github-mcp-server.git
 
 WORKDIR /src
