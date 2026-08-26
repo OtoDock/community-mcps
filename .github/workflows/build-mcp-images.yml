@@ -23,6 +23,7 @@ on:
       - 'camoufox/**'
       - 'github-mcp/**'
       - 'video-tools/**'
+      - 'm365-mcp/**'
       - '.github/workflows/build-mcp-images.yml'
 
 permissions:
@@ -35,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mcp: [camoufox, github-mcp, video-tools]
+        mcp: [camoufox, github-mcp, video-tools, m365-mcp]
     steps:
       - uses: actions/checkout@v4
 
