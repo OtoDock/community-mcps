@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-08-27T19:32:29Z",
+  "updated_at": "2026-09-04T01:59:37Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -28,6 +28,35 @@
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
       "size_bytes": 49402,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "email-server",
+      "label": "Email",
+      "description": "Email via IMAP/SMTP",
+      "category": "community",
+      "version": "",
+      "runtime": "node",
+      "source": "npm:mcp-mail-server",
+      "version_constraint": "",
+      "manifest_hash": "653ebc2e671126d5",
+      "manifest_url": "./email-server/manifest.json",
+      "readme_url": "./email-server/README.md",
+      "icon_url": null,
+      "tags": [
+        "email",
+        "node"
+      ],
+      "author": "OtoDock",
+      "author_url": "https://github.com/OtoDock",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "1.0.0",
+      "assignment_mode": "auto",
+      "size_bytes": 3474,
       "deprecated": false,
       "patched": false,
       "patch_note": null
