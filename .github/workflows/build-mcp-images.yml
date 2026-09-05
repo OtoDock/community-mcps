@@ -43,6 +43,13 @@ jobs:
       - name: Resolve image tag from manifest
         id: meta
         run: |
+          # An MCP can leave the catalog (unpublished, moved back to staging)
+          # while its matrix entry stays: skip it instead of failing the run.
+          if [ ! -f "${{ matrix.mcp }}/manifest.json" ]; then
+            echo "::notice::${{ matrix.mcp }} is not in the catalog — skipped"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           image=$(python3 -c "import json; print(json.load(open('${{ matrix.mcp }}/manifest.json'))['server'].get('image',''))")
           if [ -z "$image" ]; then
             echo "::notice::${{ matrix.mcp }} has no server.image — nothing to publish"
