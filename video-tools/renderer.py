@@ -24,7 +24,7 @@ import speedramp as speedramp_mod
 import stab as stab_mod
 from compiler import (compile_render, estimate_window_bytes, plan_segments,
                       window_pruned)
-from fftools import FFmpegError, media_duration, probe, run_ffmpeg, stream_fps, video_stream, audio_stream
+from fftools import FFmpegError, media_duration, probe, run_ffmpeg, stream_color, stream_fps, video_stream, audio_stream
 from shared import _notify_file_written, logger
 
 PREVIEW_SHORT_SIDE = 540
@@ -118,6 +118,9 @@ async def probe_media_paths(paths: list[str]) -> dict:
                 "width": vs.get("width"),
                 "height": vs.get("height"),
                 "fps": round(stream_fps(vs), 3),
+                # Stream colour tags (VUI/colr) drive the compiler's head
+                # tag: only fields the probe leaves unknown get a default.
+                "color": stream_color(vs),
             })
             # Alpha WebM (motion clips): the native vp9/vp8 decoder ignores
             # the alpha side-plane — the compiler must force libvpx to keep
@@ -159,8 +162,8 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
         if isinstance(mask, dict) and mask.get("image") in mapping:
             mask["image"] = mapping[mask["image"]]
         col = clip.get("color")
-        if isinstance(col, dict) and col.get("lut") in mapping:
-            col["lut"] = mapping[col["lut"]]
+        if isinstance(col, dict):
+            color_mod.rewrite_lut_refs(col, mapping)
         if isinstance(col, dict) and isinstance(col.get("match"), dict):
             for key in ("ref", "ramp_from", "ramp_to"):
                 ref = col["match"].get(key)
@@ -174,8 +177,8 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
             if isinstance(clip, dict):
                 rewrite(clip)
     proj_color = resolved.get("project", {}).get("color")
-    if isinstance(proj_color, dict) and proj_color.get("lut") in mapping:
-        proj_color["lut"] = mapping[proj_color["lut"]]
+    if isinstance(proj_color, dict):
+        color_mod.rewrite_lut_refs(proj_color, mapping)
     caps = resolved.get("captions")
     if isinstance(caps, dict) and caps.get("source") in mapping:
         caps["source"] = mapping[caps["source"]]
@@ -195,24 +198,30 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
 
 
 def _stage_luts(resolved: dict, tmp: Path, resolve) -> dict[str, str]:
-    """Copy every referenced LUT to a safe tmp name → {ref: tmp path}."""
-    refs: set[str] = set()
+    """Stage every referenced LUT under a safe tmp name → {lut_key: tmp
+    path}. A chain entry with strength < 1 stages a copy blended with
+    identity (color.blend_cube) — the mix costs nothing at render time."""
+    entries: set[tuple[str, float]] = set()
+
+    def collect(spec):
+        if isinstance(spec, dict) and spec.get("lut") is not None:
+            entries.update(color_mod.lut_entries(spec))
+
     for track in resolved.get("tracks", []):
         for clip in track.get("clips", []):
-            col = clip.get("color")
-            if isinstance(col, dict) and col.get("lut"):
-                refs.add(col["lut"])
-    proj_color = resolved.get("project", {}).get("color")
-    if isinstance(proj_color, dict) and proj_color.get("lut"):
-        refs.add(proj_color["lut"])
+            collect(clip.get("color"))
+    collect(resolved.get("project", {}).get("color"))
     luts: dict[str, str] = {}
-    for i, ref in enumerate(sorted(refs)):
+    for i, (ref, strength) in enumerate(sorted(entries)):
         src = color_mod.resolve_lut(ref, resolve if not Path(ref).is_absolute() else (lambda p: p))
         if not Path(src).exists():
             raise ValueError(f"LUT not found: {ref} → {src}")
         dst = tmp / f"lut{i}.cube"
-        shutil.copyfile(src, dst)
-        luts[ref] = str(dst)
+        if strength >= 1.0:
+            shutil.copyfile(src, dst)
+        else:
+            color_mod.blend_cube(src, str(dst), strength)
+        luts[color_mod.lut_key(ref, strength)] = str(dst)
     return luts
 
 

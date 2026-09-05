@@ -4,7 +4,6 @@ window actually follows it across the shot boundary."""
 
 import asyncio
 import subprocess
-from pathlib import Path
 
 import pytest
 

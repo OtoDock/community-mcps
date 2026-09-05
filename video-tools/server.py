@@ -43,14 +43,28 @@ _CLIP_SCHEMA_DOC = (
     "from the canvas center in project px}; color grade: {exposure ±3 EV, "
     "brightness ±0.5, contrast 0.3–2, saturation 0–2.5, gamma 0.4–2.5, "
     "temperature 2000–12000 K, curves {all/r/g/b: [[x,y]…] or "
-    "{preset: name}}, lut: built-in look name or .cube path, "
+    "{preset: name}}, lut: a built-in look name or .cube path, OR a chain "
+    "list applied in order — entries are strings or {lut, strength 0–1} "
+    "(e.g. [\"sony-hlg-709.cube\", {lut: \"filmic\", strength: 0.6}]); "
+    "strength 0–1 = mix of the whole creative grade (hand grade + LUTs) "
+    "against the ungraded frame, the NLE-style intensity control; "
+    "clarity 0–1 (contrast-adaptive sharpen, halo-free) and sharpness 0–1 "
+    "(classic unsharp) run AFTER the LUTs at the render resolution; "
     "match: SHOT COLOR-MATCHING (base clips) — {ref: 'path@seconds'} "
     "grades this clip to sit with that reference frame (drone vs camera, "
     "different takes), or bridge mode {ramp_from: 'clipA.mp4@11.9', "
     "ramp_to: 'clipB.mp4@0.1'} which ramps invisibly between a "
     "grade-matched start and end — THE fix for an AI transition bridge "
     "that doesn't color-match its neighbors (keep the cuts hard); "
-    "strength 0–1}; "
+    "strength 0–1}. COLOUR MANAGEMENT (media clips): the timeline is "
+    "Rec.709; color.input {matrix, primaries, transfer, range} declares the "
+    "SOURCE colorimetry when the file is untagged or mistagged (values like "
+    "bt2020nc / bt2020 / hlg|pq|bt709 / tv|pc — probe_media shows what the "
+    "file carries), and color.convert \"hlg->rec709\" converts HLG BT.2020 "
+    "footage (Sony/Panasonic/phones) into the timeline with a BT.2408 "
+    "reference-white anchor and a highlight knee — no technical LUT "
+    "needed (implies the HLG input tags; input overrides per key; cannot "
+    "combine with match); "
     "transition_in: {type, duration} = the transition INTO this clip from "
     "the previous one; volume_db; mute; stabilize: true or {strength: "
     "low|medium|high, smoothing?, zoom?} — vidstab shake removal for "
@@ -96,8 +110,12 @@ TOOLS = [
         name="probe_media",
         description=(
             "Inspect a media file: container, duration, size, video codec/"
-            "resolution/fps, audio codec/rate/channels. Cheap — use before "
-            "planning any edit."
+            "resolution/fps, the colour tags (matrix / primaries / transfer "
+            "with an HLG|PQ|SDR verdict / range), whether the MP4/MOV "
+            "container carries a colr box (camera files often tag only the "
+            "bitstream), standard tmcd timecode, and audio codec/rate/"
+            "channels. Cheap — use before planning any edit; an HDR verdict "
+            "means the clip needs color.convert in the composition."
         ),
         inputSchema={
             "type": "object",
@@ -207,6 +225,32 @@ TOOLS = [
                 "keyframe_interval": {"type": "number", "default": 0.25},
             },
             "required": ["path", "box"],
+        },
+    ),
+    Tool(
+        name="align_audio",
+        description=(
+            "Find the time offset between two recordings of the same event "
+            "— a camera clip and a separate audio recorder, two cameras, a "
+            "clean voice-over and the scratch track — by GCC-PHAT "
+            "cross-correlation of their audio (works on ambience and room "
+            "tone as well as on speech and clicks; 0.125 ms resolution). "
+            "Returns offset with the convention target_time = ref_time + "
+            "offset, a confidence, and the two ways to apply it in a "
+            "composition (target in = ref.in + offset with the same start, "
+            "or target start = ref.start − offset). max_offset = search "
+            "window in seconds (default 60). Both files need audio; works on "
+            "video or audio files."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string", "description": "Reference media path (the clip that stays put)"},
+                "target": {"type": "string", "description": "Media path to align to the reference"},
+                "max_offset": {"type": "number", "default": 60,
+                               "description": "Largest offset to search, seconds (1–600)"},
+            },
+            "required": ["ref", "target"],
         },
     ),
     Tool(
@@ -534,13 +578,15 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handlers = {}
     # Lazy-load handlers to keep startup fast (librosa/cv2 imports are heavy).
-    if name in ("probe_media", "analyze_video", "analyze_audio", "sample_frames"):
+    if name in ("probe_media", "analyze_video", "analyze_audio", "sample_frames",
+                "align_audio"):
         import analysis
         handlers = {
             "probe_media": analysis.handle_probe_media,
             "analyze_video": analysis.handle_analyze_video,
             "analyze_audio": analysis.handle_analyze_audio,
             "sample_frames": analysis.handle_sample_frames,
+            "align_audio": analysis.handle_align_audio,
         }
     elif name in ("create_composition", "edit_composition",
                   "validate_composition", "render_composition", "render_frames"):

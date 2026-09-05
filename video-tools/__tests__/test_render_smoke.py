@@ -24,7 +24,7 @@ import composition as comp_mod  # noqa: E402
 import quickops  # noqa: E402
 import renderer  # noqa: E402
 import stab  # noqa: E402
-from fftools import FFMPEG, audio_stream, media_duration, probe, video_stream  # noqa: E402
+from fftools import FFMPEG, audio_stream, colr_box, media_duration, probe, stream_color, video_stream  # noqa: E402
 
 
 def _run(coro):
@@ -870,7 +870,6 @@ def test_wow_preset_reel_renders_all_presets(assets):
 
     # flash_cut is the 3rd transition → its cut sits at t = 4.5s. The very
     # next frame is the white flash; compare its luma to a calm frame.
-    import numpy as np
     flash = float(_mean_rgb(out, 4.53).mean())
     calm = float(_mean_rgb(out, 5.2).mean())
     assert flash > calm + 60, (flash, calm)
@@ -1015,6 +1014,258 @@ def test_vfr_source_duration_pinned(tmp_path):
     vs = video_stream(_run(probe(result["output"])))
     vdur = float(vs.get("duration") or 0)
     assert abs(vdur - expected) < 0.1, (vdur, expected)
+
+
+# ---------------------------------------------------------------------------
+# Colour management (0.4.0): 709 timeline contract, HLG convert, grade mix,
+# sharpening, LUT chains, probe report, audio alignment
+# ---------------------------------------------------------------------------
+
+_HLG_TAG = ("setparams=colorspace=bt2020nc:range=tv:color_primaries=bt2020"
+            ":color_trc=arib-std-b67")
+# SDR → HLG: the exact inverse of the convert preset's anchor (SDR white at
+# 203 nits inside a 1000-nit HLG container).
+_SDR_TO_HLG = ("setparams=colorspace=bt709:range=tv:color_primaries=bt709"
+               ":color_trc=bt709,zscale=t=linear:npl=100,format=gbrpf32le,"
+               "exposure=exposure=-2.3,"
+               "zscale=p=bt2020:t=arib-std-b67:m=bt2020nc:r=tv:npl=1000,"
+               "format=yuv420p")
+
+
+def _stored_yuv(path, x, y, t=0.2, size=8):
+    """Stored (un-converted) yuv420p values of a size×size patch."""
+    import numpy as np
+    proc = subprocess.run(
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-ss", f"{t:.3f}",
+         "-i", str(path), "-frames:v", "1",
+         "-vf", f"crop={size}:{size}:{x}:{y},format=yuv420p",
+         "-f", "rawvideo", "-"], capture_output=True, check=True)
+    b = np.frombuffer(proc.stdout, np.uint8)
+    n = size * size
+    return (float(b[:n].mean()), float(b[n:n + n // 4].mean()),
+            float(b[n + n // 4:].mean()))
+
+
+def _stream_tags(path):
+    return stream_color(video_stream(_run(probe(str(path)))))
+
+
+def _frame_rgb(path, t):
+    import numpy as np
+    from PIL import Image
+    png = Path(str(path)).parent / f"rgb-{Path(str(path)).stem}-{t:.2f}.png"
+    _ff("-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1", str(png))
+    return np.asarray(Image.open(png).convert("RGB"), dtype=float)
+
+
+@pytest.fixture(scope="session")
+def color_assets(assets):
+    root = assets["root"]
+    # A softened SDR copy (testsrc2 is nearly all saturated primaries, which
+    # a highlight knee legitimately compresses) is the round-trip reference.
+    soft = root / "clip1_soft.mp4"
+    _ff("-i", str(assets["clip1"]), "-vf",
+        "eq=brightness=-0.15:saturation=0.5,setparams=colorspace=bt709:range=tv"
+        ":color_primaries=bt709:color_trc=bt709,format=yuv420p",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-an", str(soft))
+    hlg = root / "clip1_hlg.mp4"          # tagged in-graph: VUI + colr
+    _ff("-i", str(soft), "-vf", _SDR_TO_HLG, "-c:v", "libx264",
+        "-preset", "veryfast", "-crf", "12", "-an", str(hlg))
+    vui = root / "bars_vui.mp4"           # VUI-only tags, no colr (camera shape)
+    _ff("-f", "lavfi", "-i", "smptehdbars=size=320x180:rate=30:duration=1",
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-x264-params", "colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc",
+        str(vui))
+    tc = root / "bars_tc.mp4"             # colr + tmcd
+    _ff("-f", "lavfi", "-i", "smptehdbars=size=320x180:rate=30:duration=1",
+        "-vf", _HLG_TAG + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast",
+        "-timecode", "01:02:03:04", str(tc))
+    green = root / "green.png"
+    from PIL import Image
+    Image.new("RGB", (64, 64), (0, 255, 0)).save(green)
+    return {"hlg": hlg, "soft": soft, "vui": vui, "tc": tc, "green": green}
+
+
+def _render_clip(assets, name, clip, project_color=None):
+    comp = comp_mod.new_composition({"width": 640, "height": 360, "fps": 30})
+    comp["tracks"][0]["clips"] = [clip]
+    if project_color:
+        comp["project"]["color"] = project_color
+    comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
+    path = assets["root"] / f"{name}.vproj.json"
+    comp_mod.save_composition(str(path), comp)
+    return Path(_run(renderer.render_composition(
+        str(path), lambda p: p, mode="preview"))["output"])
+
+
+def test_output_is_tagged_rec709_with_colr(assets):
+    out = _render_clip(assets, "tags709", {"src": str(assets["clip1"]), "in": 0, "out": 1})
+    assert _stream_tags(out) == {"color_space": "bt709", "color_transfer": "bt709",
+                                 "color_primaries": "bt709", "color_range": "tv"}
+    assert (colr_box(str(out)) or {}).get("matrix") == "bt709"
+
+
+def test_fill_and_still_use_the_709_matrix(assets, color_assets):
+    # Pure green stores as Y≈173/U≈42/V≈26 through the 709 matrix; the old
+    # 601 path stored 145/54/34 (then played back as 709 — desaturated).
+    fill = _render_clip(assets, "fill709", {"fill": "#00ff00", "duration": 1.0})
+    still = _render_clip(assets, "still709", {"image": str(color_assets["green"]),
+                                              "duration": 1.0, "fit": "contain"})
+    for out in (fill, still):
+        y, u, v = _stored_yuv(out, 316, 176)
+        assert 165 <= y <= 180 and u < 48 and v < 32, (out, y, u, v)
+
+
+def test_hlg_convert_round_trip(assets, color_assets):
+    import numpy as np
+    converted = _render_clip(assets, "hlgconv", {
+        "src": str(color_assets["hlg"]), "in": 0, "out": 2,
+        "color": {"convert": "hlg->rec709"}})
+    raw = _render_clip(assets, "hlgraw", {"src": str(color_assets["hlg"]), "in": 0, "out": 2})
+    original = _render_clip(assets, "sdrref", {"src": str(color_assets["soft"]), "in": 0, "out": 2})
+    ref = _frame_rgb(original, 1.0)
+    conv = _frame_rgb(converted, 1.0)
+    untouched = _frame_rgb(raw, 1.0)
+    # Below the highlight knee (every channel under ~0.5 linear) the
+    # SDR→HLG→SDR round trip is exact up to codec noise — the knee acts on
+    # a pixel's brightest channel, so the mask is on the max channel; the
+    # unconverted HLG frame is far off.
+    mask = ref.max(axis=2) < 150
+    assert mask.mean() > 0.5
+    diff_conv = float(np.abs(conv - ref)[mask].mean())
+    diff_raw = float(np.abs(untouched - ref)[mask].mean())
+    assert diff_conv < 6.0, diff_conv
+    assert diff_raw > diff_conv * 3, (diff_raw, diff_conv)
+    assert float(np.abs(untouched - ref).mean()) > float(np.abs(conv - ref).mean()) * 2
+    assert _stream_tags(converted)["color_transfer"] == "bt709"
+
+
+def test_grade_strength_mixes_halfway(assets):
+    lum = {}
+    for s in (0.0, 0.5, 1.0):
+        out = _render_clip(assets, f"strength{s}", {
+            "src": str(assets["clip1"]), "in": 0, "out": 1,
+            "color": {"exposure": 1.0, "strength": s}})
+        lum[s] = float(_frame_rgb(out, 0.5).mean())
+    # testsrc2 is mostly saturated primaries, so +1 EV moves the frame mean
+    # only a few levels — the mix must still land on the midpoint.
+    assert lum[1.0] - lum[0.0] > 4, lum
+    assert abs(lum[0.5] - (lum[0.0] + lum[1.0]) / 2) < 1.5, lum
+
+
+def _laplacian_var(path, t):
+    import cv2
+    gray = cv2.cvtColor(_frame_rgb(path, t).astype("uint8"), cv2.COLOR_RGB2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def test_sharpness_and_clarity_raise_detail(assets):
+    base = _laplacian_var(_render_clip(assets, "sharp0", {
+        "src": str(assets["clip1"]), "in": 0, "out": 1}), 0.5)
+    sharp = _laplacian_var(_render_clip(assets, "sharp1", {
+        "src": str(assets["clip1"]), "in": 0, "out": 1,
+        "color": {"sharpness": 1.0}}), 0.5)
+    clear = _laplacian_var(_render_clip(assets, "clarity1", {
+        "src": str(assets["clip1"]), "in": 0, "out": 1,
+        "color": {"clarity": 1.0}}), 0.5)
+    assert sharp > base * 1.15, (base, sharp)
+    assert clear > base * 1.05, (base, clear)
+
+
+def test_lut_chain_strength_lands_between(assets):
+    import numpy as np
+
+    def chroma(path):
+        f = _frame_rgb(path, 0.5)
+        return float(np.abs(f - f.mean(axis=2, keepdims=True)).mean())
+
+    plain = chroma(_render_clip(assets, "lutc0", {"src": str(assets["clip1"]), "in": 0, "out": 1}))
+    full = chroma(_render_clip(assets, "lutc1", {
+        "src": str(assets["clip1"]), "in": 0, "out": 1,
+        "color": {"lut": ["clean-punch", "bw-classic"]}}))
+    half = chroma(_render_clip(assets, "lutc5", {
+        "src": str(assets["clip1"]), "in": 0, "out": 1,
+        "color": {"lut": ["clean-punch", {"lut": "bw-classic", "strength": 0.5}]}}))
+    assert full < plain * 0.15, (plain, full)
+    assert abs(half - plain / 2) < plain * 0.15, (plain, half)
+
+
+def test_probe_media_reports_color_colr_and_timecode(assets, color_assets, monkeypatch):
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    tc = _run(analysis.handle_probe_media({"path": str(color_assets["tc"])}))
+    assert "transfer=arib-std-b67 (HLG)" in tc and "matrix=bt2020nc" in tc, tc
+    assert "colr box: present (nclx: primaries=bt2020" in tc, tc
+    assert "timecode: 01:02:03:04 (tmcd track)" in tc, tc
+    assert 'color.convert "hlg->rec709"' in tc
+    vui = _run(analysis.handle_probe_media({"path": str(color_assets["vui"])}))
+    assert "transfer=arib-std-b67 (HLG)" in vui and "colr box: absent" in vui, vui
+    assert "timecode" not in vui
+    sdr = _run(analysis.handle_probe_media({"path": str(assets["clip1"])}))
+    assert "color: matrix=unknown" in sdr and "HLG source" not in sdr, sdr
+
+
+@pytest.fixture(scope="session")
+def sync_pair(tmp_path_factory):
+    """An aperiodic gated-noise 'event' and two re-recordings of it: one
+    delayed 1.234 s under added pink noise at half level, one that starts
+    0.8 s late (trimmed)."""
+    root = tmp_path_factory.mktemp("sync")
+    ref = root / "ref.wav"
+    _ff("-f", "lavfi", "-i",
+        "aevalsrc=0.6*random(0)*gt(sin(2*PI*0.37*t)+sin(2*PI*0.61*t)+sin(2*PI*1.1*t)\\,1.2)"
+        ":s=22050:d=20",
+        "-c:a", "pcm_s16le", str(ref))
+    late = root / "late.wav"
+    _ff("-i", str(ref), "-f", "lavfi", "-i",
+        "anoisesrc=color=pink:seed=3:amplitude=0.05:duration=25:sample_rate=22050",
+        "-filter_complex",
+        "[0:a]adelay=1234:all=1,volume=0.5[a];"
+        "[a][1:a]amix=inputs=2:duration=first:normalize=0[o]",
+        "-map", "[o]", "-c:a", "pcm_s16le", str(late))
+    early = root / "early.wav"
+    _ff("-i", str(ref), "-af", "atrim=start=0.8,asetpts=PTS-STARTPTS",
+        "-c:a", "pcm_s16le", str(early))
+    return {"ref": ref, "late": late, "early": early}
+
+
+def test_align_audio_recovers_known_offsets(sync_pair, monkeypatch):
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    text = _run(analysis.handle_align_audio({
+        "ref": str(sync_pair["ref"]), "target": str(sync_pair["late"])}))
+    m = re.search(r"offset: ([+-]\d+\.\d+) s", text)
+    assert m, text
+    assert abs(float(m.group(1)) - 1.234) < 0.001, text
+    assert "confidence: strong" in text, text
+    assert "target clip in = ref.in +1.2340" in text, text
+    text2 = _run(analysis.handle_align_audio({
+        "ref": str(sync_pair["ref"]), "target": str(sync_pair["early"]),
+        "max_offset": 5}))
+    m2 = re.search(r"offset: ([+-]\d+\.\d+) s", text2)
+    assert m2 and abs(float(m2.group(1)) + 0.8) < 0.001, text2
+    assert "confidence: strong" in text2, text2
+
+
+def test_align_audio_on_stationary_ambience(sync_pair, tmp_path, monkeypatch):
+    """Sea/wind-style ambience has no onsets — the case that broke an
+    envelope-based estimator live (drone clip: −0.019 s for a true
+    +1.750 s). Pink noise band-limited into a slowly breathing wash, re-
+    recorded 1.75 s late at −6 dB under independent noise."""
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    ref = tmp_path / "amb_ref.wav"
+    _ff("-f", "lavfi", "-i",
+        "anoisesrc=color=pink:seed=21:amplitude=0.4:duration=12:sample_rate=22050",
+        "-af", "lowpass=f=1800,tremolo=f=0.23:d=0.6", "-c:a", "pcm_s16le", str(ref))
+    late = tmp_path / "amb_late.wav"
+    _ff("-i", str(ref), "-f", "lavfi", "-i",
+        "anoisesrc=color=pink:seed=5:amplitude=0.08:duration=15:sample_rate=22050",
+        "-filter_complex",
+        "[0:a]adelay=1750:all=1,volume=-6dB[a];"
+        "[a][1:a]amix=inputs=2:duration=first:normalize=0[o]",
+        "-map", "[o]", "-c:a", "pcm_s16le", str(late))
+    text = _run(analysis.handle_align_audio({"ref": str(ref), "target": str(late)}))
+    m = re.search(r"offset: ([+-]\d+\.\d+) s", text)
+    assert m and abs(float(m.group(1)) - 1.75) < 0.001, text
+    assert "confidence: strong" in text, text
 
 
 def test_quickops_speed_ramp(assets, monkeypatch):

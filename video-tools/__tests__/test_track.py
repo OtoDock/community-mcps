@@ -196,7 +196,6 @@ def test_track_object_handler_emits_pastable_keyframes(moving_box, monkeypatch):
 
 @pytestmark_exec
 def test_blur_region_blurs_the_moving_target(moving_box, monkeypatch, tmp_path):
-    import cv2
     import numpy as np
 
     monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)

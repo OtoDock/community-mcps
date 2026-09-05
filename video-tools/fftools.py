@@ -131,6 +131,171 @@ def stream_fps(stream: dict) -> float:
     return 0.0
 
 
+_COLOR_FIELDS = ("color_space", "color_transfer", "color_primaries", "color_range")
+
+
+def stream_color(stream: dict) -> dict:
+    """The KNOWN colour tags of a video stream — ffprobe reports them from
+    the container's colr box or the bitstream VUI (omitting unknown ones,
+    or printing 'unknown')."""
+    out: dict[str, str] = {}
+    for field in _COLOR_FIELDS:
+        val = stream.get(field)
+        if val and str(val).lower() not in ("unknown", "unspecified"):
+            out[field] = str(val)
+    return out
+
+
+def timecode(info: dict) -> tuple[str, str] | None:
+    """Standard container timecode → (value, where). MP4/MOV carry it as a
+    `tmcd` data track (ffprobe mirrors it onto the video stream's tags);
+    MXF/others may carry a plain stream or format tag."""
+    has_tmcd = any(s.get("codec_tag_string") == "tmcd" for s in info.get("streams", []))
+    for s in info.get("streams", []):
+        tc = (s.get("tags") or {}).get("timecode")
+        if tc:
+            return str(tc), ("tmcd track" if has_tmcd else "stream tag")
+    tc = (info.get("format", {}).get("tags") or {}).get("timecode")
+    if tc:
+        return str(tc), "container tag"
+    return None
+
+
+# ISO-BMFF (MP4/MOV) `colr` atom — the container-level colour declaration.
+# ffprobe merges colr and the bitstream VUI into one report, so it cannot
+# say whether the CONTAINER declares anything: that is what a colour
+# pipeline needs to know about camera files (Sony XAVC writes none).
+
+_BMFF_TOP_BOXES = {b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide",
+                   b"uuid", b"moof", b"mfra", b"meta", b"styp", b"sidx"}
+_MOOV_READ_CAP = 64 << 20
+# VisualSampleEntry: 8 bytes (reserved[6] + data_reference_index) + 70 bytes
+# of fixed fields before the child boxes (avcC/hvcC/colr/pasp/...).
+_VISUAL_ENTRY_FIXED = 78
+_COLR_NAMES = {
+    "primaries": {1: "bt709", 4: "bt470m", 5: "bt470bg", 6: "smpte170m",
+                  7: "smpte240m", 8: "film", 9: "bt2020", 10: "smpte428",
+                  11: "smpte431", 12: "smpte432", 22: "ebu3213"},
+    "transfer": {1: "bt709", 4: "bt470m", 5: "bt470bg", 6: "smpte170m",
+                 7: "smpte240m", 8: "linear", 9: "log100", 10: "log316",
+                 11: "iec61966-2-4", 12: "bt1361e", 13: "iec61966-2-1",
+                 14: "bt2020-10", 15: "bt2020-12", 16: "smpte2084",
+                 17: "smpte428", 18: "arib-std-b67"},
+    "matrix": {0: "gbr", 1: "bt709", 4: "fcc", 5: "bt470bg", 6: "smpte170m",
+               7: "smpte240m", 8: "ycgco", 9: "bt2020nc", 10: "bt2020c",
+               11: "smpte2085", 12: "chroma-derived-nc",
+               13: "chroma-derived-c", 14: "ictcp"},
+}
+
+
+def _bmff_boxes(buf: bytes, start: int, end: int):
+    """(type, payload_start, box_end) for the boxes packed in buf[start:end]."""
+    import struct
+
+    pos = start
+    while pos + 8 <= end:
+        size, typ = struct.unpack(">I4s", buf[pos:pos + 8])
+        hdr = 8
+        if size == 1:
+            if pos + 16 > end:
+                return
+            size = struct.unpack(">Q", buf[pos + 8:pos + 16])[0]
+            hdr = 16
+        elif size == 0:
+            size = end - pos
+        if size < hdr or pos + size > end:
+            return
+        yield typ, pos + hdr, pos + size
+        pos += size
+
+
+def _read_moov(path: str) -> bytes | None:
+    """The bytes of the top-level `moov` box, seeking over everything else
+    (mdat is never read). None when the file is not ISO-BMFF or has no moov."""
+    import struct
+
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        total = fh.tell()
+        fh.seek(0)
+        pos, first = 0, True
+        while pos + 8 <= total:
+            fh.seek(pos)
+            head = fh.read(16)
+            if len(head) < 8:
+                return None
+            size, typ = struct.unpack(">I4s", head[:8])
+            hdr = 8
+            if size == 1:
+                if len(head) < 16:
+                    return None
+                size = struct.unpack(">Q", head[8:16])[0]
+                hdr = 16
+            elif size == 0:
+                size = total - pos
+            if first and typ not in _BMFF_TOP_BOXES:
+                return None
+            first = False
+            if size < hdr:
+                return None
+            if typ == b"moov":
+                if size - hdr > _MOOV_READ_CAP:
+                    return None
+                fh.seek(pos + hdr)
+                return fh.read(size - hdr)
+            pos += size
+    return None
+
+
+def colr_box(path: str) -> dict | None:
+    """The `colr` atom of the first visual sample entry of an MP4/MOV:
+    {"type": "nclx"|"nclc"|..., "primaries", "transfer", "matrix",
+    "full_range"} (names as ffprobe prints them, ints when unmapped), or
+    None when the container declares no colour (or the file is not BMFF)."""
+    import struct
+
+    try:
+        moov = _read_moov(path)
+    except OSError:
+        return None
+    if moov is None:
+        return None
+    end = len(moov)
+    for t1, a1, b1 in _bmff_boxes(moov, 0, end):
+        if t1 != b"trak":
+            continue
+        for t2, a2, b2 in _bmff_boxes(moov, a1, b1):
+            if t2 != b"mdia":
+                continue
+            for t3, a3, b3 in _bmff_boxes(moov, a2, b2):
+                if t3 != b"minf":
+                    continue
+                for t4, a4, b4 in _bmff_boxes(moov, a3, b3):
+                    if t4 != b"stbl":
+                        continue
+                    for t5, a5, b5 in _bmff_boxes(moov, a4, b4):
+                        if t5 != b"stsd":
+                            continue
+                        # stsd: version/flags (4) + entry_count (4), then entries.
+                        for t6, a6, b6 in _bmff_boxes(moov, a5 + 8, b5):
+                            if t6 in (b"mp4a", b"tmcd", b"text", b"tx3g", b"ac-3", b"ec-3"):
+                                continue
+                            for t7, a7, b7 in _bmff_boxes(moov, a6 + _VISUAL_ENTRY_FIXED, b6):
+                                if t7 != b"colr":
+                                    continue
+                                ctype = moov[a7:a7 + 4].decode("latin-1")
+                                out: dict = {"type": ctype}
+                                if ctype in ("nclx", "nclc") and b7 - a7 >= 10:
+                                    pri, trc, mat = struct.unpack(">HHH", moov[a7 + 4:a7 + 10])
+                                    out["primaries"] = _COLR_NAMES["primaries"].get(pri, pri)
+                                    out["transfer"] = _COLR_NAMES["transfer"].get(trc, trc)
+                                    out["matrix"] = _COLR_NAMES["matrix"].get(mat, mat)
+                                    if ctype == "nclx" and b7 - a7 >= 11:
+                                        out["full_range"] = bool(moov[a7 + 10] >> 7)
+                                return out
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Filter-argument escaping
 # ---------------------------------------------------------------------------

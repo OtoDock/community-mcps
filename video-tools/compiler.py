@@ -182,13 +182,20 @@ def _effect_filters(effects: list | None) -> list[str]:
 
 
 def _fit_filters(fit: str, w: int, h: int, bg: str) -> list[str]:
+    """Canvas fit — also the timeline's colour conversion point: the scale
+    converts matrix/range into 709/limited for real (601-tagged SD, full-range
+    phone clips, PNG stills), a bit-exact no-op for 709/limited sources. The
+    head tag is what keeps an untagged HD source from being "converted"
+    (swscale would otherwise read it as 601). A setparams pin cannot do
+    this: it only relabels."""
+    ocm = color_mod.OUTPUT_MATRIX_OPTS
     if fit == "contain":
         return [
-            f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos",
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos:{ocm}",
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={bg}",
         ]
     return [
-        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos",
+        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos:{ocm}",
         f"crop={w}:{h}",
     ]
 
@@ -208,17 +215,64 @@ def _zoom_filters(scale: float, px: float, py: float, w: int, h: int, bg: str) -
     return out
 
 
-def _color_filters(spec: dict | None, luts: dict[str, str]) -> list[str]:
+def _grade_parts(spec: dict | None,
+                 luts: dict[str, str]) -> tuple[list[str], list[str], list[str], float]:
+    """A grade's atoms by role: pre (the technical `convert`), creative (hand
+    grade + LUT chain — what `strength` mixes), post (clarity → sharpness,
+    after every LUT), and the mix strength."""
     if not spec:
-        return []
-    filters = color_mod.to_filters(spec)
-    lut = spec.get("lut")
-    if lut:
-        cube = luts.get(lut)
+        return [], [], [], 1.0
+    creative = color_mod.to_filters(spec)
+    for ref, strength in color_mod.lut_entries(spec):
+        cube = luts.get(color_mod.lut_key(ref, strength))
         if not cube:
-            raise comp_mod.CompositionError(f"unresolved LUT '{lut}'")
-        filters.append(f"lut3d=file='{cube}'")
-    return filters
+            raise comp_mod.CompositionError(f"unresolved LUT '{ref}'")
+        creative.append(f"lut3d=file='{cube}'")
+    return (color_mod.convert_filters(spec), creative,
+            color_mod.sharpen_filters(spec), color_mod.grade_strength(spec))
+
+
+def _head_tag(clip: dict, media_info: dict) -> str:
+    """The colour declaration at a media chain's head (see color.head_tags):
+    explicit `input`, the `convert` preset's implied source, or defaults for
+    whatever the probe left unknown. Must precede any RGB conversion."""
+    mi = media_info.get(clip.get("src")) or {}
+    return color_mod.tag_filter(
+        color_mod.head_tags(clip.get("color"), mi.get("color"), mi.get("height")))
+
+
+def _graded_chain(g: _GraphBuilder, src: str, before: list[str],
+                  spec: dict | None, luts: dict[str, str], after: list[str],
+                  out: str, *, pix: str = "yuv420p",
+                  pre_grade: list[str] | None = None,
+                  source: str | None = None) -> str:
+    """Emit src → out with the grade in the middle. With `strength` < 1 the
+    creative block is mixed against the ungraded frame: split → grade →
+    blend (graded on the first input, opacity = strength), both branches
+    pinned to `pix` so blend sees one format. Strength 1 stays a flat chain
+    — no graph churn for existing compositions. `source` names a source
+    filter (fills) instead of an input label."""
+    pre, creative, post, strength = _grade_parts(spec, luts)
+    pre = (pre_grade or []) + pre
+
+    def emit(label_src, filters, label_out):
+        filters = [f for f in filters if f] or ["null"]
+        if source is not None and label_src is None:
+            return g.source_chain(source, filters, label_out)
+        return g.chain(label_src, filters, label_out)
+
+    start = None if source is not None else src
+    if strength >= 1.0 or not creative:
+        return emit(start, before + pre + creative + post + after, out)
+    base = emit(start, before + pre, g.label("vg"))
+    wet, dry = g.label("vgw"), g.label("vgd")
+    g.chains.append(f"[{base}]split=2[{wet}][{dry}]")
+    wet = g.chain(wet, creative + [f"format={pix}"], g.label("vgw"))
+    dry = g.chain(dry, [f"format={pix}"], g.label("vgd"))
+    mixed = g.chain2(wet, dry,
+                     f"blend=all_mode=normal:all_opacity={_f(strength)}",
+                     g.label("vgm"))
+    return g.chain(mixed, [f for f in post + after if f] or ["null"], out)
 
 
 def _stab_filters(clip: dict) -> list[str]:
@@ -368,14 +422,17 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
         motion = _zoom_filters(float(tr.get("scale", 1.0)),
                                float((tr.get("pos") or [0, 0])[0]),
                                float((tr.get("pos") or [0, 0])[1]), w, h, bg)
-    grade = (_match_filters(clip) + _color_filters(clip.get("color"), luts)
-             + _finish_filters(clip) + (trans_fx or []))
+    spec = clip.get("color")
     # settb=AVTB: every base clip leaves its chain on ONE explicit timebase.
     # Without it, a concat-produced fold accumulator can carry a different tb
     # than the next clip's chain, and feeding that pair into xfade makes
     # ffmpeg abort the whole graph with EINVAL (-22) — the "transition on the
-    # last clip of a ≥3-clip track" failure.
-    tail = motion + grade + ["format=yuv420p", "setsar=1", "settb=AVTB"]
+    # last clip of a ≥3-clip track" failure. OUTPUT_PIN declares the frames
+    # as the timeline's Rec.709/limited (metadata — the conversion happened
+    # at the fit scale), so folds see uniform properties and the encoder
+    # writes a truthful VUI + colr.
+    after = (_finish_filters(clip) + (trans_fx or [])
+             + ["format=yuv420p", color_mod.OUTPUT_PIN, "setsar=1", "settb=AVTB"])
     out = g.label("vb")
 
     if kind == "fill":
@@ -388,13 +445,15 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
         # one frame, then pin to the exact media frame count; the source
         # runs at r=fps so end_frame counts project frames exactly, and the
         # trailing fps= re-stamps the rate metadata trim clears.
+        # The source's own yuv420p output is a 601 conversion (measured),
+        # which then plays back as 709 — generate in planar RGB and convert
+        # through the explicit 709 matrix instead.
         src = (f"color=c={ff_color(clip['fill'])}:s={w}x{h}:r={_f(fps)}"
                f":d={_f(dur + 1.0 / fps)}")
-        pin = [f"trim=end_frame={comp_mod.frames_for(dur, fps)}",
-               f"fps={_f(fps)}"]
-        return g.source_chain(
-            src, pin + ["format=yuv420p", "setsar=1"] + grade + ["settb=AVTB"],
-            out)
+        pin = ["format=gbrp", f"scale={color_mod.OUTPUT_MATRIX_OPTS}",
+               f"trim=end_frame={comp_mod.frames_for(dur, fps)}",
+               f"fps={_f(fps)}", "format=yuv420p"]
+        return _graded_chain(g, "", pin, spec, luts, after, out, source=src)
 
     if kind == "image":
         dur = float(clip["duration"])
@@ -410,7 +469,8 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
                    f"trim=end_frame={comp_mod.frames_for(dur, fps)}",
                    f"fps={_f(fps)}"]
         filters += _fit_filters(clip.get("fit", "cover"), w, h, bg)
-        return g.chain(f"{idx}:v", filters + tail, out)
+        return _graded_chain(g, f"{idx}:v", filters + motion, spec, luts,
+                             after, out)
 
     slomo = clip.get("_slomo")
     if slomo:
@@ -430,6 +490,10 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
             filters.append(f"setpts=(PTS-STARTPTS)/{_f(speed)}")
         else:
             filters.append("setpts=PTS-STARTPTS")
+    # The colour declaration goes before anything that may convert to RGB
+    # (stabilization's unsharp is YUV, but keep the contract simple: first).
+    filters.append(_head_tag(clip, media_info))
+    if not slomo:
         filters += _stab_filters(clip)
         filters += _blend_interp_filter(clip, media_info, fps, speed)
     filters.append(f"fps={_f(fps)}")
@@ -453,10 +517,9 @@ def _base_video_chain(g: _GraphBuilder, clip: dict, media_info: dict,
             ga, gb,
             f"blend=all_expr='A+(B-A)*min(T/{_f(float(m['duration']))},1)'",
             g.label("vmr"))
-        return g.chain(mixed,
-                       grade + ["format=yuv420p", "setsar=1", "settb=AVTB"],
-                       out)
-    return g.chain(f"{idx}:v", filters + tail, out)
+        return _graded_chain(g, mixed, [], spec, luts, after, out)
+    return _graded_chain(g, f"{idx}:v", filters + motion, spec, luts, after,
+                         out, pre_grade=_match_filters(clip))
 
 
 def _base_audio_chain(g: _GraphBuilder, clip: dict, media_info: dict,
@@ -623,13 +686,14 @@ def _overlay_chain(g: _GraphBuilder, clip: dict, media_info: dict,
         if slomo:
             idx = g.media_input(slomo["src"])
             src = f"{idx}:v"
-            filters = ["setpts=PTS-STARTPTS"]
+            filters = ["setpts=PTS-STARTPTS", _head_tag(clip, media_info)]
         else:
             idx = g.media_input(clip["src"])
             src = f"{idx}:v"
             filters = [f"trim=start={_f(cin)}:end={_f(cout)}"]
             filters.append(f"setpts=(PTS-STARTPTS)/{_f(speed)}" if speed != 1.0
                            else "setpts=PTS-STARTPTS")
+            filters.append(_head_tag(clip, media_info))
             filters += _stab_filters(clip)
             filters += _blend_interp_filter(clip, media_info, fps, speed)
         filters.append(f"fps={_f(fps)}")
@@ -645,7 +709,22 @@ def _overlay_chain(g: _GraphBuilder, clip: dict, media_info: dict,
     filters += _effect_filters(clip.get("effects"))
     if scale != 1.0:
         filters.append(f"scale=trunc(iw*{_f(scale)}/2)*2:-2:flags=lanczos")
-    filters += _color_filters(clip.get("color"), luts)
+    pre, creative, post, strength = _grade_parts(clip.get("color"), luts)
+    if strength < 1.0 and creative:
+        # Grade mix on an overlay: both branches in gbrap so the blend keeps
+        # the alpha plane; the overlay converts rgba into the 709 main below.
+        base = g.chain(src, [f for f in filters + pre if f] or ["null"],
+                       g.label("ovg"))
+        wet, dry = g.label("ovw"), g.label("ovd")
+        g.chains.append(f"[{base}]split=2[{wet}][{dry}]")
+        wet = g.chain(wet, creative + ["format=gbrap"], g.label("ovw"))
+        dry = g.chain(dry, ["format=gbrap"], g.label("ovd"))
+        src = g.chain2(wet, dry,
+                       f"blend=all_mode=normal:all_opacity={_f(strength)}",
+                       g.label("ovm"))
+        filters = list(post)
+    else:
+        filters += pre + creative + post
     filters.append("format=rgba")
     if rotate:
         filters.append(f"rotate=a={_f(rotate)}*PI/180:c=black@0"
@@ -836,15 +915,15 @@ def compile_render(
                     f":eof_action=pass:format=auto",
                     g.label("vc"))
 
-        # Global grade, finishing, letterbox, captions, final pixel format.
-        # Captions go AFTER the letterbox so they can sit on the bars.
+        # Global grade, finishing, letterbox, captions, final pixel format,
+        # then the timeline's colour pin for the encoder. Captions go AFTER
+        # the letterbox so they can sit on the bars.
         tail: list[str] = []
-        tail += _color_filters(proj.get("color"), luts)
         tail += _finish_filters(proj)
         tail += _letterbox_filters(proj, w, h)
         if captions_ass:
             tail.append(f"ass=filename='{captions_ass}'")
-        tail.append("format=yuv420p")
+        tail += ["format=yuv420p", color_mod.OUTPUT_PIN]
         if time_range:
             t0, t1 = time_range
             tail.append(f"trim=start={_f(t0)}:end={_f(t1)}")
@@ -856,7 +935,7 @@ def compile_render(
             # the fps grid from 0, so this re-stamps without dup/drop.
             tail.append(f"fps={_f(fps)}")
         vout = g.label("vout")
-        g.chain(v, tail, vout)
+        _graded_chain(g, v, [], proj.get("color"), luts, tail, vout)
 
     # Audio tracks + ducking + mix.
     track_labels: list[tuple[str, dict | None]] = []

@@ -1,12 +1,23 @@
-"""Color grading: per-clip/global grade specs → ffmpeg filters, plus the
-built-in look library (recipes baked to .cube LUTs at image build).
+"""Color grading: per-clip/global grade specs → ffmpeg filters, the built-in
+look library (recipes baked to .cube LUTs at image build), and the colour
+management that makes the timeline a Rec.709 pipeline.
 
 A grade spec is a dict:
-  {"exposure": 0.3, "brightness": 0.0, "contrast": 1.06, "saturation": 1.05,
+  {"input": {"matrix": "bt2020nc", "primaries": "bt2020", "transfer": "hlg",
+             "range": "tv"},                      # declare the SOURCE colorimetry
+   "convert": "hlg->rec709",                      # technical conversion into 709
+   "exposure": 0.3, "brightness": 0.0, "contrast": 1.06, "saturation": 1.05,
    "gamma": 1.0, "temperature": 5800,
    "curves": {"all": [[0,0],[0.5,0.52],[1,1]], "r": ..., "g": ..., "b": ...}
              or {"preset": "increase_contrast"},
-   "lut": "teal-orange" (built-in look) or a .cube path in the workspace}
+   "lut": "teal-orange" | "looks/x.cube" | ["tech.cube", {"lut": "filmic",
+          "strength": 0.6}],                      # chain, per-entry strength
+   "strength": 0.7,                               # mix of the creative grade
+   "clarity": 0.4, "sharpness": 0.3}              # cas / unsharp, after the LUTs
+
+Order in the chain (the compiler enforces it): input tag → convert → match →
+hand grade → LUT chain → [strength mix] → clarity → sharpness. `input`,
+`convert` and `match` are technical transforms and never take part in the mix.
 
 The look library is OURS: every .cube is generated from the numeric recipes
 below — nothing third-party is redistributed (most "free LUT" packs are
@@ -32,9 +43,361 @@ _SPEC_BOUNDS = {
     "gamma": (0.4, 2.5),
     "temperature": (2000, 12000),
 }
+# 0–1 taste knobs (strength = grade mix, clarity = cas, sharpness = unsharp).
+_UNIT_KEYS = ("strength", "clarity", "sharpness")
 # "match" (shot color-matching) is validated in composition.py and compiled
 # from the renderer-generated LUT — to_filters ignores it by design.
-_SPEC_KEYS = set(_SPEC_BOUNDS) | {"curves", "lut", "match"}
+_SPEC_KEYS = (set(_SPEC_BOUNDS) | set(_UNIT_KEYS)
+              | {"curves", "lut", "match", "input", "convert"})
+
+
+# ---------------------------------------------------------------------------
+# Colour management: source tagging, the timeline contract, conversions
+# ---------------------------------------------------------------------------
+#
+# The timeline is Rec.709 / limited range. Every media chain declares its
+# source colorimetry at the head (setparams) so that every RGB conversion
+# downstream — lut3d, curves, exposure, colortemperature, keying, the gbrp
+# transitions — decodes with the right matrix; the canvas-fit scale converts
+# matrix/range into 709/limited for real; and each chain ends pinned as 709 so
+# folds see uniform properties and the encoder writes a truthful VUI + colr.
+# Measured 2026-09: an untagged HD source is otherwise decoded with the 601
+# matrix, and a setparams pin after the conversion point only relabels.
+
+INPUT_KEYS = ("matrix", "primaries", "transfer", "range")
+
+# Friendly names → ffmpeg setparams/zscale enum names.
+_MATRIX_ALIASES = {
+    "bt709": "bt709", "709": "bt709", "rec709": "bt709",
+    "bt2020nc": "bt2020nc", "bt2020": "bt2020nc", "2020": "bt2020nc",
+    "rec2020": "bt2020nc", "bt2020c": "bt2020c",
+    "bt470bg": "bt470bg", "601": "bt470bg", "bt601": "bt470bg",
+    "smpte170m": "smpte170m", "fcc": "fcc", "ycgco": "ycgco",
+}
+_PRIMARIES_ALIASES = {
+    "bt709": "bt709", "709": "bt709", "rec709": "bt709",
+    "bt2020": "bt2020", "2020": "bt2020", "rec2020": "bt2020",
+    "bt470bg": "bt470bg", "601": "bt470bg", "bt601": "bt470bg",
+    "smpte170m": "smpte170m", "bt470m": "bt470m", "film": "film",
+    "smpte431": "smpte431", "smpte432": "smpte432", "p3": "smpte432",
+    "dci-p3": "smpte431", "display-p3": "smpte432",
+}
+_TRANSFER_ALIASES = {
+    "bt709": "bt709", "709": "bt709", "rec709": "bt709",
+    "arib-std-b67": "arib-std-b67", "hlg": "arib-std-b67",
+    "smpte2084": "smpte2084", "pq": "smpte2084", "st2084": "smpte2084",
+    "smpte170m": "smpte170m", "601": "smpte170m", "bt601": "smpte170m",
+    "iec61966-2-1": "iec61966-2-1", "srgb": "iec61966-2-1",
+    "linear": "linear", "bt2020-10": "bt2020-10", "bt2020-12": "bt2020-12",
+    "bt470m": "bt470m", "gamma22": "bt470m", "bt470bg": "bt470bg",
+    "gamma28": "bt470bg",
+}
+_RANGE_ALIASES = {
+    "tv": "tv", "limited": "tv", "mpeg": "tv",
+    "pc": "pc", "full": "pc", "jpeg": "pc",
+}
+_ALIASES = {"matrix": _MATRIX_ALIASES, "primaries": _PRIMARIES_ALIASES,
+            "transfer": _TRANSFER_ALIASES, "range": _RANGE_ALIASES}
+
+# ffprobe reports these stream fields; the compiler maps them onto INPUT_KEYS.
+PROBE_FIELDS = {"matrix": "color_space", "primaries": "color_primaries",
+                "transfer": "color_transfer", "range": "color_range"}
+
+# The timeline: what every base chain and the composited tail are pinned to.
+OUTPUT_TAGS = {"matrix": "bt709", "primaries": "bt709", "transfer": "bt709",
+               "range": "tv"}
+# Explicit conversion point (canvas fit / fill generation): matrix + range
+# into the timeline space — a no-op for 709/limited sources, a real
+# conversion for 601-tagged or full-range ones.
+OUTPUT_MATRIX_OPTS = "out_color_matrix=bt709:out_range=tv"
+
+_SETPARAMS_KEY = {"matrix": "colorspace", "primaries": "color_primaries",
+                  "transfer": "color_trc", "range": "range"}
+
+# Transfer values that are SDR — a convert request on these is a mistake.
+SDR_TRANSFERS = frozenset({"bt709", "smpte170m", "bt470bg", "bt470m",
+                           "iec61966-2-1", "bt2020-10", "bt2020-12"})
+HDR_TRANSFERS = {"arib-std-b67": "HLG", "smpte2084": "PQ"}
+
+# Conversions into the timeline space. A preset carries the source tags it
+# implies (an explicit `input` overrides per key) and the filter chain.
+#
+# hlg->rec709: zscale to display-linear with HLG's 1000-nit reference OOTF
+# (npl=1000 puts HLG code 1.0 at linear 1.0), then anchor BT.2408 reference
+# white — HLG 75 % = 203 nits — at SDR white: +2.30 EV (1000/203 = 4.926×),
+# a Möbius knee (linear below 0.5, soft roll-off to the 4.926 signal peak)
+# so highlights above reference white keep detail instead of clipping, then
+# 709 primaries/transfer, limited range. Measured: HLG 100/75/50/25 % → SDR
+# Y 235/209/139/78; 50 % grey survives an SDR→HLG→SDR round trip exactly.
+CONVERT_PRESETS = {
+    "hlg->rec709": {
+        "input": {"matrix": "bt2020nc", "primaries": "bt2020",
+                  "transfer": "arib-std-b67", "range": "tv"},
+        "filters": [
+            "zscale=t=linear:npl=1000",
+            "format=gbrpf32le",
+            "zscale=p=bt709",
+            "exposure=exposure=2.3",
+            "tonemap=tonemap=mobius:param=0.5:peak=4.926:desat=0",
+            "zscale=t=bt709:m=bt709:r=tv",
+            "format=yuv420p",
+        ],
+    },
+}
+
+
+def normalize_input(spec) -> dict:
+    """A user `input` object → {key: ffmpeg enum name} for the keys given.
+    Raises ValueError on an unknown key or value."""
+    if not isinstance(spec, dict):
+        raise ValueError("color.input must be an object with matrix / "
+                         "primaries / transfer / range")
+    unknown = set(spec) - set(INPUT_KEYS)
+    if unknown:
+        raise ValueError(f"unknown color.input keys {sorted(unknown)} "
+                         f"(accepted: {list(INPUT_KEYS)})")
+    out: dict[str, str] = {}
+    for key, raw in spec.items():
+        if raw is None:
+            continue
+        name = str(raw).strip().lower()
+        table = _ALIASES[key]
+        if name not in table:
+            raise ValueError(
+                f"color.input.{key} '{raw}' is not a known value — accepted: "
+                + ", ".join(sorted(set(table))))
+        out[key] = table[name]
+    return out
+
+
+def default_tags(height) -> dict:
+    """Player convention for an untagged source: 601 up to SD, 709 above
+    (and when the height is unknown)."""
+    try:
+        sd = 0 < int(height or 0) <= 576
+    except (TypeError, ValueError):
+        sd = False
+    if sd:
+        return {"matrix": "bt470bg", "primaries": "bt470bg",
+                "transfer": "smpte170m", "range": "tv"}
+    return dict(OUTPUT_TAGS)
+
+
+def probe_tags(probe_color) -> dict:
+    """ffprobe's stream colour fields → {key: value} for the KNOWN fields
+    only (ffprobe omits unknown ones or prints 'unknown')."""
+    out: dict[str, str] = {}
+    for key, field in PROBE_FIELDS.items():
+        val = (probe_color or {}).get(field) or (probe_color or {}).get(key)
+        if val and str(val).lower() not in ("unknown", "unspecified"):
+            out[key] = str(val)
+    return out
+
+
+def head_tags(spec, probe_color, height) -> dict:
+    """The colour properties a media chain must DECLARE at its head.
+
+    Explicit `input` keys always win. A `convert` preset supplies the rest of
+    its implied source tags (zscale needs a fully known input). Otherwise
+    only the fields the probe reports UNKNOWN are declared, with the player
+    default — tagged fields already arrive on the decoded frames.
+    """
+    spec = spec if isinstance(spec, dict) else {}
+    explicit = normalize_input(spec["input"]) if spec.get("input") else {}
+    convert = spec.get("convert")
+    if convert:
+        tags = dict(CONVERT_PRESETS[convert]["input"])
+        tags.update(explicit)
+        return tags
+    known = probe_tags(probe_color)
+    defaults = default_tags(height)
+    tags = {k: defaults[k] for k in INPUT_KEYS if k not in known}
+    tags.update(explicit)
+    return tags
+
+
+def tag_filter(tags: dict) -> str:
+    """{matrix, primaries, transfer, range} → one `setparams=` atom ('' when
+    there is nothing to declare)."""
+    parts = [f"{_SETPARAMS_KEY[k]}={tags[k]}" for k in INPUT_KEYS if tags.get(k)]
+    return "setparams=" + ":".join(parts) if parts else ""
+
+
+OUTPUT_PIN = tag_filter(OUTPUT_TAGS)
+
+
+def convert_filters(spec) -> list[str]:
+    name = (spec or {}).get("convert") if isinstance(spec, dict) else None
+    if not name:
+        return []
+    return list(CONVERT_PRESETS[name]["filters"])
+
+
+def sharpen_filters(spec) -> list[str]:
+    """clarity (contrast-adaptive, halo-free) → sharpness (classic 5x5 USM,
+    luma only). Both run AFTER every LUT and at the render canvas — the
+    compiler places them after the canvas fit and the grade mix."""
+    out: list[str] = []
+    clarity = float((spec or {}).get("clarity") or 0)
+    if clarity > 0:
+        out.append(f"cas=strength={_fmt(clarity)}")
+    sharp = float((spec or {}).get("sharpness") or 0)
+    if sharp > 0:
+        out.append(f"unsharp=5:5:{_fmt(1.5 * sharp)}:5:5:0")
+    return out
+
+
+def grade_strength(spec) -> float:
+    s = (spec or {}).get("strength") if isinstance(spec, dict) else None
+    return 1.0 if s is None else min(1.0, max(0.0, float(s)))
+
+
+# ---------------------------------------------------------------------------
+# LUT chain: entries, keys, strength baking
+# ---------------------------------------------------------------------------
+
+
+def lut_entries(spec) -> list[tuple[str, float]]:
+    """`lut` (string | list of string | {"lut", "strength"}) → [(ref, strength)]
+    in application order. Raises ValueError on a malformed entry."""
+    raw = (spec or {}).get("lut") if isinstance(spec, dict) else None
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    if not items:
+        raise ValueError("color.lut list is empty")
+    out: list[tuple[str, float]] = []
+    for item in items:
+        strength = 1.0
+        if isinstance(item, dict):
+            ref = item.get("lut")
+            unknown = set(item) - {"lut", "strength"}
+            if unknown:
+                raise ValueError(f"unknown lut entry keys {sorted(unknown)} "
+                                 "(accepted: lut, strength)")
+            if item.get("strength") is not None:
+                try:
+                    strength = float(item["strength"])
+                except (TypeError, ValueError):
+                    raise ValueError("lut entry strength must be a number 0–1")
+                if not 0.0 <= strength <= 1.0:
+                    raise ValueError("lut entry strength must be 0–1")
+        else:
+            ref = item
+        if not isinstance(ref, str) or not ref:
+            raise ValueError("each lut entry must be a built-in look name or a "
+                             ".cube path — a string or {\"lut\": …, "
+                             "\"strength\": 0–1}")
+        out.append((ref, strength))
+    return out
+
+
+def lut_key(ref: str, strength: float = 1.0) -> str:
+    """Key of a staged LUT in the compiler's `luts` map. A full-strength
+    entry keys by its ref alone (unchanged contract for existing callers)."""
+    s = min(1.0, max(0.0, float(strength)))
+    return ref if s >= 1.0 else f"{ref}#{s:g}"
+
+
+def lut_refs(spec) -> list[str]:
+    """Distinct non-built-in file refs of a grade's LUT chain (for path
+    resolution and existence checks)."""
+    seen, out = set(), []
+    for ref, _ in lut_entries(spec):
+        if not is_builtin_look(ref) and ref not in seen:
+            seen.add(ref)
+            out.append(ref)
+    return out
+
+
+def rewrite_lut_refs(spec: dict, mapping: dict) -> None:
+    """Rewrite a grade's LUT refs in place through `mapping` (path
+    resolution), preserving the string / list / entry shapes."""
+    raw = spec.get("lut")
+    if raw is None:
+        return
+
+    def one(item):
+        if isinstance(item, dict):
+            if item.get("lut") in mapping:
+                item = dict(item)
+                item["lut"] = mapping[item["lut"]]
+            return item
+        return mapping.get(item, item)
+
+    spec["lut"] = [one(i) for i in raw] if isinstance(raw, list) else one(raw)
+
+
+def _parse_cube(text: str) -> dict:
+    """Minimal .cube reader: {size, dim (1|3), dmin, dmax, header (kept
+    lines), rows [(r,g,b), …]}. Raises ValueError on anything unreadable."""
+    size = dim = None
+    dmin, dmax = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+    header: list[str] = []
+    rows: list[tuple[float, float, float]] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            header.append(line)
+            continue
+        up = s.upper()
+        if up.startswith("LUT_3D_SIZE"):
+            size, dim = int(s.split()[1]), 3
+            continue
+        if up.startswith("LUT_1D_SIZE"):
+            size, dim = int(s.split()[1]), 1
+            continue
+        if up.startswith("DOMAIN_MIN"):
+            dmin = tuple(float(v) for v in s.split()[1:4])
+            header.append(line)
+            continue
+        if up.startswith("DOMAIN_MAX"):
+            dmax = tuple(float(v) for v in s.split()[1:4])
+            header.append(line)
+            continue
+        if up.startswith("TITLE") or up.startswith("LUT_1D_INPUT_RANGE") \
+                or up.startswith("LUT_3D_INPUT_RANGE"):
+            header.append(line)
+            continue
+        parts = s.split()
+        try:
+            rows.append((float(parts[0]), float(parts[1]), float(parts[2])))
+        except (IndexError, ValueError):
+            raise ValueError(f"unreadable .cube line: {s[:40]!r}")
+    if size is None or dim is None:
+        raise ValueError(".cube has no LUT_3D_SIZE / LUT_1D_SIZE")
+    expected = size ** dim
+    if len(rows) != expected:
+        raise ValueError(f".cube declares {expected} entries, found {len(rows)}")
+    return {"size": size, "dim": dim, "dmin": dmin, "dmax": dmax,
+            "header": header, "rows": rows}
+
+
+def blend_cube(src_path: str, dst_path: str, strength: float) -> None:
+    """Write a copy of a .cube whose output is `identity·(1−s) + lut·s`.
+    Per-pixel linear blending of the graded frame against the ungraded one
+    is exactly this in LUT space, so the strength costs nothing at render
+    time. Identity is computed inside the LUT's input domain."""
+    import numpy as np
+
+    s = min(1.0, max(0.0, float(strength)))
+    cube = _parse_cube(Path(src_path).read_text(encoding="utf-8", errors="replace"))
+    size, dim = cube["size"], cube["dim"]
+    dmin = np.asarray(cube["dmin"], dtype=np.float64)
+    dmax = np.asarray(cube["dmax"], dtype=np.float64)
+    axis = np.linspace(0.0, 1.0, size)
+    if dim == 3:
+        b, g, r = np.meshgrid(axis, axis, axis, indexing="ij")
+        ident = np.stack([r.ravel(), g.ravel(), b.ravel()], axis=-1)
+    else:
+        ident = np.stack([axis, axis, axis], axis=-1)
+    ident = dmin + ident * (dmax - dmin)
+    lut = np.asarray(cube["rows"], dtype=np.float64)
+    out = ident * (1.0 - s) + lut * s
+    lines = list(cube["header"])
+    lines.append(f"LUT_{dim}D_SIZE {size}")
+    lines.extend(f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}" for p in out)
+    Path(dst_path).write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +501,14 @@ def validate_color_spec(spec: dict) -> list[str]:
                     problems.append(f"color.{key} must be {lo}–{hi}")
             except (TypeError, ValueError):
                 problems.append(f"color.{key} must be a number")
+    for key in _UNIT_KEYS:
+        if key in spec and spec[key] is not None:
+            try:
+                v = float(spec[key])
+                if not 0.0 <= v <= 1.0:
+                    problems.append(f"color.{key} must be 0–1")
+            except (TypeError, ValueError):
+                problems.append(f"color.{key} must be a number 0–1")
     curves = spec.get("curves")
     if curves is not None:
         if not isinstance(curves, dict):
@@ -161,9 +532,21 @@ def validate_color_spec(spec: dict) -> list[str]:
                     problems.append(f"curves.{ch} points must be within 0–1")
                 elif xs != sorted(xs):
                     problems.append(f"curves.{ch} x values must be increasing")
-    lut = spec.get("lut")
-    if lut is not None and not isinstance(lut, str):
-        problems.append("color.lut must be a built-in look name or a .cube path")
+    if spec.get("lut") is not None:
+        try:
+            lut_entries(spec)
+        except ValueError as exc:
+            problems.append(f"color.lut: {exc}")
+    if spec.get("input") is not None:
+        try:
+            normalize_input(spec["input"])
+        except ValueError as exc:
+            problems.append(str(exc))
+    convert = spec.get("convert")
+    if convert is not None and convert not in CONVERT_PRESETS:
+        problems.append(
+            f"unknown color.convert '{convert}' — available: "
+            + ", ".join(sorted(CONVERT_PRESETS)))
     return problems
 
 
@@ -176,8 +559,9 @@ def _curves_channel(pts: list) -> str:
 
 
 def to_filters(spec: dict) -> list[str]:
-    """Grade spec → ordered ffmpeg filter atoms (lut3d appended by the
-    compiler after path resolution)."""
+    """Hand-grade atoms of a spec, in order (exposure → eq → temperature →
+    curves). The LUT chain, the conversion and sharpening are separate
+    builders — the compiler assembles the full order."""
     filters: list[str] = []
     if spec.get("exposure"):
         filters.append(f"exposure=exposure={_fmt(float(spec['exposure']))}")

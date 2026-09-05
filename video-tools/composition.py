@@ -359,8 +359,13 @@ def _validate_transform(tr: dict, where: str, issues: list, is_overlay: bool) ->
                    "opacity on a base clip blends against the background color")
 
 
-def _validate_color_field(spec, where: str, issues: list,
-                          exists=None) -> None:
+def _validate_color_field(spec, where: str, issues: list, exists=None, *,
+                          kind: str | None = None, skind: str | None = None,
+                          media_entry: dict | None = None,
+                          container: dict | None = None) -> None:
+    """A grade spec on a clip (`kind`/`skind` set) or the project (`kind`
+    None). `media_entry` is the clip source's probe entry when known;
+    `container` is the clip/project dict (for the finishing-knob overlap)."""
     if spec is None:
         return
     if not isinstance(spec, dict):
@@ -368,12 +373,47 @@ def _validate_color_field(spec, where: str, issues: list,
         return
     for problem in color_mod.validate_color_spec(spec):
         _issue(issues, "error", where, problem)
-    lut = spec.get("lut")
-    if lut and exists is not None and not color_mod.is_builtin_look(lut):
-        if not exists(lut):
+    try:
+        refs = color_mod.lut_refs(spec)
+    except ValueError:
+        refs = []
+    if exists is not None:
+        for ref in refs:
+            if not exists(ref):
+                _issue(issues, "error", where,
+                       f"LUT file not found: {ref} (or use a built-in look: "
+                       f"{', '.join(sorted(color_mod.BUILTIN_LOOKS))})")
+    technical = [k for k in ("input", "convert") if spec.get(k) is not None]
+    if technical:
+        names = " / ".join(f"color.{k}" for k in technical)
+        if kind is None:
             _issue(issues, "error", where,
-                   f"LUT file not found: {lut} (or use a built-in look: "
-                   f"{', '.join(sorted(color_mod.BUILTIN_LOOKS))})")
+                   f"{names} describe a SOURCE's colorimetry — set them per "
+                   "clip (sources differ); the project grade is applied in "
+                   "the timeline's Rec.709 space")
+        elif skind != "media":
+            _issue(issues, "error", where,
+                   f"{names} need a media 'src' clip — stills and fills are "
+                   "generated in the timeline space already")
+    convert = spec.get("convert")
+    if convert is not None and convert in color_mod.CONVERT_PRESETS:
+        if spec.get("match") is not None:
+            _issue(issues, "error", where,
+                   "color.convert and color.match cannot combine — the match "
+                   "samples the source's HDR pixels but would apply in 709 "
+                   "space; render the converted clip first, then match the "
+                   "result")
+        trc = ((media_entry or {}).get("color") or {}).get("color_transfer")
+        if trc in color_mod.SDR_TRANSFERS:
+            _issue(issues, "warning", where,
+                   f"source is tagged {trc} (SDR) but convert '{convert}' "
+                   "expects an HDR source — drop the convert unless the tag "
+                   "is wrong")
+    if (spec.get("sharpness") is not None and container is not None
+            and container.get("sharpen")):
+        _issue(issues, "warning", where,
+               "both the finishing 'sharpen' knob and color.sharpness are "
+               "set — that is double sharpening; keep one")
 
 
 def _validate_eq(eq, where: str, issues: list) -> None:
@@ -761,7 +801,11 @@ def _validate_clip(clip: dict, kind: str, where: str, issues: list,
         _validate_transform(clip["transform"], where + ".transform", issues,
                             is_overlay=(kind == "overlay"))
     if kind != "audio":
-        _validate_color_field(clip.get("color"), where + ".color", issues, exists)
+        _validate_color_field(
+            clip.get("color"), where + ".color", issues, exists,
+            kind=kind, skind=skind,
+            media_entry=(media_info or {}).get(clip.get("src")),
+            container=clip)
         col = clip.get("color")
         if isinstance(col, dict) and col.get("match") is not None:
             _validate_match(col["match"], kind, skind, where + ".color.match",
@@ -913,7 +957,8 @@ def validate(comp: dict, exists=None, media_info: dict | None = None) -> list[di
                    "width/height must be even (yuv420p requirement)")
     if not _num(fps, 1, 120):
         _issue(issues, "error", "project", "fps must be 1–120")
-    _validate_color_field(proj.get("color"), "project.color", issues, exists)
+    _validate_color_field(proj.get("color"), "project.color", issues, exists,
+                          container=proj)
     if isinstance(proj.get("color"), dict) and proj["color"].get("match") is not None:
         _issue(issues, "error", "project.color",
                "match is per-clip shot matching — it cannot apply to the "
@@ -1113,9 +1158,10 @@ def media_paths(comp: dict) -> list[str]:
                     and clip["mask"].get("image"):
                 paths.append(clip["mask"]["image"])
             if isinstance(clip, dict) and isinstance(clip.get("color"), dict):
-                lut = clip["color"].get("lut")
-                if lut and not color_mod.is_builtin_look(lut):
-                    paths.append(lut)
+                try:
+                    paths.extend(color_mod.lut_refs(clip["color"]))
+                except ValueError:
+                    pass  # the validator reports malformed entries
                 match = clip["color"].get("match")
                 if isinstance(match, dict):
                     for key in ("ref", "ramp_from", "ramp_to"):
@@ -1124,9 +1170,10 @@ def media_paths(comp: dict) -> list[str]:
                             paths.append(ref.rpartition("@")[0])
     proj_color = comp.get("project", {}).get("color")
     if isinstance(proj_color, dict):
-        lut = proj_color.get("lut")
-        if lut and not color_mod.is_builtin_look(lut):
-            paths.append(lut)
+        try:
+            paths.extend(color_mod.lut_refs(proj_color))
+        except ValueError:
+            pass
     caps = comp.get("captions")
     if isinstance(caps, dict) and caps.get("source"):
         paths.append(caps["source"])

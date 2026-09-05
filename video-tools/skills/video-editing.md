@@ -107,6 +107,12 @@ the final full-speed watch.
   beds sit −6 to −12 dB under (set `gain_db` on the music clip). Final
   renders normalize automatically — set `audio_master.loudnorm.target_lufs`
   to −16 for calmer platforms (YouTube) and keep −14 for short-form.
+- **Second recorder or two cameras:** `align_audio {ref, target}` returns
+  the offset (target_time = ref_time + offset) with a confidence and the
+  two recipes — target `in = ref.in + offset` when both clips share a
+  start, or `start = ref.start − offset` for an audio/overlay clip. Below
+  0.3 confidence the recordings probably do not overlap; raise
+  `max_offset` or align a shorter excerpt.
 
 ## Audio sweetening (make camera audio sound produced)
 
@@ -193,10 +199,37 @@ the final full-speed watch.
 
 ## Color (restraint wins)
 
+- **Know your source first.** `probe_media` prints each file's colour
+  tags with an HLG / PQ / SDR verdict and whether the container declares
+  them. Camera HLG (Sony, Panasonic, phones shooting "HDR") on a normal
+  timeline looks flat, dark and desaturated until it is converted: put
+  `color: {"convert": "hlg->rec709"}` on that clip — the built-in
+  conversion anchors HLG reference white (75 %) near SDR white with a soft
+  highlight roll-off; no technical LUT needed, and any look goes on top.
+  A file the camera left untagged or mistagged: declare it with
+  `color.input {matrix, primaries, transfer, range}` (`"hlg"`, `"pq"`,
+  `"rec709"`, `"rec2020"`, `"601"`, `"full"`/`"limited"` are accepted
+  names). If you DO have the maker's technical LUT, chain it first —
+  `lut: ["sony-hlg-709.cube", "filmic"]` with `input` declaring the
+  source. The timeline is always Rec.709, so the output is tagged right
+  either way. Never combine `convert` with `match` on one clip (render the
+  converted clip first, then match the result).
 - Prefer a built-in look over hand grading: `color: {"lut": "clean-punch"}`
   per clip or on `project.color` for the whole video. Looks: teal-orange,
   filmic, clean-punch, bw-classic, warm-golden, cool-matte, vivid,
   faded-retro. User `.cube` LUTs work by path.
+- **LUT chains and strength.** `lut` takes a list applied in order, and
+  each entry may carry its own strength — `{"lut": "teal-orange",
+  "strength": 0.6}` is the standard "LUT intensity" — while
+  `color.strength` mixes the whole creative grade against the ungraded
+  clip (0.6–0.8 is where most pro grades sit; 1.0 is the raw look).
+  Technical steps (`input`, `convert`, `match`) never mix.
+- **Sharpening belongs in the grade**: `clarity` 0–1 (contrast-adaptive,
+  no halos — the first choice, 0.3–0.5) and `sharpness` 0–1 (classic
+  unsharp, 0.2–0.4; halos above 0.6). Both run after the LUTs at the
+  render resolution — judge them on a `mode: final` render of a short
+  `range`, not on the 540p preview where the radius reads differently.
+  The finishing `sharpen` knob is the older control: don't stack both.
 - Hand adjustments: one or two moves, small values (saturation 1.05–1.15,
   contrast 1.03–1.10, exposure ±0.3 EV). Same restraint rules as photo
   editing: subtle moves compound; maxed sliders read amateur.

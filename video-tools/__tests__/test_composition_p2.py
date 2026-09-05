@@ -307,6 +307,73 @@ def test_finish_and_letterbox_validation():
     assert any("aspect number" in i["message"] for i in issues)
 
 
+def test_color_management_validation():
+    media = dict(MEDIA)
+    media["a.mp4"] = dict(MEDIA["a.mp4"], color={"color_transfer": "bt709"})
+    media["hlg.mp4"] = {"duration": 10.0, "has_video": True, "has_audio": False,
+                        "color": {"color_transfer": "arib-std-b67",
+                                  "color_space": "bt2020nc"}}
+    ok = _comp([{"src": "hlg.mp4", "in": 0, "out": 4, "color": {
+        "convert": "hlg->rec709", "input": {"range": "full"},
+        "lut": ["look.cube", {"lut": "filmic", "strength": 0.6}],
+        "strength": 0.8, "clarity": 0.3, "sharpness": 0.2}}])
+    assert comp_mod.validate(ok, exists=lambda p: True, media_info=media) == []
+    assert "look.cube" in comp_mod.media_paths(ok)
+
+    on_overlay = _comp(
+        [{"src": "a.mp4", "in": 0, "out": 5}],
+        tracks_extra=[{"kind": "overlay", "clips": [
+            {"src": "b.mp4", "in": 0, "out": 2, "start": 0,
+             "color": {"input": {"transfer": "hlg"}, "strength": 0.5}}]}])
+    assert comp_mod.validate(on_overlay, exists=lambda p: True, media_info=media) == []
+
+    proj = _comp([{"src": "a.mp4", "in": 0, "out": 5}])
+    proj["project"]["color"] = {"input": {"matrix": "bt709"}, "sharpness": 0.3}
+    issues = comp_mod.validate(proj, exists=lambda p: True, media_info=media)
+    assert any("describe a SOURCE" in i["message"] for i in issues)
+
+    on_fill = _comp([{"fill": "#000000", "duration": 2,
+                      "color": {"convert": "hlg->rec709"}}])
+    issues = comp_mod.validate(on_fill, exists=lambda p: True, media_info=media)
+    assert any("need a media 'src' clip" in i["message"] for i in issues)
+
+    with_match = _comp([{"src": "hlg.mp4", "in": 0, "out": 4, "color": {
+        "convert": "hlg->rec709", "match": {"ref": "a.mp4@1"}}}])
+    issues = comp_mod.validate(with_match, exists=lambda p: True, media_info=media)
+    assert any("cannot combine" in i["message"] and i["level"] == "error"
+               for i in issues)
+
+    sdr = _comp([{"src": "a.mp4", "in": 0, "out": 4,
+                  "color": {"convert": "hlg->rec709"}}])
+    issues = comp_mod.validate(sdr, exists=lambda p: True, media_info=media)
+    assert any("tagged bt709 (SDR)" in i["message"] and i["level"] == "warning"
+               for i in issues)
+    hdr = _comp([{"src": "hlg.mp4", "in": 0, "out": 4,
+                  "color": {"convert": "hlg->rec709"}}])
+    assert comp_mod.validate(hdr, exists=lambda p: True, media_info=media) == []
+
+    double = _comp([{"src": "a.mp4", "in": 0, "out": 4, "sharpen": 0.5,
+                     "color": {"sharpness": 0.5}}])
+    issues = comp_mod.validate(double, exists=lambda p: True, media_info=media)
+    assert any("double sharpening" in i["message"] and i["level"] == "warning"
+               for i in issues)
+
+    bad = _comp([{"src": "a.mp4", "in": 0, "out": 4, "color": {
+        "lut": [{"lut": "filmic", "strength": 3}], "strength": -1,
+        "convert": "pq->rec709", "input": {"transfer": "gamma99"}}}])
+    issues = comp_mod.validate(bad, exists=lambda p: True, media_info=media)
+    msgs = " | ".join(i["message"] for i in issues if i["level"] == "error")
+    for needle in ("lut entry strength", "color.strength must be 0–1",
+                   "unknown color.convert", "color.input.transfer"):
+        assert needle in msgs, msgs
+
+    missing = _comp([{"src": "a.mp4", "in": 0, "out": 4, "color": {
+        "lut": ["filmic", {"lut": "gone.cube", "strength": 0.5}]}}])
+    issues = comp_mod.validate(missing, exists=lambda p: p != "gone.cube",
+                               media_info=media)
+    assert any("LUT file not found: gone.cube" in i["message"] for i in issues)
+
+
 def test_preset_transitions_validate_and_add_no_overlap():
     ok = _comp([
         {"src": "a.mp4", "in": 0, "out": 4},

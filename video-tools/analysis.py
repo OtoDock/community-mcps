@@ -18,8 +18,9 @@ from pathlib import Path
 
 from mcp.types import ImageContent, TextContent
 
-from fftools import FFPROBE, audio_stream, media_duration, probe, run_ffmpeg, stream_fps, video_stream
-from shared import _notify_file_written, _resolve_path, _to_agents_relative, logger
+import color as color_mod
+from fftools import audio_stream, colr_box, media_duration, probe, run_ffmpeg, stream_color, stream_fps, timecode, video_stream
+from shared import _notify_file_written, _resolve_path, _to_agents_relative
 
 _MAX_SHOT_THUMBS = 60
 
@@ -89,16 +90,58 @@ async def handle_probe_media(args: dict):
     lines.append(f"container: {fmt.get('format_name', '?')} · "
                  f"duration {dur:.2f}s · {size / 1e6:.1f} MB · "
                  f"bitrate {int(float(fmt.get('bit_rate', 0) or 0) / 1000)} kb/s")
+    hdr = None
     for s in info.get("streams", []):
         if s.get("codec_type") == "video":
             lines.append(
                 f"video: {s.get('codec_name')} {s.get('width')}x{s.get('height')} "
                 f"@ {stream_fps(s):.3g} fps · pix_fmt {s.get('pix_fmt')}")
+            if s.get("disposition", {}).get("attached_pic", 0) == 1:
+                continue
+            col = stream_color(s)
+            trc = col.get("color_transfer")
+            kind = color_mod.HDR_TRANSFERS.get(trc) or (
+                "SDR" if trc in color_mod.SDR_TRANSFERS else None)
+            hdr = hdr or color_mod.HDR_TRANSFERS.get(trc)
+            lines.append(
+                f"color: matrix={col.get('color_space', 'unknown')} · "
+                f"primaries={col.get('color_primaries', 'unknown')} · "
+                f"transfer={trc or 'unknown'}{f' ({kind})' if kind else ''} · "
+                f"range={col.get('color_range', 'unknown')}")
         elif s.get("codec_type") == "audio":
             lines.append(
                 f"audio: {s.get('codec_name')} {s.get('sample_rate')} Hz · "
                 f"{s.get('channels')}ch")
+    if video_stream(info) is not None:
+        lines.append(_colr_line(path, fmt.get("format_name", "")))
+    tc = timecode(info)
+    if tc:
+        lines.append(f"timecode: {tc[0]} ({tc[1]})")
+    if hdr:
+        lines.append(
+            f"{hdr} source: in a composition set color.convert "
+            "\"hlg->rec709\" on the clip (built-in HLG→Rec.709 conversion; "
+            "no technical LUT needed), or declare color.input and chain your "
+            "own technical LUT — see the video-editing skill, Color section.")
     return "\n".join(lines)
+
+
+def _colr_line(path: str, format_name: str) -> str:
+    """Whether the CONTAINER declares colour — ffprobe merges the colr box
+    and the bitstream VUI, so only a box walk can tell (Sony XAVC writes
+    none; the tags above then come from the VUI or are guesses)."""
+    if not any(n in format_name for n in ("mp4", "mov", "3gp", "mj2")):
+        return "colr box: n/a (not MP4/MOV)"
+    box = colr_box(path)
+    if not box:
+        return ("colr box: absent — the colour tags above come from the "
+                "bitstream (VUI), or are unknown")
+    if box["type"] in ("nclx", "nclc"):
+        rng = box.get("full_range")
+        rng_s = "" if rng is None else f" · full_range={'yes' if rng else 'no'}"
+        return (f"colr box: present ({box['type']}: primaries={box['primaries']} "
+                f"· transfer={box['transfer']} · matrix={box['matrix']}{rng_s})")
+    return f"colr box: present ({box['type']} ICC profile)"
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +371,135 @@ async def handle_analyze_audio(args: dict):
         "full beat grid + energy curve in sidecar: "
         f"{_to_agents_relative(str(sidecar))} — cut on these timestamps to beat-sync")
     return [_png_content(wave_png), TextContent(type="text", text="\n".join(lines))]
+
+
+# ---------------------------------------------------------------------------
+# align_audio — offset between two recordings of the same event
+# ---------------------------------------------------------------------------
+#
+# GCC-PHAT on the 8 kHz mono waveforms: the cross-power spectrum is
+# whitened (phase only), so a stationary ambience — wind, sea, room tone —
+# yields a sharp peak at the true lag just like a click does. An
+# onset-envelope correlation was tried first and failed exactly there
+# (drone ambience: −0.019 s at a flat 0.46 for a true +1.750 s), which PHAT
+# recovers at 85× its runner-up. 8 kHz gives 0.125 ms resolution — far
+# below a frame. Sign convention: target_time = ref_time + offset.
+
+_ALIGN_SR = 8000
+# Bound the FFT (two 20-min signals → 2^25 points, ~0.5 GB of spectra).
+_ALIGN_MAX_SECONDS = 20 * 60.0
+# Runner-up search excludes this radius around the peak (side lobes).
+_RUNNER_UP_RADIUS = 0.02
+
+
+def _align_waveforms(wav_ref: str, wav_tgt: str, max_offset: float) -> dict:
+    import librosa
+    import numpy as np
+
+    sr = _ALIGN_SR
+    yr, _ = librosa.load(wav_ref, sr=None, mono=True)
+    yt, _ = librosa.load(wav_tgt, sr=None, mono=True)
+    if len(yr) < sr or len(yt) < sr:
+        raise ValueError("both files need at least 1 s of audio")
+    if float(np.abs(yr).max()) < 1e-4 or float(np.abs(yt).max()) < 1e-4:
+        raise ValueError("no usable audio energy in one of the files (silent?)")
+    cap = int(_ALIGN_MAX_SECONDS * sr)
+    truncated = len(yr) > cap or len(yt) > cap
+    yr, yt = yr[:cap], yt[:cap]
+
+    size = 1 << (len(yr) + len(yt) - 1).bit_length()
+    fr = np.fft.rfft(yr, size)
+    ft = np.fft.rfft(yt, size)
+    cross = ft * np.conj(fr)
+    cross /= (np.abs(cross) + 1e-9)
+    # cc[k] peaks where yt[n] ≈ yr[n − k]: the target runs k samples LATE.
+    # Lags beyond either signal's length are meaningless and, with the
+    # zero-padded circular correlation, would alias onto real lags of the
+    # opposite sign — clamp them.
+    cc = np.fft.irfft(cross, size)
+    max_lag = max(1, min(int(round(max_offset * sr)), len(yr) - 1, len(yt) - 1))
+    lags = np.arange(-max_lag, max_lag + 1)
+    vals = cc[lags % size]
+    best = int(np.argmax(vals))
+    lag = int(lags[best])
+    peak = float(vals[best])
+    away = np.abs(lags - lag) > int(_RUNNER_UP_RADIUS * sr)
+    second = float(vals[away].max()) if away.any() else 0.0
+    lo = max(0, -lag)
+    hi = min(len(yr), len(yt) - lag)
+    return {
+        "offset": lag / sr, "peak": peak,
+        "ratio": peak / max(second, 1e-6),
+        "ref_duration": len(yr) / sr, "target_duration": len(yt) / sr,
+        "overlap": max(0.0, (hi - lo) / sr), "truncated": truncated,
+    }
+
+
+def _align_grade(ratio: float) -> str:
+    if ratio >= 8:
+        return "strong"
+    if ratio >= 3:
+        return "fair"
+    return "weak"
+
+
+async def handle_align_audio(args: dict):
+    ref = _resolve_path(args["ref"])
+    target = _resolve_path(args["target"])
+    for label, raw, p in (("ref", args["ref"], ref), ("target", args["target"], target)):
+        if not Path(p).exists():
+            return f"Error: {label} file not found: {raw}"
+    try:
+        max_offset = float(args.get("max_offset", 60.0))
+    except (TypeError, ValueError):
+        return "Error: max_offset must be a number of seconds"
+    max_offset = min(600.0, max(1.0, max_offset))
+    infos = {}
+    for label, p in (("ref", ref), ("target", target)):
+        infos[label] = await probe(p)
+        if audio_stream(infos[label]) is None:
+            return f"Error: {label} '{args[label]}' has no audio stream"
+
+    with tempfile.TemporaryDirectory(prefix="vt-align-") as tmp:
+        wavs = {}
+        for label, p in (("ref", ref), ("target", target)):
+            wav = str(Path(tmp) / f"{label}.wav")
+            await run_ffmpeg(["-i", p, "-vn", "-ac", "1", "-ar", str(_ALIGN_SR), wav],
+                             timeout=900, heavy=False)
+            wavs[label] = wav
+        try:
+            res = await asyncio.to_thread(_align_waveforms, wavs["ref"], wavs["target"],
+                                          max_offset)
+        except ValueError as exc:
+            return f"Error: {exc}"
+
+    off = res["offset"]
+    grade = _align_grade(res["ratio"])
+    ref_rel, tgt_rel = _to_agents_relative(ref), _to_agents_relative(target)
+    lines = [
+        "# Audio alignment",
+        f"ref:    {ref_rel} ({res['ref_duration']:.2f}s)",
+        f"target: {tgt_rel} ({res['target_duration']:.2f}s)",
+        f"offset: {off:+.4f} s  — target_time = ref_time + offset "
+        f"(the moment at ref@10.000 is at target@{10.0 + off:.4f})",
+        f"confidence: {grade} — PHAT peak {res['peak']:.2f}, "
+        f"{res['ratio']:.0f}× the runner-up (overlap {res['overlap']:.1f}s; "
+        f"search window ±{max_offset:g}s"
+        + ("; only the first 20 min of each file were compared" if res["truncated"] else "")
+        + ")",
+        "To sync in a composition:",
+        f"  - same timeline start as the ref clip: target clip in = ref.in {off:+.4f}"
+        + (" (a negative result means the target starts later — use the start form)"
+           if off < 0 else ""),
+        f"  - same in-point: target start = ref.start {-off:+.4f}"
+        + (" (audio/overlay clips need start ≥ 0 — trim the ref instead when this "
+           "goes negative)" if off > 0 else ""),
+    ]
+    if grade == "weak":
+        lines.append("Weak peak: the two recordings may not contain the same "
+                     "event, or the true offset exceeds max_offset — check the "
+                     "files, raise max_offset, or align a shorter excerpt.")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

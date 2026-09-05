@@ -379,6 +379,75 @@ with no settle.
     and latched onto encode ghosts. The execution fixture is a
     multicolor blob over static SMPTE bars (real gradients, known
     ground-truth path); tolerances are ±40 px on a 640-wide frame.
+- **0.4.0 colour-management pack (2026-09, `color.py` + compiler)** — from
+  a field report by an agent grading Sony HLG footage:
+  - *The timeline is Rec.709 / limited range, enforced by the compiler.*
+    Every media chain declares its source colorimetry at the head
+    (`setparams` from `color.input`, from the `convert` preset's implied
+    source, or the player default for whatever the probe left unknown — 709
+    for HD, 601 up to 576 lines); the canvas-fit `scale` carries
+    `out_color_matrix=bt709:out_range=tv` — the REAL conversion point, where
+    601-tagged and full-range sources convert and 709 sources pass
+    bit-exact; fills generate in planar RGB and convert through the same
+    explicit matrix; every base chain and the composited tail is pinned as
+    709 so the encoder writes a truthful VUI + `colr`. Measured before the
+    pack: an untagged HD source was decoded to RGB with the 601 matrix for
+    every RGB filter (lut3d, curves, exposure, colortemperature, keying, the
+    gbrp transitions); fills and PNG stills were converted with 601 and
+    played back as 709 (pure green stored Y145/U54/V34 instead of
+    172/42/27); outputs carried `unknown` or `bt470bg` tags. A `setparams`
+    pin AFTER the conversion point only relabels — hence the explicit scale
+    options, and hence the head tag (without it swscale reads an untagged
+    HD source as 601 and "converts" it).
+  - `color.input {matrix, primaries, transfer, range}` (aliases hlg / pq /
+    rec709 / rec2020 / 601 / srgb / full / limited) for untagged or
+    mistagged files. `color.convert: "hlg->rec709"`: zscale to
+    display-linear with HLG's 1000-nit OOTF (`npl=1000` puts HLG code 1.0 at
+    linear 1.0), +2.30 EV to anchor BT.2408 reference white (HLG 75 % = 203
+    nits) at SDR white, a Möbius knee (linear below 0.5, roll-off to the
+    4.926 signal peak) so highlights keep detail, then 709
+    primaries/transfer. Measured: HLG 100/75/50/25 % → SDR Y 235/209/139/78;
+    SDR 50 % grey survives SDR→HLG→SDR exactly. Runs AFTER the canvas fit
+    (+35 % on a 1080p encode, float pipeline). The common internet recipe
+    (hable, npl=100) maps HLG codes onto themselves — the flat "HLG on an
+    SDR display" look — and was rejected. `convert` + `match` on one clip is
+    a validation error (the match would sample HLG pixels and apply in 709).
+  - `lut` chains (list; entries a string or `{lut, strength}`), per-entry
+    strength BAKED into the staged cube (`identity·(1−s) + lut·s` — a
+    per-pixel frame blend is exactly this in LUT space, so it costs nothing
+    at render time; 1D and 3D, `DOMAIN_MIN/MAX` honoured). `color.strength`
+    mixes the whole creative grade (hand grade + LUT chain) against the
+    pre-grade frame: split → grade → `blend=all_mode=normal:all_opacity=S`
+    (graded on the first input — measured), both branches pinned to one
+    format (gbrap on overlays so alpha survives); strength 1 emits the flat
+    chain exactly as before. `input`, `convert` and `match` never enter the
+    mix.
+  - `clarity` (cas, contrast-adaptive, halo-free) → `sharpness` (unsharp
+    5x5, luma only, amount 1.5·s), after every LUT and after the canvas fit
+    — sharpening before a downscale is wasted. The finishing `sharpen` knob
+    stays (released schema); both on one clip warns.
+  - `probe_media` reports the stream colour tags with an HLG/PQ/SDR verdict,
+    whether the MP4/MOV container carries a `colr` box (own seek-based
+    ISO-BMFF walk: ffprobe merges colr and the bitstream VUI into one
+    report; Sony XAVC writes no colr), and standard `tmcd` timecode.
+  - `align_audio {ref, target, max_offset}`: GCC-PHAT on the 8 kHz mono
+    waveforms (cross-power spectrum whitened to phase only), lags clamped to
+    the signal lengths because beyond them the zero-padded circular
+    correlation ALIASES (a +54-frame peak read back as −1994 in the first
+    test run), at most 20 min per file. An onset-envelope correlation was
+    the first design and failed the live check on a drone clip's sea/wind
+    ambience (−0.019 s at a flat peak for a true +1.750 s — no onsets to
+    correlate); PHAT recovers that offset exactly at 85× its runner-up.
+    Convention: target_time = ref_time + offset; confidence = the PHAT
+    peak's ratio to the best runner-up outside ±20 ms (strong ≥ 8, fair ≥
+    3, weak below).
+  - ffmpeg facts that shaped it (7.1.5 in the image, 7.0.2 locally — same
+    behaviour): the CLI's `-color_primaries` / `-color_trc` OUTPUT flags do
+    not reach x264 (only `-colorspace` does) — frame props via `setparams`
+    do, and the mov muxer then writes `colr`; zscale fails on an unknown
+    input transfer ("no path between colorspaces"), and explicit
+    `tin/pin/min/rin` without explicit outputs fails the same way — tag the
+    frames instead.
 
 ## Low-RAM windowed rendering
 

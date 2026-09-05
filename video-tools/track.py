@@ -27,7 +27,7 @@ from pathlib import Path
 
 from fftools import FFMPEG
 from reframe import MODELS_DIR
-from shared import _resolve_path, _to_agents_relative, logger
+from shared import _resolve_path, _to_agents_relative
 
 _VIT = "object_tracking_vittrack_2023sep.onnx"
 

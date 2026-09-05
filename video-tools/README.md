@@ -13,6 +13,7 @@ compiles it to an FFmpeg filtergraph and renders web-safe MP4.
 | `analyze_video` | Shot detection + labeled contact sheet (cached sidecar) |
 | `analyze_audio` | BPM + beat grid, energy, silences, LUFS, waveform image |
 | `sample_frames` | Frames from a source file at timestamps (grid image) |
+| `align_audio` | Offset between two recordings of one event (camera vs recorder, two cameras) |
 | `create_composition` / `edit_composition` / `validate_composition` | Author the timeline |
 | `render_composition` | preview (fast) / final (crf 18 + two-pass R128 loudnorm) |
 | `render_frames` | Frames from the composition — the visual QC loop |
@@ -32,7 +33,12 @@ compiles it to an FFmpeg filtergraph and renders web-safe MP4.
   clean, minimal boxed.
 - **Looks** are recipe-generated `.cube` LUTs owned by this repo (baked at
   image build — nothing third-party redistributed); user `.cube` files work
-  by path.
+  by path, chain in order, and take a per-LUT strength.
+- **Colour-managed timeline.** The timeline is Rec.709/limited: sources
+  declare their colorimetry (`color.input`), HLG camera footage converts
+  with a built-in preset (`color.convert: "hlg->rec709"`, no technical LUT
+  needed), and renders carry a truthful VUI + `colr`. `probe_media` tells you
+  what a file carries.
 - Output defaults to H.264/AAC MP4 with `+faststart` — plays inline in the
   dashboard with zero re-transcoding.
 

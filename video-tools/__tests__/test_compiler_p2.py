@@ -1,6 +1,10 @@
 """Phase-2 compiler features: keyframes (zoompan / overlay motion),
-keying effects, rotation, image masks."""
+keying effects, rotation, image masks — and the colour-management chain
+order (head tags, conversion point, convert, LUT chain, strength mix, pins)."""
 
+import pytest
+
+import color as color_mod
 import composition as comp_mod
 from compiler import compile_render, piecewise
 
@@ -107,7 +111,10 @@ def test_stab_transform_sits_between_setpts_and_fps():
          "_stab": {"trf": "/tmp/r/stab0.trf", "smoothing": 25, "zoom": 0.0}},
     ]), MEDIA)
     g = plan.graph
+    # The colour declaration (untagged HD source → 709 defaults) sits right
+    # after setpts; the stabilizer follows on the same source frames.
     assert ("setpts=PTS-STARTPTS,"
+            "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,"
             "vidstabtransform=input=/tmp/r/stab0.trf:smoothing=25"
             ":optzoom=1:interpol=bicubic,"
             "unsharp=5:5:0.8:3:3:0.4,"
@@ -144,6 +151,7 @@ def test_blend_interp_inserted_only_when_native_frames_run_out():
          "interpolate": "blend"},
     ]), media)
     assert ("setpts=(PTS-STARTPTS)/0.25,"
+            "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,"
             "minterpolate=fps=30:mi_mode=blend,fps=30") in plan.graph
 
     # 60 fps at 0.5× covers a 30 fps timeline natively — no synthesis.
@@ -370,6 +378,142 @@ def test_preset_on_image_and_fill_clips_compiles():
     assert "eq=brightness=-0.9" in g      # head dip-to-black on the image clip
     assert "eq=brightness=-0.35" in g     # pre-cut dip on the fill clip
     assert plan.duration == 4.0
+
+
+def _base_chain(graph: str, input_idx: int) -> str:
+    return next(c for c in graph.split(";\n") if c.startswith(f"[{input_idx}:v]"))
+
+
+def test_head_tag_defaults_and_probe_driven():
+    media = {
+        "hd.mp4": {"duration": 5.0, "has_video": True, "has_audio": False,
+                   "height": 1080, "color": {}},
+        "sd.mp4": {"duration": 5.0, "has_video": True, "has_audio": False,
+                   "height": 576, "color": {}},
+        "tagged.mp4": {"duration": 5.0, "has_video": True, "has_audio": False,
+                       "height": 1080, "color": {
+                           "color_space": "bt709", "color_transfer": "bt709",
+                           "color_primaries": "bt709", "color_range": "tv"}},
+    }
+    g = compile_render(_comp([
+        {"src": "hd.mp4", "in": 0, "out": 2},
+        {"src": "sd.mp4", "in": 0, "out": 2},
+        {"src": "tagged.mp4", "in": 0, "out": 2},
+    ]), media, streams="v").graph
+    hd, sd, tagged = (_base_chain(g, i) for i in range(3))
+    assert ("setpts=PTS-STARTPTS,setparams=colorspace=bt709:color_primaries=bt709"
+            ":color_trc=bt709:range=tv,fps=30") in hd
+    assert ("setparams=colorspace=bt470bg:color_primaries=bt470bg"
+            ":color_trc=smpte170m:range=tv,fps=30") in sd
+    # A fully tagged source declares nothing at the head — the decoder's
+    # tags are the truth; only the end pin remains.
+    head = tagged.split("fps=30")[0]
+    assert "setparams" not in head
+    for chain in (hd, sd, tagged):
+        assert chain.rstrip("]0123456789vb[").endswith(
+            "format=yuv420p," + color_mod.OUTPUT_PIN + ",setsar=1,settb=AVTB")
+        assert "flags=lanczos:out_color_matrix=bt709:out_range=tv,crop=640:360" in chain
+
+
+def test_explicit_input_and_convert_chain_order():
+    luts = {"filmic": "/tmp/l/lut0.cube"}
+    g = compile_render(_comp([
+        {"src": "a.mp4", "in": 0, "out": 2, "color": {
+            "convert": "hlg->rec709", "input": {"range": "pc"},
+            "lut": "filmic", "sharpness": 0.5, "clarity": 0.3}},
+    ]), MEDIA, luts=luts, streams="v").graph
+    chain = _base_chain(g, 0)
+    head = ("setparams=colorspace=bt2020nc:color_primaries=bt2020"
+            ":color_trc=arib-std-b67:range=pc")
+    assert chain.index(head) < chain.index("fps=30")
+    order = [chain.index(s) for s in (
+        "scale=640:360:force_original_aspect_ratio=increase:flags=lanczos"
+        ":out_color_matrix=bt709:out_range=tv",
+        "zscale=t=linear:npl=1000",
+        "tonemap=tonemap=mobius",
+        "lut3d=file='/tmp/l/lut0.cube'",
+        "cas=strength=0.3",
+        "unsharp=5:5:0.75:5:5:0",
+        "format=yuv420p," + color_mod.OUTPUT_PIN + ",setsar=1",
+    )]
+    assert order == sorted(order), order
+    assert "blend=all_mode" not in g   # strength 1 → flat chain
+
+
+def test_lut_chain_and_strength_mix():
+    import re
+
+    luts = {"tech.cube": "/tmp/l/lut0.cube", "filmic#0.6": "/tmp/l/lut1.cube"}
+    spec = {"lut": ["tech.cube", {"lut": "filmic", "strength": 0.6}],
+            "exposure": 0.5, "strength": 0.5, "sharpness": 0.4}
+    g = compile_render(_comp([{"src": "a.mp4", "in": 0, "out": 2, "color": spec}]),
+                       MEDIA, luts=luts, streams="v").graph
+    assert "lut3d=file='/tmp/l/lut0.cube',lut3d=file='/tmp/l/lut1.cube'" in g
+    m = re.search(r"\[(vgw\d+)\]\[(vgd\d+)\]blend=all_mode=normal:all_opacity=0.5\[(vgm\d+)\]", g)
+    assert m, g
+    wet = next(c for c in g.split(";\n") if c.endswith(f"[{m.group(1)}]"))
+    dry = next(c for c in g.split(";\n") if c.endswith(f"[{m.group(2)}]"))
+    after = next(c for c in g.split(";\n") if c.startswith(f"[{m.group(3)}]"))
+    # The creative grade lives on the wet branch only; sharpening and the
+    # end pin come after the mix; both branches are pinned to one format.
+    assert "exposure=exposure=0.5" in wet and "lut3d" in wet and wet.endswith("format=yuv420p" + wet[wet.rindex("["):])
+    assert dry.endswith("format=yuv420p" + dry[dry.rindex("["):]) and "exposure" not in dry
+    assert "unsharp=5:5:0.6:5:5:0" in after and color_mod.OUTPUT_PIN in after
+    assert "unsharp" not in wet
+    # strength 0 → an all-dry mix (still a valid graph), not a skipped grade.
+    spec0 = dict(spec, strength=0.0)
+    g0 = compile_render(_comp([{"src": "a.mp4", "in": 0, "out": 2, "color": spec0}]),
+                        MEDIA, luts=luts, streams="v").graph
+    assert "blend=all_mode=normal:all_opacity=0" in g0
+    with pytest.raises(comp_mod.CompositionError):
+        compile_render(_comp([{"src": "a.mp4", "in": 0, "out": 2,
+                               "color": {"lut": [{"lut": "filmic", "strength": 0.6}]}}]),
+                       MEDIA, luts={"filmic": "/tmp/l/x.cube"}, streams="v")
+
+
+def test_project_grade_strength_and_sharpness_in_tail():
+    comp = _comp([{"src": "a.mp4", "in": 0, "out": 2}])
+    comp["project"]["color"] = {"lut": "filmic", "strength": 0.3, "sharpness": 1}
+    g = compile_render(comp, MEDIA, luts={"filmic": "/tmp/l/lut0.cube"},
+                       streams="v", time_range=(0.5, 1.5)).graph
+    assert "blend=all_mode=normal:all_opacity=0.3" in g
+    tail = next(c for c in g.split(";\n") if "[vout" in c)
+    assert tail.index("unsharp=5:5:1.5:5:5:0") < tail.index("format=yuv420p," + color_mod.OUTPUT_PIN)
+    assert tail.index(color_mod.OUTPUT_PIN) < tail.index("trim=start=0.5:end=1.5")
+
+
+def test_overlay_strength_uses_gbrap_and_head_tag():
+    g = compile_render(_comp(
+        [{"src": "a.mp4", "in": 0, "out": 6}],
+        tracks_extra=[{"kind": "overlay", "clips": [
+            {"src": "b.mp4", "in": 0, "out": 2, "start": 1,
+             "color": {"exposure": 0.3, "strength": 0.5, "clarity": 0.2}},
+        ]}]), MEDIA, streams="v").graph
+    ov = next(c for c in g.split(";\n") if c.startswith("[1:v]"))
+    # An untagged overlay source gets the same head tag as a base clip.
+    assert ("setpts=PTS-STARTPTS,setparams=colorspace=bt709:color_primaries=bt709"
+            ":color_trc=bt709:range=tv,fps=30") in ov
+    assert g.count("format=gbrap") == 2
+    mixed = next(c for c in g.split(";\n") if "blend=all_mode=normal:all_opacity=0.5" in c)
+    out_label = mixed[mixed.rindex("["):]
+    after = next(c for c in g.split(";\n") if c.startswith(out_label))
+    assert after.index("cas=strength=0.2") < after.index("format=rgba")
+
+
+def test_fill_and_image_convert_through_709_matrix():
+    g = compile_render(_comp([
+        {"fill": "#00ff00", "duration": 1.0, "color": {"lut": "filmic"}},
+        {"image": "logo.png", "duration": 1.0},
+    ]), dict(MEDIA, **{"logo.png": {"duration": 0.0, "has_video": True,
+                                    "has_audio": False, "still": True}}),
+        luts={"filmic": "/tmp/l/lut0.cube"}, streams="v").graph
+    fill = next(c for c in g.split(";\n") if c.startswith("color=c=0x00ff00"))
+    assert ("format=gbrp,scale=out_color_matrix=bt709:out_range=tv,"
+            "trim=end_frame=30,fps=30,format=yuv420p,lut3d") in fill
+    assert color_mod.OUTPUT_PIN in fill
+    image = next(c for c in g.split(";\n") if c.startswith("[0:v]"))
+    assert "flags=lanczos:out_color_matrix=bt709:out_range=tv" in image
+    assert color_mod.OUTPUT_PIN in image
 
 
 def test_alpha_webm_forces_libvpx_decoder():
