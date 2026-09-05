@@ -378,5 +378,12 @@ convert it in a composition.
 - preview ≈ well under a minute for short videos; final is several times
   slower (crf 18, preset slow, loudness measurement pass) — say so before
   long final renders.
+- **File size is a CRF question, not a quality bug.** Final's CRF 18 is a
+  master setting: constant visual quality, whatever bitrate that takes —
+  and sharpening (`clarity`, `sharpness`, `sharpen`) or `grain` can double
+  or triple the file because fine detail costs bits. For a web or social
+  deliverable pass `crf` on `render_composition`: 23 is the balanced
+  choice, 28 for platforms that re-encode anyway. Keep 18 for archives and
+  hand-offs to an editor.
 - Renders are CPU-bound and serialized (two at a time) — batch your
   iteration into preview+frames rounds rather than many tiny final renders.

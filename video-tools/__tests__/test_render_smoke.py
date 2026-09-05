@@ -145,6 +145,10 @@ def test_final_render_hits_loudness_target(demo_comp):
     assert m, proc.stderr[-500:]
     measured = float(json.loads(m[-1].group(0))["input_i"])
     assert abs(measured - (-16.0)) < 1.5, f"final render measured {measured} LUFS"
+    # loudnorm emits 192 kHz and AAC would settle on 96 kHz (finals shipped
+    # that way until 0.4.2); the master bus must land on the timeline's 48 kHz.
+    a = audio_stream(_run(probe(str(out))))
+    assert a["codec_name"] == "aac" and int(a["sample_rate"]) == 48000, a
 
 
 def test_range_render(demo_comp):
@@ -1498,3 +1502,22 @@ def test_probe_media_names_the_pq_preset(edit_assets, monkeypatch):
     text = _run(analysis.handle_probe_media({"path": str(edit_assets["pq"][203])}))
     assert "transfer=smpte2084 (PQ)" in text, text
     assert 'color.convert "pq->rec709"' in text and "edit_video ops keep" in text, text
+
+
+def test_quickops_loudness_normalize_lands_on_48k(noisy_vo, monkeypatch):
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    out = str(noisy_vo.parent / "normalized.mp4")
+    text = _run(quickops.handle_edit_video({
+        "path": str(noisy_vo),
+        "operations": [{"type": "loudness_normalize", "target_lufs": -16}],
+        "output_path": out,
+    }))
+    assert "ok: loudness_normalize" in text and "48 kHz" in text, text
+    a = audio_stream(_run(probe(out)))
+    assert a["codec_name"] == "aac" and int(a["sample_rate"]) == 48000, a
+    proc = subprocess.run(
+        [FFMPEG, "-hide_banner", "-i", out, "-vn",
+         "-af", "loudnorm=print_format=json", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=300)
+    m = list(re.finditer(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr, re.S))
+    assert m and abs(float(json.loads(m[-1].group(0))["input_i"]) + 16.0) < 1.5, proc.stderr[-300:]

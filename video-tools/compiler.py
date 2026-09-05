@@ -1020,7 +1020,13 @@ def compile_render(
                 "lra": float(opts.get("lra", 11.0)),
             }
             # The renderer measures pass 1 and substitutes measured_* values.
+            # loudnorm runs (and emits) 192 kHz even in linear mode, and the
+            # AAC encoder then settles on 96 kHz — the highest rate it has.
+            # Bring the bus back to the timeline's 48 kHz (measured: finals
+            # shipped 96 kHz AAC until 0.4.2; previews, which skip loudnorm,
+            # were 48 kHz all along).
             atail.append("__LOUDNORM__")
+            atail.append("aresample=48000")
 
         if time_range:
             t0, t1 = time_range

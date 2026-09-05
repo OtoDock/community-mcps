@@ -698,9 +698,10 @@ async def _op_loudnorm(src: str, base, op: dict):
           f":measured_LRA={meas['input_lra']}:measured_thresh={meas['input_thresh']}"
           f":offset={meas.get('target_offset', 0)}:linear=true")
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-c:v", "copy", "-af", ln,
+    # loudnorm emits 192 kHz; without the resample AAC lands on 96 kHz.
+    await _step(["-i", src, "-c:v", "copy", "-af", ln + ",aresample=48000",
                  "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out])
-    return out, (f"normalized {meas['input_i']} → {i} LUFS (two-pass)")
+    return out, (f"normalized {meas['input_i']} → {i} LUFS (two-pass, 48 kHz)")
 
 
 async def _op_burn_subtitles(src: str, base, op: dict):

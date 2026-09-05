@@ -251,8 +251,9 @@ with no settle.
     measured to recover only ~25% of a channel-mixer tint (tints are
     multiplicative in RGB, additive transfer overshoots on saturated
     content); quantile curves recover ~94% and capture gamma/lift too.
-    Renderer pre-pass samples frames (cv2, 3-frame window) and bakes tmp
-    cubes; the match LUT applies BEFORE creative grades. Bridge mode
+    Renderer pre-pass samples frames (3-frame window; through ffmpeg with
+    the clip's head tag since 0.4.1 — cv2 read untagged HD through 601)
+    and bakes tmp cubes; the match LUT applies BEFORE creative grades. Bridge mode
     `{ramp_from: "A@t", ramp_to: "B@t"}` bakes TWO LUTs and the compiler
     split/blends between the two grades across the clip
     (blend=all_expr with clip-local T) — the AI-bridge join approach,
@@ -484,6 +485,18 @@ with no settle.
     linear and SDR 50 % grey survives SDR→PQ→SDR exactly. HLG keeps
     `npl=1000` + 2.3 EV because its OOTF gamma depends on npl. `probe_media`
     names the preset that matches its verdict.
+- **0.4.2 (2026-09-05) — final renders land on 48 kHz audio.** Field report
+  from the internal install's content agent (the first real Sony XAVC HLG
+  clip, which the 0.4.x conversion passed): finals carried 96 kHz AAC.
+  Cause, measured: `loudnorm` runs and EMITS 192 kHz even in linear mode,
+  and the AAC encoder then settles on 96 kHz, the highest rate it has;
+  previews skip loudnorm and were 48 kHz all along. Fix: `aresample=48000`
+  after the loudnorm atom on the master bus and in the `edit_video`
+  `loudness_normalize` op. Same report, not a bug: sharpening (`clarity` /
+  `sharpness` / finishing `sharpen`) raises the bitrate at a constant CRF
+  — high-frequency detail costs bits — so web deliverables should pass the
+  `crf` override (23 balanced, 28 social) rather than lower the master's
+  CRF 18; the skill says so now.
 
 ## Low-RAM windowed rendering
 
