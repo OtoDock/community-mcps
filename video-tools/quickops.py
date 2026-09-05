@@ -3,6 +3,14 @@
 Operations run sequentially through tmp intermediates; the pipeline stops at
 the first failed op (later ops depend on earlier output — unlike document
 edits, partial application would silently produce the wrong video).
+
+Colour: every op that re-encodes video carries the timeline's contract
+(color.edit_contract) — the source's colorimetry declared at the chain
+head, matrix/range converted where the op scales (or by a no-size-change
+scale where it does not), `format=yuv420p`, the Rec.709 pin — so outputs
+are tagged truthfully and RGB ops (LUTs, GIF palettes, subtitles) decode
+with the right matrix. HDR / BT.2020 sources pass through with their tags
+and bit depth: a one-shot op never tone-maps. `-c:v copy` ops are untouched.
 """
 
 import asyncio
@@ -14,9 +22,10 @@ from pathlib import Path
 
 import audiofx as audiofx_mod
 import captions as captions_mod
+import color as color_mod
 import slowmo as slowmo_mod
 import stab as stab_mod
-from fftools import FFmpegError, atempo_chain, audio_stream, media_duration, probe, run_ffmpeg, stream_fps, video_stream
+from fftools import FFmpegError, atempo_chain, audio_stream, media_duration, probe, run_ffmpeg, stream_color, stream_fps, video_stream
 from shared import _normalize_operations, _notify_file_written, _op_type, _resolve_path, _to_agents_relative
 
 _ENCODE = ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
@@ -32,6 +41,30 @@ def _f(v) -> str:
 
 async def _step(args: list[str], timeout: float = 1800) -> None:
     await run_ffmpeg(args, timeout=timeout)
+
+
+async def _contract(src: str, info: dict | None = None):
+    """The op's colour atoms from the source's probe — None when the file
+    has no video stream (audio-only sources keep working where they did)."""
+    info = info if info is not None else await probe(src)
+    vs = video_stream(info)
+    if vs is None:
+        return None
+    return color_mod.edit_contract(stream_color(vs), vs.get("height"))
+
+
+def _vf(c, filters: list[str], has_scale: bool = False) -> str:
+    """head → op filters → tail (or the bare filters without a contract)."""
+    atoms = filters if c is None else [c.head, *filters, *c.tail(has_scale)]
+    return ",".join(f for f in atoms if f)
+
+
+def _hdr_note(c) -> str:
+    if c is None or not c.keep:
+        return ""
+    kind = color_mod.HDR_TRANSFERS.get(c.source.get("transfer"), "BT.2020")
+    return (f"; source kept {kind} as it is (edit_video never tone-maps — "
+            "for an SDR deliverable build a composition with color.convert)")
 
 
 async def handle_edit_video(args: dict):
@@ -105,9 +138,12 @@ async def _op_trim(src: str, base, op: dict):
     end = op.get("end")
     if end is None or float(end) <= start:
         raise ValueError("trim needs start < end (seconds)")
+    c = await _contract(src)
+    colour = ["-vf", _vf(c, [])] if c is not None else []
     out = str(base) + ".mp4"
-    await _step(["-ss", _f(start), "-to", _f(end), "-i", src, *_ENCODE, out])
-    return out, f"kept {start}-{end}s"
+    await _step(["-ss", _f(start), "-to", _f(end), "-i", src, *colour,
+                 *_ENCODE, out])
+    return out, f"kept {start}-{end}s" + _hdr_note(c)
 
 
 async def _op_remove(src: str, base, op: dict):
@@ -116,16 +152,17 @@ async def _op_remove(src: str, base, op: dict):
         raise ValueError("remove needs 0 ≤ start < end")
     info = await probe(src)
     has_audio = audio_stream(info) is not None
+    c = await _contract(src, info)
     out = str(base) + ".mp4"
-    graph = (f"[0:v]select='not(between(t,{_f(start)},{_f(end)}))',"
-             f"setpts=N/FRAME_RATE/TB[v]")
+    graph = "[0:v]" + _vf(c, [f"select='not(between(t,{_f(start)},{_f(end)}))'",
+                             "setpts=N/FRAME_RATE/TB"]) + "[v]"
     maps = ["-map", "[v]"]
     if has_audio:
         graph += (f";[0:a]aselect='not(between(t,{_f(start)},{_f(end)}))',"
                   f"asetpts=N/SR/TB[a]")
         maps += ["-map", "[a]"]
     await _step(["-i", src, "-filter_complex", graph, *maps, *_ENCODE, out])
-    return out, f"cut out {start}-{end}s"
+    return out, f"cut out {start}-{end}s" + _hdr_note(c)
 
 
 async def _op_crop(src: str, base, op: dict):
@@ -152,27 +189,31 @@ async def _op_crop(src: str, base, op: dict):
         x = int(op.get("x", (W - w) // 2))
         y = int(op.get("y", (H - h) // 2))
         note = f"cropped {w}x{h}+{x}+{y}"
+    c = await _contract(src, info)
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", f"crop={w}:{h}:{x}:{y}",
+    await _step(["-i", src, "-vf", _vf(c, [f"crop={w}:{h}:{x}:{y}"]),
                  *_ENCODE, out])
-    return out, note
+    return out, note + _hdr_note(c)
 
 
 async def _op_resize(src: str, base, op: dict):
     if op.get("short_side"):
         s = int(op["short_side"])
-        vf = (f"scale=if(gt(iw\\,ih)\\,-2\\,{s}):if(gt(iw\\,ih)\\,{s}\\,-2)"
-              f":flags=lanczos")
+        expr = (f"if(gt(iw\\,ih)\\,-2\\,{s}):if(gt(iw\\,ih)\\,{s}\\,-2)"
+                f":flags=lanczos")
         note = f"short side → {s}px"
     else:
         w, h = op.get("width", -2), op.get("height", -2)
         if w == -2 and h == -2:
             raise ValueError("resize needs width, height, or short_side")
-        vf = f"scale={int(w)}:{int(h)}:flags=lanczos"
+        expr = f"{int(w)}:{int(h)}:flags=lanczos"
         note = f"scaled to {w}x{h}"
+    c = await _contract(src)
+    scale = c.scale(expr) if c is not None else f"scale={expr}"
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", vf, *_ENCODE, out])
-    return out, note
+    await _step(["-i", src, "-vf", _vf(c, [scale], has_scale=True),
+                 *_ENCODE, out])
+    return out, note + _hdr_note(c)
 
 
 async def _op_speed(src: str, base, op: dict):
@@ -184,6 +225,7 @@ async def _op_speed(src: str, base, op: dict):
         raise ValueError(f"interpolate must be one of {slowmo_mod.INTERP_MODES}")
     info = await probe(src)
     has_audio = audio_stream(info) is not None
+    c = await _contract(src, info)
     vchain = [f"setpts=PTS/{_f(factor)}"]
     note = f"speed ×{factor}"
     if factor < 1 and interp != "duplicate":
@@ -201,7 +243,7 @@ async def _op_speed(src: str, base, op: dict):
                      else slowmo_mod.BLEND_CHAIN)
             vchain.append(chain.format(fps=f"{target:.6g}"))
             note += f" ({interp}-interpolated to {target:.3g} fps)"
-    graph = f"[0:v]{','.join(vchain)}[v]"
+    graph = f"[0:v]{_vf(c, vchain)}[v]"
     maps = ["-map", "[v]"]
     if has_audio:
         chain = ",".join(atempo_chain(factor)) or "anull"
@@ -210,7 +252,7 @@ async def _op_speed(src: str, base, op: dict):
     out = str(base) + ".mp4"
     await _step(["-i", src, "-filter_complex", graph, *maps, *_ENCODE, out],
                 timeout=3600)
-    return out, note
+    return out, note + _hdr_note(c)
 
 
 async def _op_speed_ramp(src: str, base, op: dict):
@@ -234,6 +276,9 @@ async def _op_speed_ramp(src: str, base, op: dict):
         raise ValueError("source too short to ramp")
     has_audio = audio_stream(info) is not None
     fps = stream_fps(video_stream(info) or {}) or 30.0
+    c = await _contract(src, info)
+    head = [c.head] if c is not None and c.head else []
+    tail = c.tail() if c is not None else []
 
     speeds = speedramp_mod.segment_speeds(ramp)
     n = len(speeds)
@@ -241,8 +286,9 @@ async def _op_speed_ramp(src: str, base, op: dict):
     parts, vlabels, alabels = [], [], []
     for i, s in enumerate(speeds):
         a, b = i * seg, (dur if i == n - 1 else (i + 1) * seg)
-        parts.append(f"[0:v]trim=start={_f(a)}:end={_f(b)},"
-                     f"setpts=(PTS-STARTPTS)/{_f(s)}[v{i}]")
+        parts.append("[0:v]" + ",".join(
+            [f"trim=start={_f(a)}:end={_f(b)}", *head,
+             f"setpts=(PTS-STARTPTS)/{_f(s)}"]) + f"[v{i}]")
         vlabels.append(f"[v{i}]")
         if has_audio:
             achain = ",".join(["asetpts=PTS-STARTPTS"] + atempo_chain(s))
@@ -250,8 +296,8 @@ async def _op_speed_ramp(src: str, base, op: dict):
             alabels.append(f"[a{i}]")
     # fps= after concat: the trim/setpts segments lose CFR metadata and the
     # variable frame spacing of slow segments plays back unevenly without it.
-    parts.append("".join(vlabels)
-                 + f"concat=n={n}:v=1:a=0,fps={_f(min(fps, 60.0))}[v]")
+    parts.append("".join(vlabels) + ",".join(
+        [f"concat=n={n}:v=1:a=0", f"fps={_f(min(fps, 60.0))}", *tail]) + "[v]")
     maps = ["-map", "[v]"]
     if has_audio:
         parts.append("".join(alabels) + f"concat=n={n}:v=0:a=1[a]")
@@ -262,16 +308,18 @@ async def _op_speed_ramp(src: str, base, op: dict):
     return out, ("speed ramp " + speedramp_mod.describe(ramp)
                  + ("" if min(speeds) >= 1.0 or stream_fps(video_stream(info) or {}) == 0
                     else "; slow segments duplicate frames — use a "
-                         "composition with interpolate: flow for synthesis"))
+                         "composition with interpolate: flow for synthesis")
+                 + _hdr_note(c))
 
 
 async def _op_fps(src: str, base, op: dict):
     fps = float(op.get("fps", 0))
     if not 1 <= fps <= 120:
         raise ValueError("fps must be 1–120")
+    c = await _contract(src)
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", f"fps={_f(fps)}", *_ENCODE, out])
-    return out, f"resampled to {fps} fps"
+    await _step(["-i", src, "-vf", _vf(c, [f"fps={_f(fps)}"]), *_ENCODE, out])
+    return out, f"resampled to {fps} fps" + _hdr_note(c)
 
 
 async def _op_concat(src: str, base, op: dict):
@@ -286,13 +334,21 @@ async def _op_concat(src: str, base, op: dict):
     W, H = int(vs["width"]), int(vs["height"])
     fps = stream_fps(vs) or 30.0
 
-    chains, pairs = [], []
+    # Every input joins the Rec.709 space (a mixed list has one target);
+    # HDR inputs are matrix-converted but not tone-mapped — say so.
+    chains, pairs, hdr_inputs = [], [], []
     for i, p in enumerate(paths):
         info = await probe(p) if i else first
-        chains.append(
-            f"[{i}:v]fps={_f(fps)},scale={W}:{H}:force_original_aspect_ratio=decrease"
-            f":flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"setsar=1,format=yuv420p[v{i}]")
+        c = await _contract(p, info)
+        if c is not None and c.keep:
+            hdr_inputs.append(Path(p).name)
+        chains.append(f"[{i}:v]" + ",".join(f for f in [
+            c.head if c is not None else "",
+            f"fps={_f(fps)}",
+            f"scale={W}:{H}:force_original_aspect_ratio=decrease"
+            f":flags=lanczos:{color_mod.OUTPUT_MATRIX_OPTS}",
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black",
+            "setsar=1", "format=yuv420p"] if f) + f"[v{i}]")
         if audio_stream(info) is not None:
             chains.append(f"[{i}:a]aresample=48000,"
                           f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]")
@@ -300,7 +356,8 @@ async def _op_concat(src: str, base, op: dict):
             dur = media_duration(info)
             chains.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{_f(dur)}[a{i}]")
         pairs.append(f"[v{i}][a{i}]")
-    chains.append("".join(pairs) + f"concat=n={len(paths)}:v=1:a=1[v][a]")
+    chains.append("".join(pairs) + f"concat=n={len(paths)}:v=1:a=1[vc][a]")
+    chains.append(f"[vc]{color_mod.OUTPUT_PIN}[v]")
     out = str(base) + ".mp4"
     args = []
     for p in paths:
@@ -308,7 +365,12 @@ async def _op_concat(src: str, base, op: dict):
     args += ["-filter_complex", ";".join(chains), "-map", "[v]", "-map", "[a]",
              *_ENCODE, out]
     await _step(args, timeout=3600)
-    return out, f"concatenated {len(paths)} files at {W}x{H}"
+    note = f"concatenated {len(paths)} files at {W}x{H}"
+    if hdr_inputs:
+        note += (f"; HDR input(s) {', '.join(hdr_inputs)} were joined without "
+                 "tone-mapping (they will look flat) — convert them in a "
+                 "composition with color.convert first")
+    return out, note
 
 
 async def _op_smart_reframe(src: str, base, op: dict):
@@ -326,6 +388,7 @@ async def _op_smart_reframe(src: str, base, op: dict):
     h = min(H, int(W * ah / aw) // 2 * 2)
     if (w, h) == (W, H):
         raise ValueError(f"source is already {aspect} — nothing to reframe")
+    c = await _contract(src, info)
 
     track_box = op.get("track_box")
     if track_box:
@@ -348,12 +411,13 @@ async def _op_smart_reframe(src: str, base, op: dict):
                                                  smoothness=smoothness)
         out = str(base) + ".mp4"
         await _step(["-i", src, "-vf",
-                     f"crop={w}:{h}:x='{piecewise(xs, 't')}'"
-                     f":y='{piecewise(ys, 't')}'", *_ENCODE, out],
+                     _vf(c, [f"crop={w}:{h}:x='{piecewise(xs, 't')}'"
+                             f":y='{piecewise(ys, 't')}'"]), *_ENCODE, out],
                     timeout=3600)
         note = (f"reframed to {aspect} ({w}x{h}) — subject-FOLLOW crop, "
                 f"whole clip, smoothness {smoothness:g} "
-                f"({result['engine']} tracker, {len(xs)} keypoints)")
+                f"({result['engine']} tracker, {len(xs)} keypoints)"
+                + _hdr_note(c))
         warn = track_mod.distinct_warning(result["distinctiveness"])
         if warn:
             note += "; " + warn
@@ -379,11 +443,13 @@ async def _op_smart_reframe(src: str, base, op: dict):
     x_expr = reframe.step_expr(segments, "x")
     y_expr = reframe.step_expr(segments, "y")
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", f"crop={w}:{h}:x='{x_expr}':y='{y_expr}'",
+    await _step(["-i", src, "-vf",
+                 _vf(c, [f"crop={w}:{h}:x='{x_expr}':y='{y_expr}'"]),
                  *_ENCODE, out], timeout=3600)
     tracked = sum(1 for s in segments if s["faces"])
     return out, (f"reframed to {aspect} ({w}x{h}) — {len(segments)} shot(s), "
-                 f"{tracked} subject-tracked, others center-cropped")
+                 f"{tracked} subject-tracked, others center-cropped"
+                 + _hdr_note(c))
 
 
 def _op_box(op: dict, key: str = "box") -> list[float]:
@@ -438,13 +504,15 @@ async def _op_blur_faces(src: str, base, op: dict):
     if not hits:
         raise ValueError("no faces detected in the range — nothing to blur")
     smoothed = track_mod.union_window(per_frame, radius=3)
+    c = await _contract(src, info)
     out = str(base) + ".mp4"
     frames = await track_mod.render_blurred(
         src, out, lambda n, t: smoothed[n] if n < len(smoothed) else [],
-        has_audio, bool(op.get("pixelate")))
+        has_audio, bool(op.get("pixelate")),
+        vf=c.blur_chain() if c is not None else None)
     return out, (f"faces blurred on {sum(1 for b in smoothed if b)}/{frames} "
                  f"frames ({'pixelate' if op.get('pixelate') else 'gaussian'}, "
-                 "±3-frame smoothing)")
+                 "±3-frame smoothing)" + _hdr_note(c))
 
 
 async def _op_blur_region(src: str, base, op: dict):
@@ -473,11 +541,13 @@ async def _op_blur_region(src: str, base, op: dict):
         p = smoothed[i]
         return [(p["cx"] - p["w"] / 2, p["cy"] - p["h"] / 2, p["w"], p["h"])]
 
+    c = await _contract(src, info)
     out = str(base) + ".mp4"
     await track_mod.render_blurred(src, out, boxes_at, has_audio,
-                                   bool(op.get("pixelate")))
+                                   bool(op.get("pixelate")),
+                                   vf=c.blur_chain() if c is not None else None)
     note = (f"blur followed the region {ts[0]:.2f}-{ts[-1]:.2f}s "
-            f"({result['engine']} tracker)")
+            f"({result['engine']} tracker)" + _hdr_note(c))
     warn = track_mod.distinct_warning(result["distinctiveness"])
     if warn:
         note += "; " + warn
@@ -491,13 +561,14 @@ async def _op_stabilize(src: str, base, op: dict):
     params = stab_mod.spec_params(op)
     trf = str(base) + ".trf"
     hit, _ = await stab_mod.ensure_trf(src, None, params["shakiness"], trf)
+    c = await _contract(src)
     out = str(base) + ".mp4"
-    vf = ",".join(stab_mod.transform_filters(trf, params))
+    vf = _vf(c, stab_mod.transform_filters(trf, params))
     await _step(["-i", src, "-vf", vf, *_ENCODE, out], timeout=3600)
     return out, (f"stabilized ({op.get('strength', 'medium')}, "
                  f"smoothing {params['smoothing']}"
                  + (", reused cached analysis" if hit else "")
-                 + ") — border compensation zooms in slightly")
+                 + ") — border compensation zooms in slightly" + _hdr_note(c))
 
 
 async def _op_extract_audio(src: str, base, op: dict):
@@ -546,17 +617,23 @@ async def _op_match_color(src: str, base, op: dict):
     tt = op.get("target_time")
     tt = dur / 2 if tt is None else float(tt)
     strength = float(op.get("strength", 1.0))
+    # Both sides are sampled in the RGB the LUT is applied in: the target
+    # with this chain's head tag, the reference with its own declaration.
+    c = await _contract(src, info)
+    rc = await _contract(ref_path)
     cube = str(base) + ".cube"
     await asyncio.to_thread(
         colormatch.generate_match_lut,
         src, colormatch.sample_window(tt, 0.0, max(0.0, dur - 0.05)),
         ref_path, colormatch.sample_window(ref_time, 0.0, ref_time + 0.15),
-        cube, strength)
+        cube, strength,
+        target_head=c.head if c is not None else "",
+        ref_head=rc.head if rc is not None else "")
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", f"lut3d=file='{cube}'",
+    await _step(["-i", src, "-vf", _vf(c, [f"lut3d=file='{cube}'"]),
                  *_ENCODE, out], timeout=3600)
     return out, (f"color-matched to {Path(ref_path).name}@{ref_time:g} "
-                 f"(strength {strength:g})")
+                 f"(strength {strength:g})" + _hdr_note(c))
 
 
 async def _op_motion_blur(src: str, base, op: dict):
@@ -564,10 +641,12 @@ async def _op_motion_blur(src: str, base, op: dict):
     if not 0 <= strength <= 1:
         raise ValueError("strength must be 0–1")
     frames = 2 + round(strength * 4)
+    c = await _contract(src)
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", f"tmix=frames={frames}", *_ENCODE, out])
+    await _step(["-i", src, "-vf", _vf(c, [f"tmix=frames={frames}"]),
+                 *_ENCODE, out])
     return out, (f"motion blur ({frames} stacked frames) — strongest on "
-                 "high-fps or flow-interpolated footage")
+                 "high-fps or flow-interpolated footage" + _hdr_note(c))
 
 
 async def _op_enhance_audio(src: str, base, op: dict):
@@ -642,11 +721,13 @@ async def _op_burn_subtitles(src: str, base, op: dict):
     )
     ass_path = str(base) + ".ass"
     Path(ass_path).write_text(ass_text, encoding="utf-8")
+    c = await _contract(src, info)
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", f"ass=filename='{ass_path}'",
+    await _step(["-i", src, "-vf", _vf(c, [f"ass=filename='{ass_path}'"]),
                  "-c:v", "libx264", "-preset", "medium", "-crf", "18",
                  "-c:a", "copy", "-movflags", "+faststart", out])
-    return out, f"burned {Path(sub).name} ({op.get('preset', 'karaoke')})"
+    return out, (f"burned {Path(sub).name} ({op.get('preset', 'karaoke')})"
+                 + _hdr_note(c))
 
 
 async def _op_to_gif(src: str, base, op: dict):
@@ -657,12 +738,16 @@ async def _op_to_gif(src: str, base, op: dict):
         s, e = float(op.get("start", 0)), op.get("end")
         pre = f"trim=start={_f(s)}" + (f":end={_f(float(e))}" if e else "")
         pre += ",setpts=PTS-STARTPTS,"
-    graph = (f"[0:v]{pre}fps={fps},scale={width}:-2:flags=lanczos,split[a][b];"
+    # The head tag steers the RGB conversion the palette path makes (an
+    # untagged HD source otherwise reads through the 601 matrix — measured).
+    c = await _contract(src)
+    head = f"{c.head}," if c is not None and c.head else ""
+    graph = (f"[0:v]{head}{pre}fps={fps},scale={width}:-2:flags=lanczos,split[a][b];"
              f"[a]palettegen=stats_mode=diff[p];"
              f"[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle[v]")
     out = str(base) + ".gif"
     await _step(["-i", src, "-filter_complex", graph, "-map", "[v]", out])
-    return out, f"GIF {width}px @ {fps}fps"
+    return out, f"GIF {width}px @ {fps}fps" + _hdr_note(c)
 
 
 async def _op_to_webp(src: str, base, op: dict):
@@ -674,10 +759,16 @@ async def _op_to_webp(src: str, base, op: dict):
         s, e = float(op.get("start", 0)), op.get("end")
         pre = f"trim=start={_f(s)}" + (f":end={_f(float(e))}" if e else "")
         pre += ",setpts=PTS-STARTPTS,"
+    # WebP decoders apply the 601 matrix by spec, so libwebp must not be
+    # fed our YUV: convert to RGB here (with the head tag) and let it do
+    # its own — a 709-tagged source came out desaturated otherwise.
+    c = await _contract(src)
+    head = f"{c.head}," if c is not None and c.head else ""
     out = str(base) + ".webp"
-    await _step(["-i", src, "-vf", f"{pre}fps={fps},scale={width}:-2:flags=lanczos",
+    await _step(["-i", src, "-vf",
+                 f"{head}{pre}fps={fps},scale={width}:-2:flags=lanczos,format=bgra",
                  "-c:v", "libwebp", "-q:v", str(quality), "-loop", "0", "-an", out])
-    return out, f"animated WebP {width}px @ {fps}fps q{quality}"
+    return out, f"animated WebP {width}px @ {fps}fps q{quality}" + _hdr_note(c)
 
 
 _OPS = {

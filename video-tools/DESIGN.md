@@ -448,6 +448,42 @@ with no settle.
     input transfer ("no path between colorspaces"), and explicit
     `tin/pin/min/rin` without explicit outputs fails the same way — tag the
     frames instead.
+- **0.4.1 (2026-09-05) — `edit_video` colour contract + `pq->rec709`**:
+  - *One-shot ops carry the timeline contract.* Every `edit_video` op that
+    re-encodes video (trim, remove, crop, smart_reframe, resize, speed,
+    speed_ramp, fps, concat, stabilize, match_color, motion_blur,
+    burn_subtitles, to_gif, to_webp, blur_faces, blur_region) declares the
+    source's colorimetry at the chain head (`color.edit_contract`: the
+    probe's known tags over the player defaults), converts matrix/range on
+    the op's own scale — or through a no-size-change
+    `scale=out_color_matrix=bt709:out_range=tv` when the op has none (bit-
+    exact on 709 sources, measured) — pins `format=yuv420p` + the Rec.709
+    tags, and so writes a truthful VUI + colr. Measured before the fix:
+    untagged HD outputs stayed untagged; a GIF of untagged HD decoded through
+    601 (pure green → 18/255/6); WebP was wrong for EVERY source (libwebp
+    was fed raw YUV and WebP decoders apply 601 by spec — 20/255/9 even for
+    709-tagged files; the op now converts to RGB in ffmpeg first); and the
+    blur pipeline desaturated every TAGGED source (cv2 decodes with the
+    file's tags, ffmpeg re-encoded its RGB through the 601 default: 709
+    green came back 144/54/34, untagged) — it now returns through the
+    matrix cv2 used (the tags, or 601 for untagged files, which then keep
+    the 601 round trip they always had) and relabels. HDR (HLG/PQ) and
+    BT.2020 sources PASS THROUGH with their tags and bit depth: a one-shot
+    op never tone-maps (`concat` cannot and says so); the 8-bit paths (the
+    blur ops, interpolated `speed`) keep the tags on 8-bit output. `-c:v
+    copy` ops are untouched. `match_color` samples through ffmpeg with the
+    same head tag the chain carries (the composition pre-pass too), so the
+    LUT is built in the RGB it is applied in.
+  - *`pq->rec709`*: `zscale=t=linear:npl=203` → 709 primaries →
+    `tonemap=mobius:param=0.5:peak=49.26` → 709/limited. For PQ `npl` is a
+    pure scale (measured: 100/203/1000/10000 nits → 0.49/1.00/4.95/49.26),
+    so the BT.2408 anchor needs no exposure step — which matters because
+    ffmpeg's `exposure` filter is capped at ±3 EV. The knee spans the whole
+    PQ range: nothing clips; 100/203/1000/10000 nits → SDR Y 179/211/231/
+    235 (zscale encodes 709 with BT.1886), everything under ~100 nits is
+    linear and SDR 50 % grey survives SDR→PQ→SDR exactly. HLG keeps
+    `npl=1000` + 2.3 EV because its OOTF gamma depends on npl. `probe_media`
+    names the preset that matches its verdict.
 
 ## Low-RAM windowed rendering
 

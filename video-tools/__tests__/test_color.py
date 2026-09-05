@@ -147,6 +147,87 @@ def test_convert_chain_shape():
     assert color.convert_filters({}) == [] and color.convert_filters(None) == []
 
 
+def test_pq_convert_chain_and_verdict_map():
+    chain = color.convert_filters({"convert": "pq->rec709"})
+    # PQ is absolute: npl=203 IS the BT.2408 anchor (measured a pure scale),
+    # and ffmpeg's exposure filter caps at ±3 EV anyway.
+    assert chain[0] == "zscale=t=linear:npl=203"
+    assert not any(c.startswith("exposure") for c in chain)
+    assert any(c.startswith("tonemap=tonemap=mobius:param=0.5:peak=49.26") for c in chain)
+    assert chain[-2:] == ["zscale=t=bt709:m=bt709:r=tv", "format=yuv420p"]
+    assert color.CONVERT_PRESETS["pq->rec709"]["input"] == {
+        "matrix": "bt2020nc", "primaries": "bt2020",
+        "transfer": "smpte2084", "range": "tv"}
+    assert color.head_tags({"convert": "pq->rec709"}, {}, 1080)["transfer"] == "smpte2084"
+    assert color.validate_color_spec({"convert": "pq->rec709"}) == []
+    assert color.CONVERT_FOR == {"HLG": "hlg->rec709", "PQ": "pq->rec709"}
+
+
+_TAGGED_709 = {"color_space": "bt709", "color_transfer": "bt709",
+               "color_primaries": "bt709", "color_range": "tv"}
+
+
+def test_edit_contract_sdr_sources_join_709():
+    # Untagged HD: declared 709, nothing to convert, 8-bit, pinned.
+    c = color.edit_contract({}, 1080)
+    assert c.head == color.OUTPUT_PIN and not c.keep and c.convert == ""
+    assert c.tail() == ["format=yuv420p", color.OUTPUT_PIN]
+    assert c.tail(has_scale=True) == ["format=yuv420p", color.OUTPUT_PIN]
+    assert c.scale("640:-2:flags=lanczos") == (
+        "scale=640:-2:flags=lanczos:" + color.OUTPUT_MATRIX_OPTS)
+    # cv2 read it with 601 → return through 601, relabel as the 709 it means.
+    assert c.blur_chain() == ["scale=out_color_matrix=bt601:out_range=tv",
+                              color.OUTPUT_PIN, "format=yuv420p", color.OUTPUT_PIN]
+    # Fully tagged 709: nothing to declare, nothing to convert.
+    t = color.edit_contract(_TAGGED_709, 1080)
+    assert t.head == "" and t.convert == ""
+    assert t.tail() == ["format=yuv420p", color.OUTPUT_PIN]
+    assert t.blur_chain()[0] == "scale=out_color_matrix=bt709:out_range=tv"
+    # 601-tagged SD: a real conversion, carried by the op's own scale or by
+    # a no-size-change one when the op has none.
+    sd = color.edit_contract({"color_space": "bt470bg", "color_transfer": "smpte170m",
+                              "color_primaries": "bt470bg", "color_range": "tv"}, 576)
+    assert sd.head == "" and sd.convert == "scale=" + color.OUTPUT_MATRIX_OPTS
+    assert sd.tail() == [sd.convert, "format=yuv420p", color.OUTPUT_PIN]
+    assert sd.tail(has_scale=True) == ["format=yuv420p", color.OUTPUT_PIN]
+    assert sd.blur_chain() == [
+        "scale=out_color_matrix=bt601:out_range=tv",
+        "setparams=colorspace=bt470bg:color_primaries=bt470bg:color_trc=smpte170m:range=tv",
+        sd.convert, "format=yuv420p", color.OUTPUT_PIN]
+    # Untagged SD is 601 by convention: declared, then converted.
+    usd = color.edit_contract({}, 480)
+    assert usd.head.startswith("setparams=colorspace=bt470bg") and usd.convert
+    # A full-range 709 phone clip converts its range.
+    pc = color.edit_contract(dict(_TAGGED_709, color_range="pc"), 1080)
+    assert pc.convert == "scale=" + color.OUTPUT_MATRIX_OPTS
+    assert pc.blur_chain()[0] == "scale=out_color_matrix=bt709:out_range=pc"
+
+
+def test_edit_contract_hdr_and_wide_gamut_pass_through():
+    hlg = {"color_space": "bt2020nc", "color_transfer": "arib-std-b67",
+           "color_primaries": "bt2020", "color_range": "tv"}
+    c = color.edit_contract(hlg, 2160)
+    assert c.keep and c.head == "" and c.convert == "" and c.scale_opts == ""
+    assert c.target == c.source
+    pin = ("setparams=colorspace=bt2020nc:color_primaries=bt2020"
+           ":color_trc=arib-std-b67:range=tv")
+    assert c.tail() == [pin] and c.tail(has_scale=True) == [pin]
+    assert c.scale("640:-2") == "scale=640:-2"
+    assert c.blur_chain() == ["scale=out_color_matrix=bt2020:out_range=tv", pin,
+                              "format=yuv420p", pin]
+    # VUI-only PQ with an unknown matrix: the unknown fields are declared
+    # with the player default, the file still passes through as HDR.
+    pq = color.edit_contract({"color_transfer": "smpte2084",
+                              "color_primaries": "bt2020"}, 2160)
+    assert pq.keep and pq.head == "setparams=colorspace=bt709:range=tv"
+    assert pq.pin.endswith("color_trc=smpte2084:range=tv")
+    # BT.2020 primaries under an SDR transfer: wide gamut, kept too.
+    wg = color.edit_contract(dict(hlg, color_transfer="bt2020-10"), 2160)
+    assert wg.keep
+    assert color.effective_tags({}, 720) == color.OUTPUT_TAGS
+    assert not color.keeps_source_space(color.OUTPUT_TAGS)
+
+
 def test_sharpen_filters_order_and_mapping():
     assert color.sharpen_filters({"sharpness": 1.0, "clarity": 0.5}) == [
         "cas=strength=0.5", "unsharp=5:5:1.5:5:5:0"]
@@ -180,9 +261,10 @@ def test_validate_new_keys():
         "convert": "hlg->rec709", "input": {"range": "pc"},
         "lut": [{"lut": "filmic", "strength": 0.4}]}) == []
     problems = color.validate_color_spec({
-        "strength": 1.5, "convert": "pq->rec709",
+        "strength": 1.5, "convert": "rec2020->rec709",
         "input": {"matrix": "nope"}, "lut": [], "clarity": "x"})
     assert len(problems) == 5, problems
+    assert any("hlg->rec709, pq->rec709" in p for p in problems), problems
 
 
 def _cube_rows(path):

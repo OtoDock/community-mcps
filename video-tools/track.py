@@ -467,10 +467,14 @@ def _blur_frame(frame, boxes, pixelate: bool = False):
 
 
 def _render_blurred_blocking(src: str, out: str, boxes_at, has_audio: bool,
-                             pixelate: bool) -> int:
+                             pixelate: bool, vf: list[str] | None = None) -> int:
     """cv2 decode loop → blur ROIs → rawvideo pipe into ffmpeg (x264
     crf 18), original audio muxed back. Fully blocking (Popen + pipe
-    writes) — the async wrapper runs it in a worker thread."""
+    writes) — the async wrapper runs it in a worker thread. `vf` is the
+    encode-side colour chain (color.EditContract.blur_chain): cv2 decodes
+    with the file's tags (601 when untagged), so the RGB must return
+    through the same matrix and be relabelled — without it ffmpeg's 601
+    default desaturated every 709-tagged source (measured)."""
     import subprocess
 
     import cv2
@@ -482,13 +486,14 @@ def _render_blurred_blocking(src: str, out: str, boxes_at, has_audio: bool,
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    colour = ["-vf", ",".join(f for f in vf if f)] if vf else ["-pix_fmt", "yuv420p"]
     args = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}",
             "-r", _f(fps), "-i", "-", "-i", src,
             "-map", "0:v"] \
         + (["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"] if has_audio else []) \
         + ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest", out]
+           *colour, "-movflags", "+faststart", "-shortest", out]
     proc = subprocess.Popen(args, stdin=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     n = 0
@@ -522,11 +527,13 @@ def _render_blurred_blocking(src: str, out: str, boxes_at, has_audio: bool,
 
 
 async def render_blurred(src: str, out: str, boxes_at, has_audio: bool,
-                         pixelate: bool = False) -> int:
+                         pixelate: bool = False,
+                         vf: list[str] | None = None) -> int:
     """Async wrapper: `boxes_at(frame_index, t) -> [(x,y,w,h)]` decides
-    what gets blurred on each frame. Returns frames written."""
+    what gets blurred on each frame; `vf` is the encode-side colour chain
+    (see _render_blurred_blocking). Returns frames written."""
     return await asyncio.to_thread(
-        _render_blurred_blocking, src, out, boxes_at, has_audio, pixelate)
+        _render_blurred_blocking, src, out, boxes_at, has_audio, pixelate, vf)
 
 
 # ---------------------------------------------------------------------------

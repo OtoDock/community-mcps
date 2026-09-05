@@ -25,6 +25,7 @@ free-to-use, not free-to-redistribute).
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 LOOKS_DIR = os.environ.get("VIDEO_TOOLS_LOOKS_DIR", "/app/looks")
@@ -129,6 +130,15 @@ HDR_TRANSFERS = {"arib-std-b67": "HLG", "smpte2084": "PQ"}
 # so highlights above reference white keep detail instead of clipping, then
 # 709 primaries/transfer, limited range. Measured: HLG 100/75/50/25 % → SDR
 # Y 235/209/139/78; 50 % grey survives an SDR→HLG→SDR round trip exactly.
+#
+# pq->rec709: PQ is absolute, so the same anchor is one zscale option —
+# `npl=203` puts 203 nits at linear 1.0 (measured: a pure scale, PQ
+# 100/203/1000/10000 nits → 0.49/1.00/4.95/49.26; the `exposure` filter is
+# capped at ±3 EV, so the +5.62 EV step could not be one atom anyway). The
+# knee spans the whole PQ range (peak 49.26 = 10000/203) so no signal ever
+# clips: 100/203/1000/10000 nits → SDR Y 179/211/231/235, everything under
+# ~100 nits is linear and SDR 50 % grey survives SDR→PQ→SDR exactly. HLG
+# keeps its exposure step because its OOTF gamma depends on npl.
 CONVERT_PRESETS = {
     "hlg->rec709": {
         "input": {"matrix": "bt2020nc", "primaries": "bt2020",
@@ -143,7 +153,21 @@ CONVERT_PRESETS = {
             "format=yuv420p",
         ],
     },
+    "pq->rec709": {
+        "input": {"matrix": "bt2020nc", "primaries": "bt2020",
+                  "transfer": "smpte2084", "range": "tv"},
+        "filters": [
+            "zscale=t=linear:npl=203",
+            "format=gbrpf32le",
+            "zscale=p=bt709",
+            "tonemap=tonemap=mobius:param=0.5:peak=49.26:desat=0",
+            "zscale=t=bt709:m=bt709:r=tv",
+            "format=yuv420p",
+        ],
+    },
 }
+# The preset that matches a probe verdict (HDR_TRANSFERS value → name).
+CONVERT_FOR = {"HLG": "hlg->rec709", "PQ": "pq->rec709"}
 
 
 def normalize_input(spec) -> dict:
@@ -250,6 +274,102 @@ def sharpen_filters(spec) -> list[str]:
 def grade_strength(spec) -> float:
     s = (spec or {}).get("strength") if isinstance(spec, dict) else None
     return 1.0 if s is None else min(1.0, max(0.0, float(s)))
+
+
+# ---------------------------------------------------------------------------
+# edit_video: the one-shot ops' colour contract
+# ---------------------------------------------------------------------------
+#
+# A one-shot op has no `color` field, so the source alone decides (measured
+# 2026-09, DESIGN.md 0.4.1): an SDR source joins the Rec.709/limited space
+# exactly like a composition clip — head tag, a real matrix/range
+# conversion where needed, `format=yuv420p`, the 709 pin — while an HDR
+# (HLG/PQ) or BT.2020 source keeps its colorimetry and bit depth untouched.
+# edit_video never tone-maps; a mislabelled 709 file would be worse than
+# the tagged 10-bit file the ops have always produced for such sources.
+
+# ffprobe matrix names → the scale filter's option names.
+_SCALE_MATRIX = {"bt709": "bt709", "bt470bg": "bt601", "smpte170m": "smpte170m",
+                 "bt2020nc": "bt2020", "bt2020c": "bt2020", "fcc": "fcc",
+                 "smpte240m": "smpte240m"}
+
+
+def effective_tags(probe_color, height) -> dict:
+    """What a source's frames MEAN to a player: the probe's known tags over
+    the convention defaults for the unknown ones (all four keys)."""
+    tags = default_tags(height)
+    tags.update(probe_tags(probe_color))
+    return tags
+
+
+def keeps_source_space(tags: dict) -> bool:
+    """HDR (HLG/PQ) or wide-gamut (BT.2020) sources are never squeezed into
+    the 709 space by a one-shot op."""
+    return (tags.get("transfer") in HDR_TRANSFERS
+            or tags.get("primaries") == "bt2020")
+
+
+@dataclass(frozen=True)
+class EditContract:
+    """The colour atoms of one edit_video op, from the source's probe."""
+    head: str          # declares the fields the probe left unknown ('' if none)
+    source: dict       # effective source tags
+    target: dict       # tags the output is pinned to
+    keep: bool         # HDR / wide-gamut pass-through
+    scale_opts: str    # options for the op's OWN scale ('' in pass-through)
+    convert: str       # no-size-change conversion for ops without a scale ('')
+    pin: str           # the setparams tail
+    cv2_return: tuple  # cv2-decoded RGB → the source's YUV, relabelled
+
+    def tail(self, has_scale: bool = False) -> list[str]:
+        """Atoms that end a re-encoding mp4 chain: the conversion when the
+        op has no scale to carry it, the web-safe 8-bit pin for SDR, the
+        colour pin."""
+        out = [self.convert] if self.convert and not has_scale else []
+        if not self.keep:
+            out.append("format=yuv420p")
+        out.append(self.pin)
+        return out
+
+    def scale(self, expr: str) -> str:
+        """`scale=<expr>` carrying the conversion options."""
+        return f"scale={expr}:{self.scale_opts}" if self.scale_opts else f"scale={expr}"
+
+    def blur_chain(self) -> list[str]:
+        """Encode side of the cv2 → rawvideo → x264 pipeline: back to the
+        source's YUV through the matrix cv2 decoded with, relabelled, then
+        the normal tail — always 8-bit (the frames are)."""
+        out = list(self.cv2_return)
+        if self.convert:
+            out.append(self.convert)
+        out += ["format=yuv420p", self.pin]
+        return out
+
+
+def edit_contract(probe_color, height) -> EditContract:
+    known = probe_tags(probe_color)
+    source = effective_tags(probe_color, height)
+    keep = keeps_source_space(source)
+    target = dict(source) if keep else dict(OUTPUT_TAGS)
+    needs_convert = (not keep and (source["matrix"], source["range"])
+                     != (OUTPUT_TAGS["matrix"], OUTPUT_TAGS["range"]))
+    # cv2 honours a file's tags and falls back to 601/limited when there are
+    # none (measured) — return through exactly that matrix so untouched
+    # pixels land back on the source values.
+    cv2_matrix = (_SCALE_MATRIX.get(known["matrix"], "bt709")
+                  if "matrix" in known else "bt601")
+    cv2_range = known.get("range", "tv")
+    return EditContract(
+        head=tag_filter(head_tags(None, probe_color, height)),
+        source=source,
+        target=target,
+        keep=keep,
+        scale_opts="" if keep else OUTPUT_MATRIX_OPTS,
+        convert=f"scale={OUTPUT_MATRIX_OPTS}" if needs_convert else "",
+        pin=tag_filter(target),
+        cv2_return=(f"scale=out_color_matrix={cv2_matrix}:out_range={cv2_range}",
+                    tag_filter(source)),
+    )
 
 
 # ---------------------------------------------------------------------------

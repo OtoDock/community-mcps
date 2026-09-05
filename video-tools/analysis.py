@@ -118,11 +118,13 @@ async def handle_probe_media(args: dict):
     if tc:
         lines.append(f"timecode: {tc[0]} ({tc[1]})")
     if hdr:
+        preset = color_mod.CONVERT_FOR.get(hdr, "hlg->rec709")
         lines.append(
             f"{hdr} source: in a composition set color.convert "
-            "\"hlg->rec709\" on the clip (built-in HLG→Rec.709 conversion; "
+            f"\"{preset}\" on the clip (built-in {hdr}→Rec.709 conversion; "
             "no technical LUT needed), or declare color.input and chain your "
-            "own technical LUT — see the video-editing skill, Color section.")
+            "own technical LUT — see the video-editing skill, Color section. "
+            "edit_video ops keep the file HDR as it is (no tone-mapping).")
     return "\n".join(lines)
 
 

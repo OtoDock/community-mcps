@@ -328,13 +328,19 @@ async def _prepare_slowmo(resolved: dict, media_info: dict,
 
 
 async def _prepare_match(resolved: dict, media_info: dict, tmp: Path) -> None:
-    """match_color pre-pass: sample target + reference frames (cv2), bake
-    the Lab-affine .cube LUT(s) into the render tmp dir, inject `_match`
-    for the compiler. Ramp mode bakes TWO LUTs (clip start matched to
-    ramp_from's frame, clip end to ramp_to's) that the compiler dissolves
-    between. Sampling reads the ORIGINAL source (stab/slow-mo don't move
-    color), so ordering vs the other pre-passes doesn't matter."""
+    """match_color pre-pass: sample target + reference frames (ffmpeg, in
+    the RGB the chain's head tag implies), bake the quantile-curve .cube
+    LUT(s) into the render tmp dir, inject `_match` for the compiler. Ramp
+    mode bakes TWO LUTs (clip start matched to ramp_from's frame, clip end
+    to ramp_to's) that the compiler dissolves between. Sampling reads the
+    ORIGINAL source (stab/slow-mo don't move color), so ordering vs the
+    other pre-passes doesn't matter."""
     import colormatch
+
+    def head(path: str, spec=None) -> str:
+        mi = media_info.get(path) or {}
+        return color_mod.tag_filter(
+            color_mod.head_tags(spec, mi.get("color"), mi.get("height")))
 
     n = 0
     for track in resolved.get("tracks", []):
@@ -353,6 +359,7 @@ async def _prepare_match(resolved: dict, media_info: dict, tmp: Path) -> None:
             cout = float(cout)
             strength = float(match.get("strength", 1.0))
             hi = max(cin, cout - 0.05)
+            src_head = head(src, col)
             if match.get("ref") is not None:
                 rp, rt = colormatch.parse_ref(match["ref"])
                 tt = match.get("target_time")
@@ -362,7 +369,8 @@ async def _prepare_match(resolved: dict, media_info: dict, tmp: Path) -> None:
                     colormatch.generate_match_lut,
                     src, colormatch.sample_window(tt, cin, hi),
                     rp, colormatch.sample_window(rt, 0.0, rt + 0.15),
-                    str(cube), strength)
+                    str(cube), strength,
+                    target_head=src_head, ref_head=head(rp))
                 clip["_match"] = {"cube": str(cube)}
             else:
                 pa, ta = colormatch.parse_ref(match["ramp_from"])
@@ -372,12 +380,14 @@ async def _prepare_match(resolved: dict, media_info: dict, tmp: Path) -> None:
                     colormatch.generate_match_lut,
                     src, colormatch.sample_window(cin + 0.05, cin, hi),
                     pa, colormatch.sample_window(ta, 0.0, ta + 0.15),
-                    str(ca), strength)
+                    str(ca), strength,
+                    target_head=src_head, ref_head=head(pa))
                 await asyncio.to_thread(
                     colormatch.generate_match_lut,
                     src, colormatch.sample_window(cout - 0.05, cin, hi),
                     pb, colormatch.sample_window(tb, 0.0, tb + 0.15),
-                    str(cb), strength)
+                    str(cb), strength,
+                    target_head=src_head, ref_head=head(pb))
                 duration = (cout - cin) / float(clip.get("speed", 1.0))
                 clip["_match"] = {"a": str(ca), "b": str(cb),
                                   "duration": duration}

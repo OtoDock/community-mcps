@@ -1284,3 +1284,217 @@ def test_quickops_speed_ramp(assets, monkeypatch):
         5.0, {"from": 2.0, "to": 0.5, "curve": "ease_out"})
     dur = media_duration(_run(probe(out)))
     assert abs(dur - expected) < 0.25, (dur, expected)
+
+
+# ---------------------------------------------------------------------------
+# 0.4.1: the edit_video colour contract + pq->rec709
+# ---------------------------------------------------------------------------
+
+_PIN709 = ("setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+           ":range=tv")
+_UNTAG = ("setparams=colorspace=unknown:color_primaries=unknown"
+          ":color_trc=unknown:range=unspecified")
+_TAGS709 = {"color_space": "bt709", "color_transfer": "bt709",
+            "color_primaries": "bt709", "color_range": "tv"}
+# SDR → PQ: the exact inverse of the preset's anchor (SDR white at 203 nits).
+_SDR_TO_PQ = ("setparams=colorspace=bt709:range=tv:color_primaries=bt709"
+              ":color_trc=bt709,zscale=t=linear,format=gbrpf32le,"
+              "zscale=p=bt2020:t=smpte2084:m=bt2020nc:r=tv:npl=203,"
+              "format=yuv420p10le")
+
+
+@pytest.fixture(scope="session")
+def edit_assets(tmp_path_factory, color_assets):
+    """Pure-green sources (stored through the 709 matrix: Y173/U42/V26)
+    in the shapes the contract distinguishes, a 10-bit HLG clip, and PQ
+    solids at known luminances."""
+    root = tmp_path_factory.mktemp("edit")
+    green = "color=c=0x00FF00:s=1280x720:r=30:d=1"
+    conv709 = "format=gbrp,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"
+    untagged = root / "green_untagged.mp4"
+    _ff("-f", "lavfi", "-i", f"{green},{conv709},{_UNTAG}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", str(untagged))
+    tagged = root / "green_709.mp4"
+    _ff("-f", "lavfi", "-i", f"{green},{conv709},{_PIN709}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", str(tagged))
+    sd601 = root / "green_601sd.mp4"
+    _ff("-f", "lavfi", "-i",
+        "color=c=0x00FF00:s=720x576:r=25:d=1,format=gbrp,"
+        "scale=out_color_matrix=bt601:out_range=tv,format=yuv420p,"
+        "setparams=colorspace=bt470bg:color_primaries=bt470bg"
+        ":color_trc=smpte170m:range=tv",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", str(sd601))
+    hlg10 = root / "hlg10.mp4"
+    _ff("-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=1,format=yuv420p10le,"
+        + _HLG_TAG, "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", str(hlg10))
+    pq = {}
+    for nits, ev in ((100, "-3,exposure=exposure=-3,exposure=exposure=-0.6439"),
+                     (203, "-3,exposure=exposure=-2.6222"),
+                     (1000, "-3,exposure=exposure=-0.3219"), (10000, "0")):
+        path = root / f"pq_{nits}.mp4"
+        _ff("-f", "lavfi", "-i",
+            f"color=c=0xFFFFFF:s=256x144:r=30:d=0.5,{conv709},{_PIN709}",
+            "-vf", f"zscale=t=linear,format=gbrpf32le,exposure=exposure={ev},"
+                   "zscale=t=smpte2084:p=bt2020:m=bt2020nc:r=tv:npl=10000,"
+                   "format=yuv420p10le",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "1", str(path))
+        pq[nits] = path
+    soft_pq = root / "clip1_pq.mp4"
+    _ff("-i", str(color_assets["soft"]), "-vf", _SDR_TO_PQ, "-c:v", "libx264",
+        "-preset", "veryfast", "-crf", "12", "-an", str(soft_pq))
+    return {"root": root, "untagged": untagged, "tagged": tagged, "sd601": sd601,
+            "hlg10": hlg10, "pq": pq, "soft_pq": soft_pq}
+
+
+def _edit(src, ops, out, monkeypatch):
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    text = _run(quickops.handle_edit_video({
+        "path": str(src), "operations": ops, "output_path": str(out)}))
+    assert "error:" not in text, text
+    return text
+
+
+def _assert_green_709(path, x=None, y=None):
+    """Tagged 709 with a colr box, pure green still stored as 709 green."""
+    assert _stream_tags(path) == _TAGS709, (path, _stream_tags(path))
+    assert (colr_box(str(path)) or {}).get("matrix") == "bt709"
+    vs = video_stream(_run(probe(str(path))))
+    w, h = int(vs["width"]), int(vs["height"])
+    yy, u, v = _stored_yuv(path, w // 2 if x is None else x, h // 2 if y is None else y)
+    assert 168 <= yy <= 178 and 38 <= u <= 46 and 22 <= v <= 30, (path, yy, u, v)
+
+
+def test_quickops_declare_untagged_hd_and_convert_601(edit_assets, monkeypatch):
+    root = edit_assets["root"]
+    # Untagged HD: declared 709 (no conversion — the pixels stay), tagged out.
+    _edit(edit_assets["untagged"], [{"type": "crop", "aspect": "9:16"},
+                                   {"type": "trim", "start": 0, "end": 0.5}],
+          root / "q_crop_trim.mp4", monkeypatch)
+    _assert_green_709(root / "q_crop_trim.mp4")
+    _edit(edit_assets["untagged"], [{"type": "fps", "fps": 15}],
+          root / "q_fps.mp4", monkeypatch)
+    _assert_green_709(root / "q_fps.mp4")
+    _edit(edit_assets["untagged"], [{"type": "speed", "factor": 2.0}],
+          root / "q_speed.mp4", monkeypatch)
+    _assert_green_709(root / "q_speed.mp4")
+    # Tagged 709 through resize: untouched, still tagged.
+    _edit(edit_assets["tagged"], [{"type": "resize", "short_side": 360}],
+          root / "q_resize709.mp4", monkeypatch)
+    _assert_green_709(root / "q_resize709.mp4")
+    # 601-tagged SD: a REAL conversion — resize carries it on its scale,
+    # crop (no scale) gets the no-size-change one.
+    _edit(edit_assets["sd601"], [{"type": "resize", "width": 1280, "height": -2}],
+          root / "q_resize601.mp4", monkeypatch)
+    _assert_green_709(root / "q_resize601.mp4")
+    _edit(edit_assets["sd601"], [{"type": "crop", "width": 360, "height": 360}],
+          root / "q_crop601.mp4", monkeypatch)
+    _assert_green_709(root / "q_crop601.mp4")
+    # concat of an untagged and a tagged file: one 709 output.
+    _edit(edit_assets["untagged"], [{"type": "concat", "paths": [str(edit_assets["tagged"])]}],
+          root / "q_concat.mp4", monkeypatch)
+    _assert_green_709(root / "q_concat.mp4")
+    assert abs(media_duration(_run(probe(str(root / "q_concat.mp4")))) - 2.0) < 0.2
+
+
+def test_quickops_hdr_source_passes_through(edit_assets, monkeypatch):
+    root = edit_assets["root"]
+    text = _edit(edit_assets["hlg10"], [{"type": "trim", "start": 0, "end": 0.5},
+                                        {"type": "crop", "width": 160, "height": 180}],
+                 root / "q_hlg.mp4", monkeypatch)
+    assert "kept HLG" in text and "never tone-maps" in text, text
+    vs = video_stream(_run(probe(str(root / "q_hlg.mp4"))))
+    assert stream_color(vs) == {"color_space": "bt2020nc", "color_transfer": "arib-std-b67",
+                                "color_primaries": "bt2020", "color_range": "tv"}
+    assert vs["pix_fmt"] == "yuv420p10le"
+    # concat cannot keep it — it says so.
+    text = _edit(edit_assets["tagged"], [{"type": "concat", "paths": [str(edit_assets["hlg10"])]}],
+                 root / "q_concat_hdr.mp4", monkeypatch)
+    assert "without tone-mapping" in text and "hlg10.mp4" in text, text
+    assert _stream_tags(root / "q_concat_hdr.mp4") == _TAGS709
+
+
+def test_quickops_gif_and_webp_keep_green_green(edit_assets, monkeypatch):
+    from PIL import Image
+    root = edit_assets["root"]
+    for kind, op in (("gif", {"type": "to_gif", "fps": 5, "width": 160, "end": 0.4}),
+                     ("webp", {"type": "to_webp", "fps": 5, "width": 160, "end": 0.4})):
+        for name, src in (("untagged", edit_assets["untagged"]),
+                          ("tagged", edit_assets["tagged"])):
+            out = root / f"q_{name}.{kind}"
+            _edit(src, [op], out, monkeypatch)
+            im = Image.open(out).convert("RGB")
+            r, g, b = im.getpixel((im.size[0] // 2, im.size[1] // 2))
+            # A 601 read of 709 green comes out ~18/255/6 (GIF) or 20/255/9
+            # (WebP fed raw YUV) — both measured before the fix.
+            assert r < 8 and b < 8 and g > 240, (out, r, g, b)
+
+
+def test_render_blurred_returns_through_the_source_matrix(edit_assets):
+    import color as color_mod
+    import track
+    root = edit_assets["root"]
+    for name, src in (("tagged", edit_assets["tagged"]),
+                      ("sd601", edit_assets["sd601"])):
+        vs = video_stream(_run(probe(str(src))))
+        c = color_mod.edit_contract(stream_color(vs), vs.get("height"))
+        out = root / f"blur_{name}.mp4"
+        n = _run(track.render_blurred(str(src), str(out), lambda i, t: [(0, 0, 40, 40)],
+                                      False, False, vf=c.blur_chain()))
+        assert n > 0
+        # Outside the blurred corner the green is back on its 709 values —
+        # the pre-0.4.1 pipeline stored a 709-tagged source as 144/54/34.
+        _assert_green_709(out, 300, 300)
+
+
+def test_match_sampler_reads_in_the_declared_space(edit_assets):
+    import colormatch
+    tagged = colormatch._grab_frames(str(edit_assets["tagged"]), [0.2])[0]
+    b, g, r = (int(v) for v in tagged[tagged.shape[0] // 2, tagged.shape[1] // 2])
+    assert r < 6 and b < 6 and g > 240, (b, g, r)
+    raw = colormatch._grab_frames(str(edit_assets["untagged"]), [0.2])[0]
+    b0, g0, r0 = (int(v) for v in raw[raw.shape[0] // 2, raw.shape[1] // 2])
+    assert r0 > 10 or b0 > 10, (b0, g0, r0)          # the 601 read of 709 green
+    head = colormatch._grab_frames(str(edit_assets["untagged"]), [0.2], _PIN709)[0]
+    b1, g1, r1 = (int(v) for v in head[head.shape[0] // 2, head.shape[1] // 2])
+    assert r1 < 6 and b1 < 6 and g1 > 240, (b1, g1, r1)
+    assert tagged.shape[1] <= 480
+    with pytest.raises(ValueError):
+        colormatch._grab_frames(str(edit_assets["tagged"]), [50.0])
+
+
+def test_pq_convert_absolute_mapping(assets, edit_assets):
+    # Measured on the sidecar: 100/203/1000/10000 nits → Y 179/211/231/235
+    # (BT.1886 encode; reference white just under SDR white, nothing clips).
+    for nits, want in ((100, 179), (203, 211), (1000, 231), (10000, 235)):
+        out = _render_clip(assets, f"pq{nits}", {
+            "src": str(edit_assets["pq"][nits]), "in": 0, "out": 0.4,
+            "color": {"convert": "pq->rec709"}})
+        y, u, v = _stored_yuv(out, 316, 176)
+        assert abs(y - want) <= 3 and abs(u - 128) <= 2 and abs(v - 128) <= 2, (nits, y, u, v)
+        assert _stream_tags(out) == _TAGS709
+
+
+def test_pq_convert_round_trip(assets, color_assets, edit_assets):
+    import numpy as np
+    converted = _render_clip(assets, "pqconv", {
+        "src": str(edit_assets["soft_pq"]), "in": 0, "out": 2,
+        "color": {"convert": "pq->rec709"}})
+    raw = _render_clip(assets, "pqraw", {"src": str(edit_assets["soft_pq"]), "in": 0, "out": 2})
+    original = _render_clip(assets, "pqsdrref", {"src": str(color_assets["soft"]), "in": 0, "out": 2})
+    ref = _frame_rgb(original, 1.0)
+    conv = _frame_rgb(converted, 1.0)
+    untouched = _frame_rgb(raw, 1.0)
+    mask = ref.max(axis=2) < 150
+    assert mask.mean() > 0.5
+    diff_conv = float(np.abs(conv - ref)[mask].mean())
+    diff_raw = float(np.abs(untouched - ref)[mask].mean())
+    assert diff_conv < 6.0, diff_conv
+    assert diff_raw > diff_conv * 3, (diff_raw, diff_conv)
+    assert _stream_tags(converted)["color_transfer"] == "bt709"
+
+
+def test_probe_media_names_the_pq_preset(edit_assets, monkeypatch):
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    text = _run(analysis.handle_probe_media({"path": str(edit_assets["pq"][203])}))
+    assert "transfer=smpte2084 (PQ)" in text, text
+    assert 'color.convert "pq->rec709"' in text and "edit_video ops keep" in text, text

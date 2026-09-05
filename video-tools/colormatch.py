@@ -17,7 +17,9 @@ to clip A's endpoint, bridge end to clip B's) and the compiler dissolves
 between the two GRADES of the same footage — an invisible grade ramp; the
 cuts themselves stay hard cuts.
 
-cv2/numpy are imported lazily (heavy) — parse_ref stays import-light for
+Frames are sampled through ffmpeg with the file's colour declaration (the
+same head tag the render chain carries), so the LUT is built in the RGB it
+is applied in. numpy is imported lazily — parse_ref stays import-light for
 the validator.
 """
 
@@ -42,26 +44,50 @@ def parse_ref(ref: str) -> tuple[str, float]:
     return path, time
 
 
-def _grab_frames(path: str, times: list[float]):
-    """Sample BGR frames at the given seconds (downscaled for stats).
-    Returns at least one frame or raises ValueError."""
-    import cv2
+def _frame_size(path: str) -> tuple[int, int]:
+    import subprocess
 
-    cap = cv2.VideoCapture(path)
-    frames = []
+    from fftools import FFPROBE
+
+    out = subprocess.run(
+        [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0", path],
+        capture_output=True, text=True)
     try:
-        for t in times:
-            cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t) * 1000.0)
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                continue
-            h, w = frame.shape[:2]
-            if w > _STATS_MAX_WIDTH:
-                scale = _STATS_MAX_WIDTH / w
-                frame = cv2.resize(frame, (_STATS_MAX_WIDTH, int(h * scale)))
-            frames.append(frame)
-    finally:
-        cap.release()
+        w, h = [int(x) for x in out.stdout.strip().split(",")[:2]]
+    except ValueError:
+        raise ValueError(f"could not read the frame size of '{path}'")
+    return w, h
+
+
+def _grab_frames(path: str, times: list[float], head: str = ""):
+    """Sample BGR frames at the given seconds through ffmpeg (downscaled
+    for stats), decoded in the RGB the LUT is later applied in: `head` is
+    the chain's setparams declaration for the fields the file leaves
+    untagged. (cv2's decoder honours tags but reads an untagged HD file
+    with the 601 matrix — measured — which is not what lut3d sees after
+    the head tag.) Returns at least one frame or raises ValueError."""
+    import subprocess
+
+    import numpy as np
+
+    from fftools import FFMPEG
+
+    w, h = _frame_size(path)
+    ow = min(_STATS_MAX_WIDTH, w)
+    oh = max(2, int(round(h * ow / w / 2)) * 2)
+    vf = ",".join(f for f in (head, f"scale={ow}:{oh}:flags=area", "format=bgr24") if f)
+    frames = []
+    for t in times:
+        proc = subprocess.run(
+            [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
+             "-ss", f"{max(0.0, t):.3f}", "-i", path, "-vf", vf,
+             "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+            capture_output=True)
+        buf = proc.stdout
+        if proc.returncode != 0 or len(buf) != ow * oh * 3:
+            continue   # past the end / unreadable — like a failed cv2 read
+        frames.append(np.frombuffer(buf, np.uint8).reshape(oh, ow, 3).copy())
     if not frames:
         raise ValueError(f"could not read frames from '{path}' at {times}")
     return frames
@@ -113,11 +139,15 @@ def write_cube(lut, size: int, path: str) -> None:
 def generate_match_lut(target_path: str, target_times: list[float],
                        ref_path: str, ref_times: list[float],
                        out_path: str, strength: float = 1.0,
-                       size: int = 33) -> None:
+                       size: int = 33, *, target_head: str = "",
+                       ref_head: str = "") -> None:
     """Sample both sides, build the target→reference LUT, write .cube.
-    Blocking (cv2 decode + numpy) — call via asyncio.to_thread."""
-    tgt = _rgb_quantiles(_grab_frames(target_path, target_times))
-    ref = _rgb_quantiles(_grab_frames(ref_path, ref_times))
+    `target_head` / `ref_head` are the two files' colour declarations
+    (color.head_tags → tag_filter) so the samples are read in the RGB the
+    LUT is applied in. Blocking (ffmpeg decode + numpy) — call via
+    asyncio.to_thread."""
+    tgt = _rgb_quantiles(_grab_frames(target_path, target_times, target_head))
+    ref = _rgb_quantiles(_grab_frames(ref_path, ref_times, ref_head))
     write_cube(_build_lut(tgt, ref, strength, size), size, out_path)
 
 

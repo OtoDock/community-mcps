@@ -440,6 +440,27 @@ def test_explicit_input_and_convert_chain_order():
     assert "blend=all_mode" not in g   # strength 1 → flat chain
 
 
+def test_pq_convert_chain_order():
+    g = compile_render(_comp([
+        {"src": "a.mp4", "in": 0, "out": 2,
+         "color": {"convert": "pq->rec709", "exposure": 0.2}},
+    ]), MEDIA, streams="v").graph
+    chain = _base_chain(g, 0)
+    head = ("setparams=colorspace=bt2020nc:color_primaries=bt2020"
+            ":color_trc=smpte2084:range=tv")
+    assert chain.index(head) < chain.index("fps=30")
+    order = [chain.index(s) for s in (
+        "out_color_matrix=bt709:out_range=tv",
+        "zscale=t=linear:npl=203",
+        "tonemap=tonemap=mobius:param=0.5:peak=49.26",
+        "zscale=t=bt709:m=bt709:r=tv",
+        "exposure=exposure=0.2",
+        "format=yuv420p," + color_mod.OUTPUT_PIN,
+    )]
+    assert order == sorted(order), order
+    assert chain.count("exposure=exposure=") == 1   # the preset needs no exposure step
+
+
 def test_lut_chain_and_strength_mix():
     import re
 

@@ -360,7 +360,7 @@ def test_color_management_validation():
 
     bad = _comp([{"src": "a.mp4", "in": 0, "out": 4, "color": {
         "lut": [{"lut": "filmic", "strength": 3}], "strength": -1,
-        "convert": "pq->rec709", "input": {"transfer": "gamma99"}}}])
+        "convert": "rec2020->rec709", "input": {"transfer": "gamma99"}}}])
     issues = comp_mod.validate(bad, exists=lambda p: True, media_info=media)
     msgs = " | ".join(i["message"] for i in issues if i["level"] == "error")
     for needle in ("lut entry strength", "color.strength must be 0–1",

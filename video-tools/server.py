@@ -60,11 +60,11 @@ _CLIP_SCHEMA_DOC = (
     "Rec.709; color.input {matrix, primaries, transfer, range} declares the "
     "SOURCE colorimetry when the file is untagged or mistagged (values like "
     "bt2020nc / bt2020 / hlg|pq|bt709 / tv|pc — probe_media shows what the "
-    "file carries), and color.convert \"hlg->rec709\" converts HLG BT.2020 "
-    "footage (Sony/Panasonic/phones) into the timeline with a BT.2408 "
-    "reference-white anchor and a highlight knee — no technical LUT "
-    "needed (implies the HLG input tags; input overrides per key; cannot "
-    "combine with match); "
+    "file carries), and color.convert \"hlg->rec709\" | \"pq->rec709\" "
+    "converts HLG or PQ (HDR10) BT.2020 footage (Sony/Panasonic/phones) "
+    "into the timeline with a BT.2408 reference-white anchor and a "
+    "highlight knee — no technical LUT needed (implies the HDR input "
+    "tags; input overrides per key; cannot combine with match); "
     "transition_in: {type, duration} = the transition INTO this clip from "
     "the previous one; volume_db; mute; stabilize: true or {strength: "
     "low|medium|high, smoothing?, zoom?} — vidstab shake removal for "
@@ -115,7 +115,9 @@ TOOLS = [
             "container carries a colr box (camera files often tag only the "
             "bitstream), standard tmcd timecode, and audio codec/rate/"
             "channels. Cheap — use before planning any edit; an HDR verdict "
-            "means the clip needs color.convert in the composition."
+            "names the color.convert preset the clip needs in a composition "
+            "(hlg->rec709 / pq->rec709 — edit_video keeps HDR files as they "
+            "are)."
         ),
         inputSchema={
             "type": "object",
@@ -540,6 +542,10 @@ TOOLS = [
             "preset: karaoke|word-pop|clean|minimal, position, "
             "highlight_color, uppercase} · to_gif {fps, width, start, end} · "
             "to_webp {fps, width, quality, start, end}.\n"
+            "Colour: re-encoded outputs are tagged Rec.709 (untagged HD is "
+            "declared, 601 and full-range sources converted); HLG/PQ sources "
+            "keep their colorimetry and bit depth — no tone-mapping here, "
+            "use a composition with color.convert for an SDR deliverable.\n"
             "Writes <stem>_edited.<ext> next to the source unless "
             "output_path is given. The source file is never overwritten."
         ),

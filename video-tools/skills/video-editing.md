@@ -203,9 +203,12 @@ the final full-speed watch.
   tags with an HLG / PQ / SDR verdict and whether the container declares
   them. Camera HLG (Sony, Panasonic, phones shooting "HDR") on a normal
   timeline looks flat, dark and desaturated until it is converted: put
-  `color: {"convert": "hlg->rec709"}` on that clip — the built-in
-  conversion anchors HLG reference white (75 %) near SDR white with a soft
-  highlight roll-off; no technical LUT needed, and any look goes on top.
+  `color: {"convert": "hlg->rec709"}` on that clip (`"pq->rec709"` for
+  PQ / HDR10 files — probe_media names the one you need) — the built-in
+  conversion anchors HDR reference white (203 nits) near SDR white with a
+  soft highlight roll-off; no technical LUT needed, and any look goes on
+  top. `edit_video` never tone-maps: trim or crop an HDR file first if you
+  like (it stays HDR), then convert in the composition.
   A file the camera left untagged or mistagged: declare it with
   `color.input {matrix, primaries, transfer, range}` (`"hlg"`, `"pq"`,
   `"rec709"`, `"rec2020"`, `"601"`, `"full"`/`"limited"` are accepted
@@ -364,7 +367,11 @@ deterministic clip back:
 
 `edit_video` for single-file jobs: trim, remove a segment, crop to 9:16,
 resize, speed, concat, extract/replace audio, two-pass loudness normalize,
-burn subtitles, GIF/WebP export. It never overwrites the source.
+burn subtitles, GIF/WebP export. It never overwrites the source. Re-encoded
+outputs are tagged Rec.709 (an untagged HD file is declared as such, 601
+and full-range sources are converted, GIF/WebP get the right matrix); an
+HLG/PQ file stays HLG/PQ with its bit depth — for an SDR deliverable
+convert it in a composition.
 
 ## Performance expectations
 

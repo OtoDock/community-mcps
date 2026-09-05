@@ -219,6 +219,11 @@ def test_blur_region_blurs_the_moving_target(moving_box, monkeypatch, tmp_path):
     # The subject's crisp edges are gone inside the tracked box; the rest
     # differs only by encode noise.
     assert inside > outside * 3, (inside, outside)
+    # The blur pipeline re-encodes through the colour contract: tagged 709.
+    from fftools import probe, stream_color, video_stream
+    assert stream_color(video_stream(_run(probe(out)))) == {
+        "color_space": "bt709", "color_transfer": "bt709",
+        "color_primaries": "bt709", "color_range": "tv"}
 
 
 @pytestmark_exec
