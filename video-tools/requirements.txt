@@ -33,7 +33,7 @@ charset-normalizer==3.4.8
     # via requests
 click==8.3.3
     # via
-    #   scenedetect
+    #   scenedetect-headless
     #   uvicorn
 cryptography==50.0.1
     # via pyjwt
@@ -92,13 +92,15 @@ numpy==2.4.6
     #   librosa
     #   numba
     #   opencv-python-headless
-    #   scenedetect
+    #   scenedetect-headless
     #   scikit-learn
     #   scipy
     #   soundfile
     #   soxr
 opencv-python-headless==5.0.0.93
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   scenedetect-headless
 packaging==26.2
     # via
     #   lazy-loader
@@ -108,7 +110,7 @@ pillow==12.3.0
 platformdirs==4.10.0
     # via
     #   pooch
-    #   scenedetect
+    #   scenedetect-headless
 playwright==1.61.0
     # via -r requirements.in
 pooch==1.9.0
@@ -147,7 +149,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-scenedetect==0.6.7.1
+scenedetect-headless==0.7.1
     # via -r requirements.in
 scikit-learn==1.9.0
     # via librosa
@@ -183,7 +185,7 @@ starlette==1.3.1
 threadpoolctl==3.6.0
     # via scikit-learn
 tqdm==4.68.3
-    # via scenedetect
+    # via scenedetect-headless
 typer==0.26.8
     # via mcp
 typing-extensions==4.16.0

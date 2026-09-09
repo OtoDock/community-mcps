@@ -7,10 +7,10 @@ librosa>=0.10
 # satisfy a too-new numpy; numpy resolves down to numba's cap instead.
 numba>=0.60
 soundfile>=0.12
-# Held below 0.7: the 0.7 line hard-depends on full opencv-python (needs
-# libGL — no headless extra), while 0.6.x leaves opencv as an extra and we
-# supply the headless build ourselves.
-scenedetect>=0.6.4,<0.7
+# The headless distribution of PySceneDetect (same `scenedetect` module, on
+# opencv-python-headless, no libGL). 0.7.1 is the first line that accepts
+# click 8.3.3, the fix for PYSEC-2026-2132; 0.6.x pins click below 8.3.
+scenedetect-headless>=0.7.1
 opencv-python-headless>=4.9
 starlette
 uvicorn
