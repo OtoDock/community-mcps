@@ -3,12 +3,15 @@ FROM python:3.13-slim-trixie
 # ffmpeg (trixie ships 7.x with libass, xfade, lut3d, loudnorm — everything the
 # compiler emits). Fonts: caption burning (libass via fontconfig) needs real
 # faces in the image — OFL/Apache-licensed set + Noto for multilingual
-# coverage (incl. Greek) + color emoji for short-form captions.
+# coverage (incl. Greek) + color emoji for short-form captions; Comfortaa
+# and Montserrat are the rounded/geometric display faces brand captions
+# ask for (captions.SHIPPED_FONTS mirrors this list).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fontconfig \
     fonts-inter fonts-roboto-unhinted fonts-liberation fonts-dejavu-core \
     fonts-noto-core fonts-noto-color-emoji fonts-jetbrains-mono \
+    fonts-comfortaa fonts-montserrat \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash mcp

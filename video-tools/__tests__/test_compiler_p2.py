@@ -207,7 +207,11 @@ def test_clip_audio_chain_lands_before_resample_and_fades():
     g = plan.graph
     base_chain = next(c for c in g.split(";\n") if "afftdn" in c)
     assert base_chain.index("afftdn") < base_chain.index("acompressor")
-    assert base_chain.index("acompressor") < base_chain.index("aresample")
+    assert base_chain.index("acompressor") < base_chain.index("aformat")
+    # The denoiser's 25 ms delay is cancelled inside the chain: pinned to
+    # 48 kHz and padded before it, trimmed after it, before the fades.
+    assert base_chain.index("apad=pad_len=1200") < base_chain.index("afftdn")
+    assert base_chain.index("acompressor") < base_chain.index("atrim=start_sample=1200")
     track_chain = next(c for c in g.split(";\n") if "bass=" in c)
     # Sweetening processes the raw signal; fades shape the processed one.
     assert track_chain.index("volume=-6dB") < track_chain.index("bass=")

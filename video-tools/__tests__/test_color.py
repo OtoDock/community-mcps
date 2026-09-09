@@ -60,7 +60,7 @@ def test_cube_format_and_size():
     text = color.bake_cube(color.BUILTIN_LOOKS["clean-punch"], size=17)
     lines = text.splitlines()
     assert "LUT_3D_SIZE 17" in lines[1]
-    data = [l for l in lines if l and not l.startswith(("#", "LUT", "DOMAIN"))]
+    data = [ln for ln in lines if ln and not ln.startswith(("#", "LUT", "DOMAIN"))]
     assert len(data) == 17 ** 3
     r, g, b = map(float, data[0].split())
     assert all(0.0 <= v <= 1.0 for v in (r, g, b))
@@ -68,8 +68,8 @@ def test_cube_format_and_size():
 
 def test_identity_recipe_is_identity():
     text = color.bake_cube({}, size=5)
-    data = [l for l in text.splitlines()
-            if l and not l.startswith(("#", "LUT", "DOMAIN"))]
+    data = [ln for ln in text.splitlines()
+            if ln and not ln.startswith(("#", "LUT", "DOMAIN"))]
     # Red axis fastest: entry 1 is r=0.25, g=0, b=0.
     assert data[1].split() == ["0.250000", "0.000000", "0.000000"]
     assert data[-1].split() == ["1.000000", "1.000000", "1.000000"]
@@ -77,8 +77,8 @@ def test_identity_recipe_is_identity():
 
 def test_teal_orange_pushes_shadows_blue():
     text = color.bake_cube(color.BUILTIN_LOOKS["teal-orange"], size=9)
-    data = [l for l in text.splitlines()
-            if l and not l.startswith(("#", "LUT", "DOMAIN"))]
+    data = [ln for ln in text.splitlines()
+            if ln and not ln.startswith(("#", "LUT", "DOMAIN"))]
     # A dark neutral gray (r=g=b=0.25): index r=2, g=2, b=2 → 2*81+2*9+2.
     r, g, b = map(float, data[2 * 81 + 2 * 9 + 2].split())
     assert b > r  # shadows lean teal/blue

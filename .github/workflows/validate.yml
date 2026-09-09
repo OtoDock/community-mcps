@@ -1,0 +1,36 @@
+name: Validate catalog
+
+# The catalog's own contract, on every push and pull request: registry.json
+# matches the manifests, and every entry passes the schema the platform
+# installs against. This file lives in the PREP repo and is synced to the
+# public catalog by dev/publish-catalog.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Registry is current and every manifest validates
+        run: python3 scripts/generate-registry.py --check
+      - name: No install-time rejects
+        run: |
+          # The two things the installer rejects outright: a committed .env
+          # and a manifest that asks for the platform's master key.
+          set -e
+          bad=0
+          for f in $(git ls-files '*/.env' '*/**/.env'); do echo "::error::$f must not be committed"; bad=1; done
+          if grep -rlE '\$\{(platform\.api_key|proxy_api_key)\}' --include=manifest.json . ; then
+            echo "::error::a manifest references the master key"; bad=1
+          fi
+          exit $bad

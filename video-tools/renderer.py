@@ -8,14 +8,12 @@ two-pass loudnorm, and frame extraction for visual QC.
 
 import asyncio
 import io
-import json
-import math
 import os
-import re
 import shutil
 import tempfile
 from pathlib import Path
 
+import audiofx as audiofx_mod
 import captions as captions_mod
 import color as color_mod
 import composition as comp_mod
@@ -225,10 +223,33 @@ def _stage_luts(resolved: dict, tmp: Path, resolve) -> dict[str, str]:
     return luts
 
 
-def _stage_captions(resolved: dict, tmp: Path, canvas: tuple[int, int]) -> str | None:
+def _stage_captions(resolved: dict, tmp: Path, canvas: tuple[int, int],
+                    resolve, issues: list | None = None
+                    ) -> tuple[str | None, str | None]:
+    """→ (ASS path, fontsdir). A `font_file` is copied under a safe name
+    into the render tmp (user-controlled names never reach the filtergraph)
+    and the Style line carries the family the FILE declares — libass
+    matches fontsdir faces by that name, not by path."""
     caps = resolved.get("captions")
     if not caps:
-        return None
+        return None, None
+    fonts_dir = None
+    family = caps.get("font")
+    font_file = caps.get("font_file")
+    if font_file:
+        src = resolve(font_file)
+        fonts_dir = tmp / "fonts"
+        fonts_dir.mkdir(exist_ok=True)
+        staged = fonts_dir / ("caption" + Path(src).suffix.lower())
+        shutil.copyfile(src, staged)
+        declared = captions_mod.font_file_family(str(staged))
+        if family and family.strip().lower() != declared.lower() and issues is not None:
+            issues.append({
+                "level": "warning", "where": "captions",
+                "message": (f"font_file declares family '{declared}' — used "
+                            f"instead of font '{family}'"),
+            })
+        family = declared
     ass_text = captions_mod.build_ass(
         caps["source"],
         play_w=canvas[0],
@@ -240,10 +261,13 @@ def _stage_captions(resolved: dict, tmp: Path, canvas: tuple[int, int]) -> str |
         uppercase=caps.get("uppercase"),
         max_words_per_cue=caps.get("max_words_per_cue"),
         offset=float(caps.get("offset", 0.0)),
+        font=family,
+        bold=caps.get("bold"),
+        italic=bool(caps.get("italic", False)),
     )
     path = tmp / "captions.ass"
     path.write_text(ass_text, encoding="utf-8")
-    return str(path)
+    return str(path), (str(fonts_dir) if fonts_dir else None)
 
 
 async def _prepare_stabilization(resolved: dict, media_info: dict, tmp: Path) -> None:
@@ -402,24 +426,20 @@ def _input_args(inputs: list) -> list[str]:
     return args
 
 
-_LOUDNORM_JSON = re.compile(r"\{[^{}]*\"input_i\"[^{}]*\}", re.S)
-
-
 async def _measure_loudnorm(resolved: dict, media_info: dict, cfg: dict,
-                            tmp: Path) -> str | None:
+                            tmp: Path) -> tuple[str | None, dict | None]:
     """Pass 1: run the audio-only graph through loudnorm print_format=json,
-    return the pass-2 filter string with measured_* values (linear mode).
+    return the mode's pass-2 chain (audiofx.loudnorm_pass2) and its report.
 
-    Returns ``None`` when the mix measures silent (``input_i`` = -inf or
-    below the -70 LUFS floor): loudnorm rejects non-finite measured values
-    outright (``Value -inf for parameter 'measured_I' out of range`` —
-    ffmpeg exit 222, killing the whole render), and "normalizing" silence
+    Returns ``(None, None)`` when the mix measures silent (``input_i`` =
+    -inf or below the -70 LUFS floor): loudnorm rejects non-finite measured
+    values outright (``Value -inf for parameter 'measured_I' out of range``
+    — ffmpeg exit 222, killing the whole render), and "normalizing" silence
     would only amplify the noise floor. Silent sources are normal — drone
     and phone footage often has no audio track at all."""
     plan = compile_render(resolved, media_info, mode="final", streams="a")
-    measure = (f"loudnorm=I={cfg['i']}:TP={cfg['tp']}:LRA={cfg['lra']}"
-               f":print_format=json")
-    graph = plan.graph.replace("__LOUDNORM__", measure)
+    graph = plan.graph.replace("__LOUDNORM__",
+                               audiofx_mod.loudnorm_measure_filter(cfg))
     graph_file = tmp / "graph_loudnorm.txt"
     graph_file.write_text(graph, encoding="utf-8")
     args = _input_args(plan.inputs) + [
@@ -427,25 +447,51 @@ async def _measure_loudnorm(resolved: dict, media_info: dict, cfg: dict,
         "-map", f"[{plan.audio_label}]", "-f", "null", "-",
     ]
     _, stderr = await run_ffmpeg(args, timeout=900, heavy=False)
-    m = None
-    for m in _LOUDNORM_JSON.finditer(stderr):
-        pass  # take the LAST json block (progress lines can contain braces)
-    if not m:
+    meas = audiofx_mod.parse_loudnorm_json(stderr)
+    if not meas:
         logger.warning("loudnorm pass 1 produced no measurement — falling back to single-pass")
-        return f"loudnorm=I={cfg['i']}:TP={cfg['tp']}:LRA={cfg['lra']}"
-    meas = json.loads(m.group(0))
+        return (f"loudnorm=I={cfg['i']}:TP={cfg['tp']}:LRA={cfg['lra']}"
+                f",aresample={audiofx_mod.CHAIN_RATE}"), None
+    if audiofx_mod.measured_is_silent(meas):
+        return None, None
+    return audiofx_mod.loudnorm_pass2(cfg, meas)
+
+
+def _apply_loudnorm(graph: str, ln: str | None, report: dict | None,
+                    issues: list[dict]) -> str:
+    """Substitute the pass-2 chain into a graph and record what it does."""
+    if ln is None:
+        issues.append({
+            "level": "warning", "where": "audio",
+            "message": "mix is silent — loudness normalization skipped",
+        })
+        return graph.replace("__LOUDNORM__", "anull")
+    warning = audiofx_mod.loudnorm_warning(report) if report else None
+    if warning:
+        issues.append({"level": "warning", "where": "audio", "message": warning})
+    return graph.replace("__LOUDNORM__", ln)
+
+
+async def _measure_delivered(path: str) -> dict | None:
+    """R128 numbers of the file that actually landed on disk — the codec
+    adds up to ~1 dB of true-peak overshoot above the PCM ceiling, so the
+    render report carries what a platform will measure, not the target."""
     try:
-        measured_i = float(meas["input_i"])
-    except (KeyError, TypeError, ValueError):
-        measured_i = float("-inf")
-    if not math.isfinite(measured_i) or measured_i < -70.0:
+        _, stderr = await run_ffmpeg(
+            ["-i", path, "-vn", "-af",
+             audiofx_mod.loudnorm_measure_filter(audiofx_mod.loudnorm_config(True)),
+             "-f", "null", "-"], timeout=600, heavy=False)
+    except FFmpegError:
         return None
-    return (
-        f"loudnorm=I={cfg['i']}:TP={cfg['tp']}:LRA={cfg['lra']}"
-        f":measured_I={meas['input_i']}:measured_TP={meas['input_tp']}"
-        f":measured_LRA={meas['input_lra']}:measured_thresh={meas['input_thresh']}"
-        f":offset={meas.get('target_offset', 0)}:linear=true"
-    )
+    meas = audiofx_mod.parse_loudnorm_json(stderr)
+    if not meas or audiofx_mod.measured_is_silent(meas):
+        return None
+    try:
+        return {"integrated_lufs": float(meas["input_i"]),
+                "true_peak_dbtp": float(meas["input_tp"]),
+                "lra": float(meas["input_lra"])}
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _video_encode_args(encode_args: list[str]) -> list[str]:
@@ -469,7 +515,8 @@ async def _render_segmented(resolved: dict, media_info: dict,
                             scale: float, tmp: Path,
                             captions_ass: str | None, luts: dict[str, str],
                             crf: int | None,
-                            segments: list[tuple[float, float]]):
+                            segments: list[tuple[float, float]],
+                            captions_fontsdir: str | None = None):
     """Low-RAM render: the timeline renders in windows split at bare cuts,
     each window compiled from a window-pruned sub-composition (far clips →
     fills, far overlays dropped) so only that window's media is opened and
@@ -488,16 +535,11 @@ async def _render_segmented(resolved: dict, media_info: dict,
     (canvas/fps are identical across windows)."""
     aplan = compile_render(resolved, media_info, mode=mode, streams="a")
     agraph = aplan.graph
+    ln_report = None
     if aplan.loudnorm:
-        ln = await _measure_loudnorm(resolved, media_info, aplan.loudnorm, tmp)
-        if ln is None:
-            agraph = agraph.replace("__LOUDNORM__", "anull")
-            issues.append({
-                "level": "warning", "where": "audio",
-                "message": "mix is silent — loudness normalization skipped",
-            })
-        else:
-            agraph = agraph.replace("__LOUDNORM__", ln)
+        ln, ln_report = await _measure_loudnorm(resolved, media_info,
+                                                aplan.loudnorm, tmp)
+        agraph = _apply_loudnorm(agraph, ln, ln_report, issues)
     graph_file = tmp / "graph_audio.txt"
     graph_file.write_text(agraph, encoding="utf-8")
     audio_path = tmp / "audio.m4a"
@@ -517,7 +559,7 @@ async def _render_segmented(resolved: dict, media_info: dict,
         plan = compile_render(
             pruned, media_info, mode=mode, canvas_scale=scale,
             time_range=(t0, t1), captions_ass=captions_ass, luts=luts,
-            crf=crf, streams="v")
+            crf=crf, streams="v", captions_fontsdir=captions_fontsdir)
         graph_file = tmp / f"graph_seg{n}.txt"
         graph_file.write_text(plan.graph, encoding="utf-8")
         seg_out = tmp / f"seg{n}.mp4"
@@ -536,7 +578,7 @@ async def _render_segmented(resolved: dict, media_info: dict,
         "-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0",
         "-c", "copy", "-movflags", "+faststart", out],
         timeout=600, heavy=False)
-    return plan
+    return plan, ln_report
 
 
 async def render_composition(
@@ -577,12 +619,14 @@ async def render_composition(
         # Canvas must be known before ASS generation → compute like compiler.
         w = int(round(int(proj["width"]) * scale / 2) * 2)
         h = int(round(int(proj["height"]) * scale / 2) * 2)
-        captions_ass = _stage_captions(resolved, tmp, (w, h))
+        captions_ass, captions_fontsdir = _stage_captions(
+            resolved, tmp, (w, h), resolve, issues)
         luts = _stage_luts(resolved, tmp, resolve)
         await _prepare_stabilization(resolved, media_info, tmp)
         await _prepare_slowmo(resolved, media_info, issues)
         await _prepare_match(resolved, media_info, tmp)
 
+        ln_report = None
         segments = []
         if time_range is None:
             budget = _render_budget_bytes()
@@ -604,10 +648,11 @@ async def render_composition(
                     })
 
         if segments:
-            plan = await _render_segmented(
+            plan, ln_report = await _render_segmented(
                 resolved, media_info, issues, mode=mode, out=out,
                 scale=scale, tmp=tmp, captions_ass=captions_ass,
-                luts=luts, crf=crf, segments=segments)
+                luts=luts, crf=crf, segments=segments,
+                captions_fontsdir=captions_fontsdir)
             issues.append({
                 "level": "warning", "where": "render",
                 "message": (f"rendered in {len(segments)} windows (split at "
@@ -629,20 +674,14 @@ async def render_composition(
                 comp_graph, media_info, mode=mode, output_path=out,
                 canvas_scale=scale, time_range=time_range,
                 captions_ass=captions_ass, luts=luts, crf=crf,
+                captions_fontsdir=captions_fontsdir,
             )
 
             graph = plan.graph
             if plan.loudnorm:
-                ln_filter = await _measure_loudnorm(resolved, media_info,
-                                                    plan.loudnorm, tmp)
-                if ln_filter is None:
-                    graph = graph.replace("__LOUDNORM__", "anull")
-                    issues.append({
-                        "level": "warning", "where": "audio",
-                        "message": "mix is silent — loudness normalization skipped",
-                    })
-                else:
-                    graph = graph.replace("__LOUDNORM__", ln_filter)
+                ln_filter, ln_report = await _measure_loudnorm(
+                    resolved, media_info, plan.loudnorm, tmp)
+                graph = _apply_loudnorm(graph, ln_filter, ln_report, issues)
 
             graph_file = tmp / "graph.txt"
             graph_file.write_text(graph, encoding="utf-8")
@@ -665,6 +704,11 @@ async def render_composition(
             "size_mb": round(size_mb, 2),
             "warnings": [i for i in issues if i["level"] == "warning"],
         }
+        if mode == "final" and audio_stream(out_info) is not None:
+            result["audio"] = {
+                "loudnorm": ln_report,
+                "delivered": await _measure_delivered(out),
+            }
         return result
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -696,7 +740,8 @@ async def render_frames(
     try:
         w = int(round(int(proj["width"]) * scale / 2) * 2)
         h = int(round(int(proj["height"]) * scale / 2) * 2)
-        captions_ass = _stage_captions(resolved, tmp, (w, h))
+        captions_ass, captions_fontsdir = _stage_captions(
+            resolved, tmp, (w, h), resolve)
         luts = _stage_luts(resolved, tmp, resolve)
         await _prepare_stabilization(resolved, media_info, tmp)
         await _prepare_slowmo(resolved, media_info, issues)
@@ -713,6 +758,7 @@ async def render_frames(
                 window_pruned(resolved, media_info, t, t, pad=WINDOW_PAD),
                 media_info, mode="preview", canvas_scale=scale,
                 captions_ass=captions_ass, luts=luts, streams="v",
+                captions_fontsdir=captions_fontsdir,
             )
             graph_t = (plan.graph
                        + f";\n[{plan.video_label}]trim=start={t:.6g},"

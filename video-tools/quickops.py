@@ -14,7 +14,6 @@ and bit depth: a one-shot op never tone-maps. `-c:v copy` ops are untouched.
 """
 
 import asyncio
-import json
 import re
 import shutil
 import tempfile
@@ -25,14 +24,13 @@ import captions as captions_mod
 import color as color_mod
 import slowmo as slowmo_mod
 import stab as stab_mod
-from fftools import FFmpegError, atempo_chain, audio_stream, media_duration, probe, run_ffmpeg, stream_color, stream_fps, video_stream
+from fftools import FFmpegError, atempo_chain, audio_stream, media_duration, probe, run_ffmpeg, stream_color, stream_fps, stream_rotation, video_stream
 from shared import _normalize_operations, _notify_file_written, _op_type, _resolve_path, _to_agents_relative
 
 _ENCODE = ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
 
 _AUDIO_EXTS = {"wav": ".wav", "mp3": ".mp3", "aac": ".m4a", "flac": ".flac"}
-_LOUDNORM_JSON = re.compile(r"\{[^{}]*\"input_i\"[^{}]*\}", re.S)
 
 
 def _f(v) -> str:
@@ -73,11 +71,8 @@ async def handle_edit_video(args: dict):
         return f"Error: file not found: {args['path']}"
     operations = _normalize_operations(args.get("operations"))
     if not operations:
-        return ("Error: no operations given. Supported: trim, remove, crop, "
-                "smart_reframe, blur_faces, blur_region, stabilize, resize, "
-                "speed, speed_ramp, fps, concat, extract_audio, "
-                "replace_audio, enhance_audio, match_color, mute, volume, "
-                "loudness_normalize, burn_subtitles, to_gif, to_webp")
+        return ("Error: no operations given. Supported: "
+                + ", ".join(sorted(_OPS)))
 
     notes: list[str] = []
     tmp = Path(tempfile.mkdtemp(prefix="vt-edit-"))
@@ -651,18 +646,78 @@ async def _op_motion_blur(src: str, base, op: dict):
 
 async def _op_enhance_audio(src: str, base, op: dict):
     preset = op.get("preset", "voice")
+    spec = audiofx_mod.enhance_spec(preset, op)
     chain = audiofx_mod.enhance_chain(preset, op)
     info = await probe(src)
     if audio_stream(info) is None:
         raise ValueError("no audio stream to enhance")
     vcodec = ["-c:v", "copy"] if video_stream(info) is not None else []
     out = str(base) + ".mp4"
+    # The chain is latency-neutral (audiofx) and pinned to 48 kHz, so the
+    # output lines up with the input sample-exact — the voice chain ran
+    # 15 ms late until 0.4.3.
     await _step(["-i", src, *vcodec, "-af", ",".join(chain),
-                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out])
-    stages = [k for k in audiofx_mod.AUDIO_KEYS
-              if (audiofx_mod.ENHANCE_PRESETS[preset].get(k)
-                  if k not in op else op.get(k))]
-    return out, f"enhanced ({preset}: {' → '.join(stages)} → limiter)"
+                 "-c:a", "aac", "-b:a", "192k", "-ar", str(audiofx_mod.CHAIN_RATE),
+                 "-movflags", "+faststart", out])
+    stages = [k for k in audiofx_mod.AUDIO_KEYS if spec.get(k)]
+    delay = audiofx_mod.stage_latency_ms(spec)
+    note = f"enhanced ({preset}: {' → '.join(stages)} → limiter; 48 kHz"
+    if delay:
+        note += f"; the stages' {delay:g} ms processing delay is compensated — output stays in sync"
+    return out, note + ")"
+
+
+_ROTATE_FILTERS = {90: ["transpose=1"], 180: ["transpose=1", "transpose=1"],
+                   270: ["transpose=2"]}
+_FLIP_FILTERS = {"h": "hflip", "v": "vflip"}
+
+
+async def _op_rotate(src: str, base, op: dict):
+    """Bake a quarter-turn rotation and/or a flip into the pixels. The
+    source's rotation metadata is RESPECTED first (ffmpeg autorotates on
+    decode, so `degrees` is relative to how players show the file) and the
+    output carries none. HDR sources keep their tags and bit depth through
+    the contract — the field de-rotate pass had to re-tag by hand."""
+    degrees = op.get("degrees", 0)
+    flip = op.get("flip")
+    try:
+        degrees = int(round(float(degrees))) % 360
+    except (TypeError, ValueError):
+        raise ValueError("degrees must be 90, 180, 270 or -90")
+    if degrees not in (0, 90, 180, 270):
+        raise ValueError("rotate bakes quarter turns only (90, 180, 270, -90); "
+                         "for arbitrary angles rotate an overlay clip in a "
+                         "composition (transform.rotate)")
+    if flip is not None and flip not in _FLIP_FILTERS:
+        raise ValueError('flip must be "h" (mirror left-right) or "v" (upside down)')
+    filters = list(_ROTATE_FILTERS.get(degrees, []))
+    if flip:
+        filters.append(_FLIP_FILTERS[flip])
+    if not filters:
+        raise ValueError("nothing to do: give degrees (90/180/270/-90) and/or flip")
+    info = await probe(src)
+    vs = video_stream(info)
+    if vs is None:
+        raise ValueError("no video stream to rotate")
+    c = await _contract(src, info)
+    out = str(base) + ".mp4"
+    await _step(["-i", src, "-vf", _vf(c, filters), "-metadata:s:v:0", "rotate=0",
+                 *_ENCODE, out])
+    tagged = stream_rotation(vs)
+    w, h = int(vs.get("width", 0)), int(vs.get("height", 0))
+    if abs(tagged) % 180 == 90:
+        w, h = h, w      # what autorotate hands the filter
+    if degrees in (90, 270):
+        w, h = h, w
+    parts = []
+    if degrees:
+        parts.append(f"rotated {degrees}° clockwise")
+    if flip:
+        parts.append("mirrored left-right" if flip == "h" else "flipped upside down")
+    pre = (f" (the source's {tagged:+g}° display-matrix tag was applied first "
+           "and dropped)" if tagged else "")
+    return out, (f"{', '.join(parts)} → {w}x{h}, no rotation metadata{pre}"
+                 + _hdr_note(c))
 
 
 async def _op_mute(src: str, base, op: dict):
@@ -682,26 +737,38 @@ async def _op_volume(src: str, base, op: dict):
 
 
 async def _op_loudnorm(src: str, base, op: dict):
-    i = float(op.get("target_lufs", -14))
-    tp = float(op.get("true_peak", -1.5))
-    lra = float(op.get("lra", 11))
+    try:
+        cfg = audiofx_mod.loudnorm_config(op)
+    except ValueError as exc:
+        raise ValueError(str(exc))
     _, stderr = await run_ffmpeg(
-        ["-i", src, "-vn", "-af",
-         f"loudnorm=I={_f(i)}:TP={_f(tp)}:LRA={_f(lra)}:print_format=json",
+        ["-i", src, "-vn", "-af", audiofx_mod.loudnorm_measure_filter(cfg),
          "-f", "null", "-"], timeout=900, heavy=False)
-    matches = list(_LOUDNORM_JSON.finditer(stderr))
-    if not matches:
+    meas = audiofx_mod.parse_loudnorm_json(stderr)
+    if not meas:
         raise ValueError("loudness measurement failed")
-    meas = json.loads(matches[-1].group(0))
-    ln = (f"loudnorm=I={_f(i)}:TP={_f(tp)}:LRA={_f(lra)}"
-          f":measured_I={meas['input_i']}:measured_TP={meas['input_tp']}"
-          f":measured_LRA={meas['input_lra']}:measured_thresh={meas['input_thresh']}"
-          f":offset={meas.get('target_offset', 0)}:linear=true")
+    if audiofx_mod.measured_is_silent(meas):
+        raise ValueError("the file measures silent — nothing to normalize")
+    ln, report = audiofx_mod.loudnorm_pass2(cfg, meas)
     out = str(base) + ".mp4"
-    # loudnorm emits 192 kHz; without the resample AAC lands on 96 kHz.
-    await _step(["-i", src, "-c:v", "copy", "-af", ln + ",aresample=48000",
+    # Every mode's chain ends at 48 kHz (loudnorm emits 192 kHz; without the
+    # resample AAC lands on 96 kHz).
+    await _step(["-i", src, "-c:v", "copy", "-af", ln,
                  "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out])
-    return out, (f"normalized {meas['input_i']} → {i} LUFS (two-pass, 48 kHz)")
+    note = audiofx_mod.loudnorm_summary(report)
+    warning = audiofx_mod.loudnorm_warning(report)
+    if warning:
+        note += f"\n  WARNING: {warning}"
+    _, stderr = await run_ffmpeg(
+        ["-i", out, "-vn", "-af", audiofx_mod.loudnorm_measure_filter(cfg),
+         "-f", "null", "-"], timeout=900, heavy=False)
+    got = audiofx_mod.parse_loudnorm_json(stderr)
+    if got:
+        note += (f"\n  delivered: {float(got['input_i']):.1f} LUFS · "
+                 f"{float(got['input_tp']):+.1f} dBTP · LRA {float(got['input_lra']):.1f} LU "
+                 "(measured on the encoded 48 kHz AAC; the codec adds up to "
+                 "~1 dB of true-peak overshoot)")
+    return out, note
 
 
 async def _op_burn_subtitles(src: str, base, op: dict):
@@ -712,22 +779,44 @@ async def _op_burn_subtitles(src: str, base, op: dict):
     vs = video_stream(info)
     if vs is None:
         raise ValueError("no video stream")
+    # Rotated sources decode upright (autorotate), so the ASS canvas is the
+    # DISPLAY size or the captions would be laid out on the wrong axis.
+    w, h = int(vs["width"]), int(vs["height"])
+    if abs(stream_rotation(vs)) % 180 == 90:
+        w, h = h, w
+    family = op.get("font")
+    fonts_dir = None
+    font_file = op.get("font_file")
+    if font_file:
+        font_src = _resolve_path(font_file)
+        if not Path(font_src).exists():
+            raise ValueError(f"font file not found: {font_file}")
+        fonts_dir = Path(str(base) + "-fonts")
+        fonts_dir.mkdir(exist_ok=True)
+        staged = fonts_dir / ("caption" + Path(font_src).suffix.lower())
+        shutil.copyfile(font_src, staged)
+        family = captions_mod.font_file_family(str(staged))
     ass_text = captions_mod.build_ass(
-        sub, play_w=int(vs["width"]), play_h=int(vs["height"]),
+        sub, play_w=w, play_h=h,
         preset=op.get("preset", captions_mod.DEFAULT_PRESET),
         position=op.get("position", "lower_third"),
         font_size=op.get("font_size"),
         highlight_color=op.get("highlight_color"),
         uppercase=op.get("uppercase"),
+        font=family,
+        bold=op.get("bold"),
+        italic=bool(op.get("italic", False)),
     )
     ass_path = str(base) + ".ass"
     Path(ass_path).write_text(ass_text, encoding="utf-8")
     c = await _contract(src, info)
     out = str(base) + ".mp4"
-    await _step(["-i", src, "-vf", _vf(c, [f"ass=filename='{ass_path}'"]),
+    burn = captions_mod.ass_filter(ass_path, str(fonts_dir) if fonts_dir else None)
+    await _step(["-i", src, "-vf", _vf(c, [burn]),
                  "-c:v", "libx264", "-preset", "medium", "-crf", "18",
                  "-c:a", "copy", "-movflags", "+faststart", out])
-    return out, (f"burned {Path(sub).name} ({op.get('preset', 'karaoke')})"
+    font_note = f", font {family}" if family else ""
+    return out, (f"burned {Path(sub).name} ({op.get('preset', 'karaoke')}{font_note})"
                  + _hdr_note(c))
 
 
@@ -788,6 +877,7 @@ _OPS = {
     "extract_audio": _op_extract_audio,
     "replace_audio": _op_replace_audio,
     "enhance_audio": _op_enhance_audio,
+    "rotate": _op_rotate,
     "match_color": _op_match_color,
     "motion_blur": _op_motion_blur,
     "mute": _op_mute,

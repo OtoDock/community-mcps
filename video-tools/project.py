@@ -5,6 +5,7 @@ from pathlib import Path
 
 from mcp.types import ImageContent, TextContent
 
+import audiofx as audiofx_mod
 import composition as comp_mod
 import renderer
 from shared import _normalize_operations, _notify_file_written, _resolve_path, _to_agents_relative
@@ -137,6 +138,15 @@ async def handle_render_composition(args: dict):
         f"{result['canvas']} @ {result['fps']:.3g} fps · "
         f"{result['duration']:.2f}s · {result['size_mb']} MB",
     ]
+    audio = result.get("audio")
+    if audio:
+        if audio.get("loudnorm"):
+            lines.append("audio: " + audiofx_mod.loudnorm_summary(audio["loudnorm"]))
+        d = audio.get("delivered")
+        if d:
+            lines.append(f"delivered: {d['integrated_lufs']:.1f} LUFS · "
+                         f"{d['true_peak_dbtp']:+.1f} dBTP · LRA {d['lra']:.1f} LU "
+                         "(measured on the encoded file)")
     if result["warnings"]:
         lines.append("warnings:")
         lines.extend(f"  - {w['where']}: {w['message']}" for w in result["warnings"])

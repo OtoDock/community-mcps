@@ -22,6 +22,7 @@ import math
 from dataclasses import dataclass, field
 
 import audiofx as audiofx_mod
+import captions as captions_mod
 import color as color_mod
 import composition as comp_mod
 import slowmo as slowmo_mod
@@ -545,14 +546,41 @@ def _base_audio_chain(g: _GraphBuilder, clip: dict, media_info: dict,
     filters = [f"atrim=start={_f(cin - seek)}:end={_f(cout - seek)}",
                "asetpts=PTS-STARTPTS"]
     filters += atempo_chain(speed)
-    vol = clip.get("volume_db")
-    if vol:
-        filters.append(f"volume={_f(float(vol))}dB")
+    filters += _gain_filters(clip, clip.get("volume_db"))
     filters += audiofx_mod.clip_chain(clip.get("audio"))
+    filters += _audio_fades(clip, (cout - cin) / speed,
+                            "audio_fade_in", "audio_fade_out")
     filters.append(_AUDIO_NORM)
     filters.append("asettb=AVTB")
     idx = g.media_input(clip["src"], seek=seek)
     return g.chain(f"{idx}:a", filters, out)
+
+
+def _gain_filters(clip: dict, static) -> list[str]:
+    """The clip's gain: a dB envelope when `gain_keyframes` are present
+    (clip-local seconds after speed, linear in dB between points, held
+    outside them — `eval=frame` re-evaluates once per audio frame, ~21 ms
+    at 48 kHz, so sub-50 ms edges belong to the fades), else the static
+    gain the caller resolved."""
+    kfs = clip.get("gain_keyframes")
+    if kfs:
+        pts = [(float(kf["t"]), float(kf["gain_db"])) for kf in kfs]
+        return [f"volume=volume='pow(10,({piecewise(pts, 't')})/20)':eval=frame"]
+    if static:
+        return [f"volume={_f(float(static))}dB"]
+    return []
+
+
+def _audio_fades(clip: dict, dur: float, key_in: str, key_out: str,
+                 alias_in: str | None = None, alias_out: str | None = None) -> list[str]:
+    fade_in = float(clip.get(key_in, clip.get(alias_in, 0.0) if alias_in else 0.0))
+    fade_out = float(clip.get(key_out, clip.get(alias_out, 0.0) if alias_out else 0.0))
+    out: list[str] = []
+    if fade_in > 0:
+        out.append(f"afade=t=in:st=0:d={_f(fade_in)}")
+    if fade_out > 0:
+        out.append(f"afade=t=out:st={_f(max(0.0, dur - fade_out))}:d={_f(fade_out)}")
+    return out
 
 
 def _fold_luma_wipe(g: _GraphBuilder, va: str, vb: str,
@@ -781,18 +809,12 @@ def _audio_track_chain(g: _GraphBuilder, clip: dict, media_info: dict) -> tuple[
         filters.append(f"atrim=start={_f(cin)}{end}")
     filters.append("asetpts=PTS-STARTPTS")
     filters += atempo_chain(speed)
-    gain = clip.get("gain_db", clip.get("volume_db"))
-    if gain:
-        filters.append(f"volume={_f(float(gain))}dB")
+    filters += _gain_filters(clip, clip.get("gain_db", clip.get("volume_db")))
     filters += audiofx_mod.clip_chain(clip.get("audio"))
-    fade_in = float(clip.get("fade_in", 0.0))
-    fade_out = float(clip.get("fade_out", 0.0))
-    if fade_in > 0:
-        filters.append(f"afade=t=in:st=0:d={_f(fade_in)}")
-    if fade_out > 0:
-        dur = ((float(cout) if cout is not None
-                else float(media_info[clip["src"]]["duration"])) - cin) / speed
-        filters.append(f"afade=t=out:st={_f(max(0.0, dur - fade_out))}:d={_f(fade_out)}")
+    dur = ((float(cout) if cout is not None
+            else float(media_info[clip["src"]]["duration"])) - cin) / speed
+    filters += _audio_fades(clip, dur, "fade_in", "fade_out",
+                            "audio_fade_in", "audio_fade_out")
     filters.append(_AUDIO_NORM)
     if start > 0:
         ms = int(round(start * 1000))
@@ -822,6 +844,7 @@ def compile_render(
     luts: dict[str, str] | None = None,
     streams: str = "av",
     crf: int | None = None,
+    captions_fontsdir: str | None = None,
 ) -> RenderPlan:
     """Compile a resolved composition into a RenderPlan.
 
@@ -922,7 +945,7 @@ def compile_render(
         tail += _finish_filters(proj)
         tail += _letterbox_filters(proj, w, h)
         if captions_ass:
-            tail.append(f"ass=filename='{captions_ass}'")
+            tail.append(captions_mod.ass_filter(captions_ass, captions_fontsdir))
         tail += ["format=yuv420p", color_mod.OUTPUT_PIN]
         if time_range:
             t0, t1 = time_range
@@ -997,7 +1020,7 @@ def compile_render(
         if len(mix_inputs) > 1:
             amixed = g.label("amix")
             g.chains.append(
-                "".join(f"[{l}]" for l in mix_inputs)
+                "".join(f"[{lab}]" for lab in mix_inputs)
                 + f"amix=inputs={len(mix_inputs)}:duration=first:normalize=0[{amixed}]")
             a = amixed
 
@@ -1013,20 +1036,13 @@ def compile_render(
 
         ln = master.get("loudnorm", True)
         if mode == "final" and ln:
-            opts = ln if isinstance(ln, dict) else {}
-            loudnorm_cfg = {
-                "i": float(opts.get("target_lufs", -14.0)),
-                "tp": float(opts.get("true_peak", -1.5)),
-                "lra": float(opts.get("lra", 11.0)),
-            }
-            # The renderer measures pass 1 and substitutes measured_* values.
-            # loudnorm runs (and emits) 192 kHz even in linear mode, and the
-            # AAC encoder then settles on 96 kHz — the highest rate it has.
-            # Bring the bus back to the timeline's 48 kHz (measured: finals
-            # shipped 96 kHz AAC until 0.4.2; previews, which skip loudnorm,
-            # were 48 kHz all along).
+            loudnorm_cfg = audiofx_mod.loudnorm_config(ln)
+            # The renderer measures pass 1 and substitutes the mode's pass-2
+            # chain (audiofx.loudnorm_pass2), which ends at 48 kHz: loudnorm
+            # runs (and emits) 192 kHz even in linear mode, and the AAC
+            # encoder then settles on 96 kHz — finals shipped that way until
+            # 0.4.2; previews, which skip loudnorm, were 48 kHz all along.
             atail.append("__LOUDNORM__")
-            atail.append("aresample=48000")
 
         if time_range:
             t0, t1 = time_range

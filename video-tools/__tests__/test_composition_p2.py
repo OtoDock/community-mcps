@@ -433,3 +433,111 @@ def test_rotate_overlay_only():
                    "transform": {"rotate": 10}}])
     issues = comp_mod.validate(comp, exists=lambda p: True, media_info=MEDIA)
     assert any("overlay clips only" in i["message"] for i in issues)
+
+
+def test_denoise_mix_level_and_loudnorm_mode_validation():
+    ok = _comp([{"src": "a.mp4", "in": 0, "out": 5,
+                 "audio": {"denoise": 0.4, "level": True}},
+                {"src": "a.mp4", "in": 0, "out": 5,
+                 "audio": {"denoise": {"mode": "voice", "mix": 0.6},
+                           "level": {"window": 2, "max_gain_db": 20,
+                                     "target_db": -12}}}])
+    ok["audio_master"] = {"loudnorm": {"target_lufs": -14, "mode": "linear",
+                                       "true_peak": -2, "lra": 8}}
+    assert comp_mod.validate(ok, exists=lambda p: True, media_info=MEDIA) == []
+
+    bad_mix = _comp([{"src": "a.mp4", "in": 0, "out": 5, "audio": {"denoise": 1.5}}])
+    issues = comp_mod.validate(bad_mix, exists=lambda p: True, media_info=MEDIA)
+    assert any("wet mix: 0–1" in i["message"] for i in issues)
+
+    bad_level = _comp([{"src": "a.mp4", "in": 0, "out": 5,
+                        "audio": {"level": {"window": 0.1}}}])
+    issues = comp_mod.validate(bad_level, exists=lambda p: True, media_info=MEDIA)
+    assert any("level.window must be" in i["message"] for i in issues)
+
+    bad_mode = _comp([{"src": "a.mp4", "in": 0, "out": 5}])
+    bad_mode["audio_master"] = {"loudnorm": {"mode": "loud"}}
+    issues = comp_mod.validate(bad_mode, exists=lambda p: True, media_info=MEDIA)
+    assert any("loudnorm.mode must be" in i["message"] for i in issues)
+
+
+def test_gain_keyframes_and_audio_fade_validation():
+    ok = _comp(
+        [{"src": "a.mp4", "in": 0, "out": 5, "audio_fade_in": 0.05,
+          "audio_fade_out": 0.5,
+          "gain_keyframes": [{"t": 0, "gain_db": 0}, {"t": 3, "gain_db": -12}]}],
+        tracks_extra=[{"kind": "audio", "clips": [
+            {"src": "a.mp4", "start": 0, "audio_fade_in": 0.3,
+             "gain_keyframes": [{"t": 0, "gain_db": -6}]}]}])
+    assert comp_mod.validate(ok, exists=lambda p: True, media_info=MEDIA) == []
+
+    # fade_in/fade_out on a base clip never did anything — say so.
+    ignored = _comp([{"src": "a.mp4", "in": 0, "out": 5, "fade_in": 0.5}])
+    issues = comp_mod.validate(ignored, exists=lambda p: True, media_info=MEDIA)
+    assert any("do nothing on base clips" in i["message"] and i["level"] == "warning"
+               for i in issues)
+
+    unordered = _comp([{"src": "a.mp4", "in": 0, "out": 5,
+                        "gain_keyframes": [{"t": 3, "gain_db": 0}, {"t": 1, "gain_db": -6}]}])
+    issues = comp_mod.validate(unordered, exists=lambda p: True, media_info=MEDIA)
+    assert any("time order" in i["message"] for i in issues)
+
+    both = _comp([{"src": "a.mp4", "in": 0, "out": 5, "volume_db": -3,
+                   "gain_keyframes": [{"t": 0, "gain_db": -6}]}])
+    issues = comp_mod.validate(both, exists=lambda p: True, media_info=MEDIA)
+    assert any("replace gain_db" in i["message"] and i["level"] == "warning"
+               for i in issues)
+
+    on_overlay = _comp(
+        [{"src": "a.mp4", "in": 0, "out": 5}],
+        tracks_extra=[{"kind": "overlay", "clips": [
+            {"src": "b.mp4", "in": 0, "out": 2, "start": 0,
+             "gain_keyframes": [{"t": 0, "gain_db": -6}]}]}])
+    issues = comp_mod.validate(on_overlay, exists=lambda p: True, media_info=MEDIA)
+    assert any("overlays carry no audio" in i["message"] for i in issues)
+
+
+def test_caption_font_validation(monkeypatch, tmp_path):
+    import captions as captions_mod
+    monkeypatch.setattr(captions_mod, "installed_font_families",
+                        lambda: frozenset({"inter", "comfortaa"}))
+    srt = tmp_path / "c.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    base = _comp([{"src": "a.mp4", "in": 0, "out": 5}])
+
+    base["captions"] = {"source": str(srt), "font": "Comfortaa", "bold": False}
+    assert comp_mod.validate(base, exists=lambda p: True, media_info=MEDIA) == []
+
+    base["captions"] = {"source": str(srt), "font": "Papyrus"}
+    issues = comp_mod.validate(base, exists=lambda p: True, media_info=MEDIA)
+    assert any("not installed in the render image" in i["message"]
+               and i["level"] == "warning" for i in issues)
+
+    base["captions"] = {"source": str(srt), "font": "Papyrus",
+                        "font_file": "fonts/Papyrus.ttf"}
+    assert comp_mod.validate(base, exists=lambda p: True, media_info=MEDIA) == []
+    issues = comp_mod.validate(base, exists=lambda p: not p.endswith(".ttf"),
+                               media_info=MEDIA)
+    assert any("font file not found" in i["message"] for i in issues)
+
+    base["captions"] = {"source": str(srt), "font_file": "fonts/x.woff"}
+    issues = comp_mod.validate(base, exists=lambda p: True, media_info=MEDIA)
+    assert any("font_file must be" in i["message"] for i in issues)
+
+
+def test_set_captions_and_set_audio_master_accept_the_new_keys():
+    comp = _comp([{"src": "a.mp4", "in": 0, "out": 5}])
+    comp, results = comp_mod.apply_operations(comp, [
+        {"type": "set_captions", "source": "c.srt", "font": "Comfortaa",
+         "font_file": "fonts/Comfortaa-Bold.ttf", "bold": True, "italic": False},
+        {"type": "set_audio_master", "loudnorm": {"mode": "linear"},
+         "limiter": {"ceiling_db": -1}, "eq": {"preset": "warm"}},
+        {"type": "set_audio_master", "bogus": 1},
+    ])
+    assert comp["captions"]["font_file"] == "fonts/Comfortaa-Bold.ttf"
+    assert comp["captions"]["bold"] is True
+    assert comp["audio_master"]["loudnorm"] == {"mode": "linear"}
+    assert comp["audio_master"]["limiter"] == {"ceiling_db": -1}
+    assert comp["audio_master"]["eq"] == {"preset": "warm"}
+    assert results[0].startswith("ok:") and results[1].startswith("ok:")
+    assert results[2].startswith("error:")

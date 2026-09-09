@@ -19,7 +19,7 @@ from pathlib import Path
 from mcp.types import ImageContent, TextContent
 
 import color as color_mod
-from fftools import audio_stream, colr_box, media_duration, probe, run_ffmpeg, stream_color, stream_fps, timecode, video_stream
+from fftools import audio_stream, colr_box, media_duration, probe, run_ffmpeg, stream_color, stream_fps, stream_rotation, timecode, video_stream
 from shared import _notify_file_written, _resolve_path, _to_agents_relative
 
 _MAX_SHOT_THUMBS = 60
@@ -98,6 +98,14 @@ async def handle_probe_media(args: dict):
                 f"@ {stream_fps(s):.3g} fps · pix_fmt {s.get('pix_fmt')}")
             if s.get("disposition", {}).get("attached_pic", 0) == 1:
                 continue
+            rot = stream_rotation(s)
+            if rot:
+                w, h = s.get("width"), s.get("height")
+                shown = f"{h}x{w}" if abs(rot) % 180 == 90 else f"{w}x{h}"
+                lines.append(
+                    f"rotation: {rot:+g}° display-matrix tag — players show it "
+                    f"as {shown}, and every edit_video op applies the tag on "
+                    "decode (rotate bakes it into the pixels and drops the tag)")
             col = stream_color(s)
             trc = col.get("color_transfer")
             kind = color_mod.HDR_TRANSFERS.get(trc) or (
@@ -415,18 +423,32 @@ def _align_waveforms(wav_ref: str, wav_tgt: str, max_offset: float) -> dict:
     cross = ft * np.conj(fr)
     cross /= (np.abs(cross) + 1e-9)
     # cc[k] peaks where yt[n] ≈ yr[n − k]: the target runs k samples LATE.
-    # Lags beyond either signal's length are meaningless and, with the
-    # zero-padded circular correlation, would alias onto real lags of the
-    # opposite sign — clamp them.
+    # The valid lags are ASYMMETRIC: the target may start up to its own
+    # length after the ref (+) and up to the ref's length before it (−).
+    # Inside that range the zero-padded circular correlation is exact;
+    # outside it aliases onto real lags of the opposite sign (a +54-frame
+    # peak read back as −1994 in the first test run). A symmetric clamp on
+    # the SHORTER file hid every offset past its length: a 13 s clip
+    # against a 50 s recorder file could never find +32.5 s and returned
+    # the best in-window lag (+2.7 s, peak 0.01) as if it were the answer.
     cc = np.fft.irfft(cross, size)
-    max_lag = max(1, min(int(round(max_offset * sr)), len(yr) - 1, len(yt) - 1))
-    lags = np.arange(-max_lag, max_lag + 1)
+    lim = int(round(max_offset * sr))
+    neg = max(1, min(lim, len(yr) - 1))
+    pos = max(1, min(lim, len(yt) - 1))
+    lags = np.arange(-neg, pos + 1)
     vals = cc[lags % size]
     best = int(np.argmax(vals))
     lag = int(lags[best])
     peak = float(vals[best])
-    away = np.abs(lags - lag) > int(_RUNNER_UP_RADIUS * sr)
+    radius = int(_RUNNER_UP_RADIUS * sr)
+    away = np.abs(lags - lag) > radius
     second = float(vals[away].max()) if away.any() else 0.0
+    candidates: list[tuple[float, float]] = []
+    for i in np.argsort(vals)[::-1]:
+        if all(abs(int(lags[i]) - int(round(c[0] * sr))) > radius for c in candidates):
+            candidates.append((int(lags[i]) / sr, float(vals[i])))
+        if len(candidates) >= 3:
+            break
     lo = max(0, -lag)
     hi = min(len(yr), len(yt) - lag)
     return {
@@ -434,7 +456,44 @@ def _align_waveforms(wav_ref: str, wav_tgt: str, max_offset: float) -> dict:
         "ratio": peak / max(second, 1e-6),
         "ref_duration": len(yr) / sr, "target_duration": len(yt) / sr,
         "overlap": max(0.0, (hi - lo) / sr), "truncated": truncated,
+        "searched": (-neg / sr, pos / sr),
+        "at_edge": lag <= -neg + radius or lag >= pos - radius,
+        "candidates": candidates,
+        "envelope_agreement": _envelope_agreement(yr, yt, lag, sr),
     }
+
+
+_ENV_HOP = 0.05   # seconds per envelope sample
+
+
+def _envelope_agreement(yr, yt, lag: int, sr: int) -> float | None:
+    """Correlation of the two 50 ms log-RMS envelopes inside the implied
+    overlap: an independent, phase-free check of the PHAT peak. Measured
+    on a real camera/recorder pair: 0.66–0.77 at the true lag, 0.19–0.30
+    at a wrong in-window peak."""
+    import numpy as np
+
+    hop = max(1, int(_ENV_HOP * sr))
+
+    def env(y):
+        n = len(y) // hop
+        if n < 2:
+            return None
+        frames = y[: n * hop].reshape(n, hop)
+        return 20.0 * np.log10(np.sqrt(np.mean(frames ** 2, axis=1)) + 1e-9)
+
+    lo = max(0, -lag)
+    hi = min(len(yr), len(yt) - lag)
+    if hi - lo < 20 * hop:
+        return None
+    er, et = env(yr[lo:hi]), env(yt[lo + lag:hi + lag])
+    if er is None or et is None:
+        return None
+    m = min(len(er), len(et))
+    er, et = er[:m], et[:m]
+    if er.std() < 1e-6 or et.std() < 1e-6:
+        return None
+    return float(np.corrcoef(er, et)[0, 1])
 
 
 def _align_grade(ratio: float) -> str:
@@ -443,6 +502,30 @@ def _align_grade(ratio: float) -> str:
     if ratio >= 3:
         return "fair"
     return "weak"
+
+
+_MIN_OVERLAP = 1.0
+_MIN_AGREEMENT = 0.35
+
+
+def align_sanity(res: dict, grade: str) -> tuple[str, list[str]]:
+    """→ (grade, problems). A confident-looking peak can still be an
+    impossible placement; the checks that catch it downgrade the grade
+    and say why."""
+    problems = []
+    if res["overlap"] < _MIN_OVERLAP:
+        problems.append(f"the implied placement leaves only {res['overlap']:.2f} s "
+                        "of the two files overlapping — no shared event fits in it")
+    if res["at_edge"]:
+        problems.append("the peak sits at the edge of the searched range — the "
+                        "true offset probably lies beyond it")
+    agree = res.get("envelope_agreement")
+    if agree is not None and agree < _MIN_AGREEMENT and grade != "strong":
+        problems.append(f"the loudness envelopes disagree inside the overlap "
+                        f"(agreement {agree:.2f}; a true match reads ≥ 0.5)")
+    if problems and grade != "weak":
+        grade = "weak"
+    return grade, problems
 
 
 async def handle_align_audio(args: dict):
@@ -476,19 +559,28 @@ async def handle_align_audio(args: dict):
             return f"Error: {exc}"
 
     off = res["offset"]
-    grade = _align_grade(res["ratio"])
+    grade, problems = align_sanity(res, _align_grade(res["ratio"]))
     ref_rel, tgt_rel = _to_agents_relative(ref), _to_agents_relative(target)
+    lo_s, hi_s = res["searched"]
+    agree = res.get("envelope_agreement")
+    shorter = min(res["ref_duration"], res["target_duration"])
     lines = [
         "# Audio alignment",
         f"ref:    {ref_rel} ({res['ref_duration']:.2f}s)",
         f"target: {tgt_rel} ({res['target_duration']:.2f}s)",
         f"offset: {off:+.4f} s  — target_time = ref_time + offset "
         f"(the moment at ref@10.000 is at target@{10.0 + off:.4f})",
-        f"confidence: {grade} — PHAT peak {res['peak']:.2f}, "
-        f"{res['ratio']:.0f}× the runner-up (overlap {res['overlap']:.1f}s; "
-        f"search window ±{max_offset:g}s"
+        f"confidence: {grade} — PHAT peak {res['peak']:.3f}, "
+        f"{res['ratio']:.0f}× the runner-up (searched {lo_s:+.2f}…{hi_s:+.2f} s "
+        f"of max_offset ±{max_offset:g}"
         + ("; only the first 20 min of each file were compared" if res["truncated"] else "")
         + ")",
+        f"placement: target starts at ref {-off:+.3f} s; the files overlap for "
+        f"{res['overlap']:.2f} s ({100 * res['overlap'] / max(shorter, 1e-6):.0f}% of "
+        f"the shorter one); envelope agreement inside the overlap "
+        + (f"{agree:.2f}" if agree is not None else "n/a"),
+        "candidates: " + ", ".join(f"{c[0]:+.4f} s ({c[1]:.3f})"
+                                   for c in res["candidates"]),
         "To sync in a composition:",
         f"  - same timeline start as the ref clip: target clip in = ref.in {off:+.4f}"
         + (" (a negative result means the target starts later — use the start form)"
@@ -497,10 +589,15 @@ async def handle_align_audio(args: dict):
         + (" (audio/overlay clips need start ≥ 0 — trim the ref instead when this "
            "goes negative)" if off > 0 else ""),
     ]
+    if problems:
+        lines.append("IMPLAUSIBLE placement — do not use this offset as is:")
+        lines.extend(f"  - {p}" for p in problems)
     if grade == "weak":
-        lines.append("Weak peak: the two recordings may not contain the same "
-                     "event, or the true offset exceeds max_offset — check the "
-                     "files, raise max_offset, or align a shorter excerpt.")
+        lines.append("Weak result: the two recordings may not contain the same "
+                     "event, or the true offset lies outside the searched "
+                     "range — check the files, raise max_offset, align a "
+                     "shorter excerpt around the shared event, or cross-check "
+                     "the candidates against timecode.")
     return "\n".join(lines)
 
 

@@ -107,23 +107,77 @@ the final full-speed watch.
   beds sit −6 to −12 dB under (set `gain_db` on the music clip). Final
   renders normalize automatically — set `audio_master.loudnorm.target_lufs`
   to −16 for calmer platforms (YouTube) and keep −14 for short-form.
+- **Read the loudnorm line of every final render.** ffmpeg's two-pass
+  loudnorm has two personalities: a static gain (`linear`) when that gain
+  keeps the true peak under `true_peak` and the mix's LRA is within
+  `lra`, otherwise a silent switch to a `dynamic` program compressor that
+  reshapes the mix (measured on a real short: the quiet music intro came
+  up 11 dB and LRA fell from 6.3 to 3.5 — three rounds of "the music is
+  too loud" notes were the master chain, not the mix). The result
+  reports `loudnorm auto → linear|dynamic` plus the loudness, true peak
+  and LRA measured on the encoded file, and warns on the dynamic
+  fallback. When it does, set `audio_master.loudnorm.mode: "linear"`
+  (one static gain + a true-peak limiter, dynamics untouched — the
+  mastering default for music and mixed programmes) or widen `lra`.
+  `mode: "dynamic"` asks for the leveller on purpose (raw interview
+  audio you have not otherwise treated). A constant-level source (LRA
+  0.0) always trips the dynamic branch in auto mode — use `linear`.
+- **True peak after the codec.** The ceiling is met on the PCM bus; AAC
+  then adds up to ~1 dB of overshoot (−1.5 lands at about −0.7 dBTP).
+  For a strict delivered ceiling set `true_peak` 1 dB lower and read the
+  delivered line.
+- **Gain automation and fades, no splitting.** `gain_keyframes: [{t: 0,
+  gain_db: -6}, {t: 12, gain_db: -18}, {t: 14, gain_db: -18}, {t: 40,
+  gain_db: -6}]` on a music (or base) clip dips and returns in one clip
+  — clip-local seconds, absolute dB, linear between points, held outside;
+  it replaces `gain_db`. Steps are per audio frame (~21 ms), so splice
+  edges (20–50 ms) use `fade_in`/`fade_out` on audio clips and
+  `audio_fade_in`/`audio_fade_out` on base clips, which are per-sample.
 - **Second recorder or two cameras:** `align_audio {ref, target}` returns
   the offset (target_time = ref_time + offset) with a confidence and the
   two recipes — target `in = ref.in + offset` when both clips share a
-  start, or `start = ref.start − offset` for an audio/overlay clip. Below
-  0.3 confidence the recordings probably do not overlap; raise
-  `max_offset` or align a shorter excerpt.
+  start, or `start = ref.start − offset` for an audio/overlay clip. The
+  searched range is bounded by the files themselves (a 13 s clip against
+  a 50 s recording searches −13 … +50 s) and printed; the result also
+  states the implied placement, the overlap, whether the two loudness
+  envelopes agree inside it, and the runner-up candidates — cross-check
+  against timecode when a camera has it. A result marked IMPLAUSIBLE is
+  not an offset: raise `max_offset`, align a shorter excerpt around the
+  shared event, or check that both files contain it. One long recording
+  spanning several clips: align each clip separately (each is a
+  different offset), or align one well and propagate by timecode delta.
 
 ## Audio sweetening (make camera audio sound produced)
 
 - Per-clip chain on base/audio media clips, fixed order
-  denoise → eq → compress → deess:
+  denoise → eq → compress → deess → level:
   `audio: {"denoise": "voice", "eq": {"preset": "voice"},
   "compress": true, "deess": true}` is the interview/VO recipe.
 - `denoise: "voice"` (neural, speech only — strongest on voice, eats
   music) vs `true` (broadband spectral, safe everywhere; tune
   `{strength, floor_db}` for hiss level). Never denoise a clean studio
   track — it can only cost air.
+- **Never flat-denoise a camera track when a voice comes through room
+  speakers** (an agent answering on a smart speaker, a phone on
+  loudspeaker, a TV): the voice model hears a distant reverberant voice
+  as noise and pulls it 5–6 dB down with its timbre. Blend instead —
+  `denoise: 0.4` runs the voice model at 40 % wet against the dry
+  signal (0–1; `{"mode": "voice", "mix": 0.4}` is the long form) —
+  and keep the full model for the close-mic presenter clip only.
+- **The chain is latency-neutral.** The denoisers delay the signal
+  (rnnoise 10 ms, broadband 25 ms) and the limiter 5 ms; every chain
+  compensates that internally, so enhanced or sweetened audio stays in
+  sync with its picture and needs no re-alignment (until 0.4.3 the
+  voice chain shipped 15 ms late — a sync bug for every unaligned VO).
+- **Uneven speech — `level`.** A compressor barely narrows a 12 dB
+  phrase-to-phrase swing; `level: true` is a leveller (dynaudnorm in
+  RMS-target mode) that rides gain across the take. It levels changes
+  slower than its window: the 4.2 s default handles sentence-scale
+  drift (a presenter turning away, a mic moving); for phrase-to-phrase
+  swings inside a sentence set `{"window": 2}` (a 12 dB swing measured
+  down to 4 dB), at the cost of more audible gain riding. It lifts room
+  tone between phrases too, so denoise first (the fixed order does).
+  Options: `window` (s), `max_gain_db` (28), `target_db` (−6 dBFS RMS).
 - EQ presets: voice (rumble cut + presence + air), music (gentle smile),
   bright, warm, telephone (stylistic band-limit). Or explicit
   `bands: [{f, gain_db, q}]` — same restraint as color: ±2–3 dB moves.
@@ -134,7 +188,9 @@ the final full-speed watch.
   `loudnorm: false` (loudnorm already limits when on).
 - One-shot cleanup without a composition: `edit_video` op
   `enhance_audio {preset: voice|music}` — denoise + EQ + compression +
-  de-ess + limiter in one pass (override stages, e.g. `denoise: false`).
+  de-ess + limiter in one pass (override stages, e.g. `denoise: false`,
+  `denoise: 0.4`, `level: true`). Output is 48 kHz and in sync with the
+  input.
 
 ## Stabilization (handheld & drone)
 
@@ -270,6 +326,13 @@ the final full-speed watch.
   word at a time — hook sections), `clean` (broadcast), `minimal` (boxed,
   unobtrusive). `highlight_color` takes a brand hex; `uppercase: true` for
   the aggressive style.
+- **Fonts.** `font` names a family shipped in the image — Inter (the
+  presets' default), Roboto, Comfortaa, Montserrat, Liberation Sans,
+  DejaVu Sans, Noto Sans, JetBrains Mono — or `font_file` points at a
+  `.ttf`/`.otf` in the workspace (the family the file declares is used;
+  a brand font is a one-liner, no HTML overlay needed). `bold` (default
+  true) and `italic` pick the face. validate_composition warns when a
+  named family is not installed — libass would substitute silently.
 - Always `render_frames` on 2–3 caption moments: check size, margin
   collisions, and that the highlight lands on the spoken word.
 
@@ -366,8 +429,14 @@ deterministic clip back:
 ## Quick edits without a composition
 
 `edit_video` for single-file jobs: trim, remove a segment, crop to 9:16,
-resize, speed, concat, extract/replace audio, two-pass loudness normalize,
-burn subtitles, GIF/WebP export. It never overwrites the source. Re-encoded
+rotate, resize, speed, concat, extract/replace audio, two-pass loudness
+normalize, burn subtitles, GIF/WebP export. It never overwrites the source.
+**Check orientation first**: a rig can store portrait footage turned on
+its side with an identity matrix (no rotation tag, so nothing
+auto-corrects) — `rotate {degrees: 270}` (= −90, counter-clockwise) or
+`{degrees: 90}` bakes the turn into the pixels and keeps HDR tags; a file
+that DOES carry a tag is shown by probe_media and every op applies it on
+decode, so `degrees` is relative to what players show. Re-encoded
 outputs are tagged Rec.709 (an untagged HD file is declared as such, 601
 and full-range sources are converted, GIF/WebP get the right matrix); an
 HLG/PQ file stays HLG/PQ with its bit depth — for an SDR deliverable

@@ -119,6 +119,23 @@ def media_duration(info: dict) -> float:
         return 0.0
 
 
+def stream_rotation(stream: dict) -> float:
+    """The display-matrix rotation a video stream carries (degrees, ffprobe
+    sign: −90 = the file wants a 90° clockwise turn), 0 when untagged.
+    Both the modern side data and the legacy `rotate` tag are read."""
+    for sd in stream.get("side_data_list", []) or []:
+        rot = sd.get("rotation")
+        if rot is not None:
+            try:
+                return float(rot)
+            except (TypeError, ValueError):
+                continue
+    try:
+        return float((stream.get("tags") or {}).get("rotate", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def stream_fps(stream: dict) -> float:
     """Parse a stream's average frame rate ('30000/1001' → 29.97)."""
     for key in ("avg_frame_rate", "r_frame_rate"):

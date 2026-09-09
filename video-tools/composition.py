@@ -65,6 +65,10 @@ PRESET_TRANSITIONS = ("whip_pan", "zoom_punch", "flash_cut", "glitch",
 XFADE_PRESET_TRANSITIONS = ("whip_left", "whip_right", "luma_wipe")
 
 CAPTION_POSITIONS = ("lower_third", "center", "top")
+CAPTION_KEYS = ("source", "preset", "position", "font_size", "highlight_color",
+                "uppercase", "max_words_per_cue", "offset", "font", "font_file",
+                "bold", "italic")
+AUDIO_MASTER_KEYS = ("gain_db", "loudnorm", "eq", "compress", "limiter")
 FIT_MODES = ("cover", "contain")
 
 _CLIP_KEYS = {
@@ -72,7 +76,8 @@ _CLIP_KEYS = {
     "speed_ramp", "fit", "transform", "color", "transition_in", "volume_db",
     "mute", "gain_db", "fade_in", "fade_out", "duck", "effects", "mask",
     "label", "stabilize", "interpolate", "audio", "vignette", "grain",
-    "sharpen", "motion_blur",
+    "sharpen", "motion_blur", "audio_fade_in", "audio_fade_out",
+    "gain_keyframes",
 }
 
 # Filmic finishing knobs: key → the name of its options-object field.
@@ -83,8 +88,12 @@ INTERP_MODES = ("flow", "blend", "duplicate")
 MATCH_KEYS = ("ref", "ramp_from", "ramp_to", "strength", "target_time")
 
 # Mirror audiofx.py (kept local: this module stays import-light).
-AUDIO_FX_KEYS = ("denoise", "eq", "compress", "deess")
+AUDIO_FX_KEYS = ("denoise", "eq", "compress", "deess", "level")
 EQ_PRESET_NAMES = ("voice", "music", "bright", "warm", "telephone")
+LOUDNORM_MODES = ("auto", "linear", "dynamic")
+_LEVEL_BOUNDS = {"window": (0.6, 60.0), "max_gain_db": (0, 40),
+                 "target_db": (-30, 0)}
+CAPTION_FONT_EXTS = (".ttf", ".otf", ".ttc")
 _COMPRESS_BOUNDS = {"threshold_db": (-60, 0), "ratio": (1, 20),
                     "attack": (0.01, 2000), "release": (10, 9000),
                     "makeup_db": (0, 24)}
@@ -473,16 +482,45 @@ def _validate_audiofx(spec: dict, where: str, issues: list) -> None:
     dn = spec.get("denoise")
     if dn is not None and not isinstance(dn, bool) and dn != "voice":
         if isinstance(dn, dict):
+            voice = dn.get("mode") == "voice" or "mix" in dn
+            if "mode" in dn and dn["mode"] != "voice":
+                _issue(issues, "error", where,
+                       'denoise.mode must be "voice" (omit it for the broadband '
+                       "denoiser)")
+            if voice and "mix" in dn and not _num(dn["mix"], 0, 1):
+                _issue(issues, "error", where,
+                       "denoise.mix must be 0–1 (wet share of the voice model)")
             if "strength" in dn and not _num(dn["strength"], 1, 40):
                 _issue(issues, "error", where,
                        "denoise.strength must be 1–40 (dB of reduction)")
             if "floor_db" in dn and not _num(dn["floor_db"], -80, -20):
                 _issue(issues, "error", where,
                        "denoise.floor_db must be -80–-20 (assumed noise floor)")
+            if voice and ("strength" in dn or "floor_db" in dn):
+                _issue(issues, "warning", where,
+                       "strength/floor_db belong to the broadband denoiser — "
+                       "ignored with the voice model")
+        elif isinstance(dn, (int, float)):
+            if not _num(dn, 0, 1):
+                _issue(issues, "error", where,
+                       "a numeric denoise is the voice model's wet mix: 0–1")
         else:
             _issue(issues, "error", where,
-                   "denoise must be true, \"voice\" (speech model), or "
-                   "{strength: dB, floor_db?}")
+                   "denoise must be true, \"voice\" (speech model), a 0–1 mix "
+                   "of the voice model, {mix: 0–1}, or {strength: dB, floor_db?}")
+    lv = spec.get("level")
+    if lv is not None and not isinstance(lv, bool):
+        if isinstance(lv, dict):
+            for k, (lo, hi) in _LEVEL_BOUNDS.items():
+                if lv.get(k) is not None and not _num(lv[k], lo, hi):
+                    _issue(issues, "error", where, f"level.{k} must be {lo}–{hi}")
+            unknown_lv = set(lv) - set(_LEVEL_BOUNDS)
+            if unknown_lv:
+                _issue(issues, "warning", where,
+                       f"unknown level keys ignored: {sorted(unknown_lv)}")
+        else:
+            _issue(issues, "error", where,
+                   "level must be true or {window: s, max_gain_db, target_db}")
     if spec.get("eq") is not None:
         _validate_eq(spec["eq"], where + ".eq", issues)
     if spec.get("compress") is not None:
@@ -814,9 +852,43 @@ def _validate_clip(clip: dict, kind: str, where: str, issues: list,
     for f in ("volume_db", "gain_db"):
         if f in clip and not _num(clip[f], -60, 12):
             _issue(issues, "error", where, f"{f} must be -60–+12 dB")
-    for f in ("fade_in", "fade_out"):
+    for f in ("fade_in", "fade_out", "audio_fade_in", "audio_fade_out"):
         if f in clip and not _num(clip[f], 0, 10):
             _issue(issues, "error", where, f"{f} must be 0–10 s")
+    if kind == "video" and ("fade_in" in clip or "fade_out" in clip):
+        _issue(issues, "warning", where,
+               "fade_in/fade_out do nothing on base clips (picture fades are "
+               "transitions: fadeblack/fade); audio_fade_in/audio_fade_out "
+               "fade the clip's sound")
+    if kind == "overlay" and ("audio_fade_in" in clip or "audio_fade_out" in clip):
+        _issue(issues, "error", where, "overlays carry no audio to fade")
+    kfs = clip.get("gain_keyframes")
+    if kfs is not None:
+        where_g = where + ".gain_keyframes"
+        if kind == "overlay":
+            _issue(issues, "error", where_g, "overlays carry no audio")
+        elif skind != "media":
+            _issue(issues, "error", where_g, "gain automation needs a media 'src' clip")
+        elif not isinstance(kfs, list) or not kfs:
+            _issue(issues, "error", where_g,
+                   'must be a list — e.g. [{"t": 0, "gain_db": -6}, '
+                   '{"t": 12, "gain_db": -18}]')
+        else:
+            last_t = -1.0
+            for i, kf in enumerate(kfs):
+                if not isinstance(kf, dict) or not _num(kf.get("t"), 0, 86400) \
+                        or not _num(kf.get("gain_db"), -60, 12):
+                    _issue(issues, "error", f"{where_g}[{i}]",
+                           "each keyframe is {t: clip seconds ≥ 0, gain_db: -60–+12}")
+                    break
+                if float(kf["t"]) < last_t:
+                    _issue(issues, "error", where_g, "keyframes must be in time order")
+                    break
+                last_t = float(kf["t"])
+            if any(f in clip for f in ("gain_db", "volume_db")):
+                _issue(issues, "warning", where_g,
+                       "gain_keyframes replace gain_db/volume_db (absolute dB "
+                       "at each point) — the static gain is ignored")
 
     if kind in ("overlay", "audio"):
         if kind == "audio":
@@ -924,6 +996,32 @@ def _validate_clip(clip: dict, kind: str, where: str, issues: list,
                            "flash only affects flash_cut and zoom_punch")
         else:
             _issue(issues, "error", where, "transition_in must be an object")
+
+
+def _validate_caption_font(caps: dict, issues: list, exists=None) -> None:
+    font, font_file = caps.get("font"), caps.get("font_file")
+    if font is not None and (not isinstance(font, str) or not font.strip()):
+        _issue(issues, "error", "captions", "font must be a font family name")
+        font = None
+    for key in ("bold", "italic"):
+        if key in caps and caps[key] is not None and not isinstance(caps[key], bool):
+            _issue(issues, "error", "captions", f"{key} must be true or false")
+    if font_file is not None:
+        if not isinstance(font_file, str) or \
+                Path(font_file).suffix.lower() not in CAPTION_FONT_EXTS:
+            _issue(issues, "error", "captions",
+                   f"font_file must be a {'/'.join(CAPTION_FONT_EXTS)} path")
+        elif exists is not None and not exists(font_file):
+            _issue(issues, "error", "captions", f"font file not found: {font_file}")
+        return
+    if font:
+        installed = captions_mod.installed_font_families()
+        if installed is not None and font.strip().lower() not in installed:
+            _issue(issues, "warning", "captions",
+                   f"font '{font}' is not installed in the render image — "
+                   "libass will substitute another face; pass font_file "
+                   "(a .ttf/.otf in the workspace) or pick one of "
+                   f"{captions_mod.SHIPPED_FONTS}")
 
 
 def validate(comp: dict, exists=None, media_info: dict | None = None) -> list[dict]:
@@ -1102,6 +1200,7 @@ def validate(comp: dict, exists=None, media_info: dict | None = None) -> list[di
                 _issue(issues, "error", "captions", "font_size must be 8–300")
             if "max_words_per_cue" in caps and not _num(caps.get("max_words_per_cue"), 1, 12):
                 _issue(issues, "error", "captions", "max_words_per_cue must be 1–12")
+            _validate_caption_font(caps, issues, exists)
 
     master = comp.get("audio_master")
     if master is not None and isinstance(master, dict):
@@ -1126,6 +1225,11 @@ def validate(comp: dict, exists=None, media_info: dict | None = None) -> list[di
                 _issue(issues, "error", "audio_master", "target_lufs must be -30–-8")
             if "true_peak" in ln and not _num(ln["true_peak"], -9, 0):
                 _issue(issues, "error", "audio_master", "true_peak must be -9–0 dBTP")
+            if "lra" in ln and not _num(ln["lra"], 1, 50):
+                _issue(issues, "error", "audio_master", "lra must be 1–50 LU")
+            if "mode" in ln and ln["mode"] not in LOUDNORM_MODES:
+                _issue(issues, "error", "audio_master",
+                       f"loudnorm.mode must be one of {LOUDNORM_MODES}")
         elif not isinstance(ln, bool):
             _issue(issues, "error", "audio_master",
                    "loudnorm must be true/false or an options object")
@@ -1337,14 +1441,15 @@ def apply_operations(comp: dict, operations: list[dict]) -> tuple[dict, list[str
                 else:
                     caps = op.get("captions") or {
                         k: v for k, v in op.items()
-                        if k in ("source", "preset", "position", "font_size",
-                                 "highlight_color", "uppercase",
-                                 "max_words_per_cue")}
+                        if k in CAPTION_KEYS}
                     comp["captions"] = caps
                     results.append(f"ok: captions set ({caps.get('source')})")
 
             elif kind == "set_audio_master":
-                patch = {k: v for k, v in op.items() if k in ("gain_db", "loudnorm")}
+                patch = {k: v for k, v in op.items() if k in AUDIO_MASTER_KEYS}
+                if not patch:
+                    raise CompositionError(
+                        f"set_audio_master takes {', '.join(AUDIO_MASTER_KEYS)}")
                 _merge_patch(comp.setdefault("audio_master", {}), patch)
                 results.append(f"ok: audio_master updated ({', '.join(patch)})")
 

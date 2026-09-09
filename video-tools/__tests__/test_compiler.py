@@ -210,9 +210,42 @@ def test_loudnorm_token_only_in_final():
     final = compile_render(comp, MEDIA, mode="final")
     preview = compile_render(comp, MEDIA, mode="preview")
     assert "__LOUDNORM__" in final.graph
-    assert final.loudnorm == {"i": -16.0, "tp": -1.5, "lra": 11.0}
+    assert final.loudnorm == {"i": -16.0, "tp": -1.5, "lra": 11.0, "mode": "auto"}
     assert "__LOUDNORM__" not in preview.graph
     assert preview.loudnorm is None
+    linear = compile_render(
+        _comp([{"src": "a.mp4", "in": 0, "out": 3}],
+              master={"loudnorm": {"mode": "linear", "true_peak": -2}}),
+        MEDIA, mode="final")
+    assert linear.loudnorm == {"i": -14.0, "tp": -2.0, "lra": 11.0, "mode": "linear"}
+
+
+def test_gain_keyframes_and_base_audio_fades():
+    plan = compile_render(_comp(
+        [{"src": "a.mp4", "in": 1, "out": 5, "audio_fade_in": 0.04,
+          "audio_fade_out": 0.5, "volume_db": -3}],
+        tracks_extra=[{"kind": "audio", "clips": [
+            {"src": "b.mp4", "start": 2, "gain_db": -6,
+             "gain_keyframes": [{"t": 0, "gain_db": -6}, {"t": 4, "gain_db": -18},
+                                {"t": 6, "gain_db": -18}, {"t": 8, "gain_db": -6}],
+             "audio_fade_in": 0.3},
+        ]}]), {
+        "a.mp4": {"duration": 10.0, "has_video": True, "has_audio": True},
+        "b.mp4": {"duration": 20.0, "has_video": False, "has_audio": True},
+    })
+    chains = plan.graph.split(";\n")
+    base = next(c for c in chains if "atrim=start=1:end=5" in c)
+    assert "volume=-3dB" in base
+    assert "afade=t=in:st=0:d=0.04" in base
+    assert "afade=t=out:st=3.5:d=0.5" in base       # 4 s clip
+    track = next(c for c in chains if "adelay=2000" in c)
+    # The envelope replaces the static gain: absolute dB, linear between
+    # points, held outside, evaluated per audio frame.
+    assert "volume=-6dB" not in track
+    assert "volume=volume='pow(10,(if(lt(t,0),-6," in track
+    assert track.endswith("adelay=2000:all=1[at0]") or "adelay=2000:all=1" in track
+    assert ":eval=frame" in track
+    assert track.index("volume=volume=") < track.index("afade=t=in:st=0:d=0.3")
 
 
 def test_captions_and_global_grade_on_final_canvas():

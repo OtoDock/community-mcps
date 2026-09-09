@@ -497,6 +497,93 @@ with no settle.
   — high-frequency detail costs bits — so web deliverables should pass the
   `crf` override (23 balanced, 28 social) rather than lower the master's
   CRF 18; the skill says so now.
+- **0.4.3 (2026-09-09) — audio truth, the missing ops, caption fonts.**
+  From the same agent's second shoot (camera track + mic recorder + music
+  bed, a smart speaker answering on camera). Every number measured on
+  ffmpeg 7.0.2 (the image's 7.1.5 carries the same options).
+  - *Loudness normalization modes* (`audiofx.loudnorm_*`, renderer,
+    `loudness_normalize`). ffmpeg's two-pass loudnorm with `linear=true`
+    takes the linear branch ONLY when the static gain keeps the true peak
+    under TP and the measured LRA is within the target LRA (and none of
+    the pass-1 values is a sentinel: TP 99, thresh −70, LRA 0, I 0 —
+    a constant-level source measures LRA 0.0 and always goes dynamic);
+    otherwise it silently runs its dynamic leveller, a program
+    compressor. On the shoot's master it lifted the quiet music intro
+    by 11 dB and crushed LRA 6.3 → 3.5 while the mix was blamed. The
+    renderer now predicts the branch from pass 1 with that exact rule
+    (verified against the pass-2 JSON `normalization_type` on three
+    fixtures), reports `mode → normalization_type`, the measured and
+    target numbers and the gain, and WARNS on the auto fallback with
+    the cause. `mode: "linear"` never enters loudnorm at pass 2: a
+    static `volume` to the target, then a true-peak ceiling at
+    `true_peak` through a 4× oversampled `alimiter` (1× overshoots a
+    −1.5 dBTP ceiling to −0.7 — inter-sample peaks), back to 48 kHz;
+    integrated lands within 0.1 LU of the target with LRA untouched.
+    `mode: "dynamic"` is the leveller on request. Every final render
+    (and the op) measures the DELIVERED file: AAC at 192 kb/s adds up to
+    ~1 dB of true-peak overshoot above the PCM ceiling (loudnorm's own
+    −1.5 → −0.5), which is what the earlier field note "loudnorm ignores
+    the true-peak target" was — the codec, not the filter.
+  - *Latency compensation.* The sweetening stages do not flush their
+    delay at EOF: output length unchanged, content late, tail lost —
+    rnnoise by 480 samples (10 ms, it forces 48 kHz), afftdn by 25 ms
+    at any rate (1102/1200/2400 samples at 44.1/48/96 kHz), alimiter by
+    239 samples (its 5 ms lookahead; `latency=1` cancels it exactly).
+    The voice enhance chain therefore ran 14.98 ms late — the "+0.015 s
+    every time" of the report. Chains that contain a delaying stage are
+    built latency-neutral: `aresample=48000` (the delays are known in
+    48 kHz samples), `apad=pad_len=D` BEFORE the stages, `atrim=
+    start_sample=D,asetpts=PTS-STARTPTS` after them — impulse back at
+    its sample, length preserved, tail kept. Every limiter carries
+    `latency=1`. `enhance_audio` output is 48 kHz from any source.
+  - *Denoise mix.* `arnndn`'s `mix` blends filtered and input INSIDE the
+    filter on aligned samples (mix 0 / 0.5 / 1 all measured the same
+    10 ms delay) — no comb filtering, one atom. `denoise: 0–1` is that
+    wet share; the report's rule: a voice through room speakers reads as
+    noise to the model (agent replies −4.8 / −6.4 dB, timbre lost) — blend.
+  - *`level`* = `dynaudnorm=f=200:g=<window/0.2, odd>:p=0.9:m=<max_gain>
+    :r=<target_rms>` in RMS-target mode, last in the chain; defaults are
+    the recipe validated by ear on the shoot's VO (4.2 s window, 28 dB,
+    −6 dBFS). The Gaussian window is preceded by a minimum filter, so
+    the gain inside any window is pinned by its loudest frame: it levels
+    changes SLOWER than the window (measured on 3 s phrases at −14/−26:
+    4.2 s window 12.1 → 12.1 dB, 2.2 s → 4.0, 1.4 s → 2.7). A compressor
+    (−18/3:1) did 12.1 → 4.4 on the same but at −15 dB of makeup
+    pumping; `speechnorm` widened the real VO. Zero latency.
+  - *Gain automation and fades.* `gain_keyframes` → `volume=volume=
+    'pow(10,(<piecewise dB>)/20)':eval=frame` (re-evaluated per audio
+    frame, ~21 ms; splice edges belong to afade). Audio-track clips had
+    `fade_in`/`fade_out` all along; base clips gain `audio_fade_in`/
+    `audio_fade_out` (their `fade_in`/`fade_out` were accepted and
+    silently ignored — validation says so now).
+  - *`align_audio` bounds.* The lag clamp was `min(max_offset,
+    len(ref)−1, len(target)−1)` — symmetric on the SHORTER file, so a
+    12.97 s clip against a 49.55 s recording searched ±12.97 s while
+    reporting "±60 s"; the true +32.495 s was never a candidate and the
+    best in-window lag (+2.709, PHAT peak 0.011, ratio 1.2) came back.
+    Valid lags are −(len(ref)−1) … +(len(target)−1): inside that range
+    the zero-padded circular correlation is exact, outside it aliases.
+    With the fix the real pair yields +32.4946 s at 5.0× (the agent's
+    excerpt method: 32.4950). The result now prints the searched range,
+    the implied placement and overlap, the top-3 candidates, and a
+    second opinion: the correlation of the two 50 ms log-RMS envelopes
+    inside the overlap (0.66–0.77 at the true lag on that pair, 0.19–
+    0.30 at the wrong one); overlap < 1 s, a peak at the search edge, or
+    agreement < 0.35 on a non-strong grade marks the placement
+    IMPLAUSIBLE and the grade weak.
+  - *`rotate`* (`edit_video`): `transpose`/`hflip`/`vflip` under the
+    colour contract; the source's display matrix is applied first by
+    autorotate and the output writes none (`-metadata:s:v:0 rotate=0`).
+    The rig stores portrait footage turned with an identity matrix — the
+    field pre-pass re-tagged HLG by hand; the contract keeps the tags.
+    `probe_media` prints a display-matrix tag and the size players show.
+  - *Caption fonts.* `font` (family), `font_file` (staged under a safe
+    name into a render `fontsdir`; the Style line carries the family the
+    FILE declares, read with Pillow — libass matches fontsdir faces by
+    that name, not by path), `bold`/`italic` (the Style booleans, −1/0).
+    The image adds `fonts-comfortaa` and `fonts-montserrat` (OFL).
+    Validation warns on a family fontconfig does not know when no
+    font_file is given — libass substitutes silently otherwise.
 
 ## Low-RAM windowed rendering
 

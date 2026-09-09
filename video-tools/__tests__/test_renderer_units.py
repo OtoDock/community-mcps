@@ -24,13 +24,25 @@ def _silent_comp():
 _CFG = {"i": -14.0, "tp": -1.5, "lra": 11.0}
 
 
-def _measure_with_stderr(monkeypatch, tmp_path, stderr: str):
+def _measure_with_stderr(monkeypatch, tmp_path, stderr: str, cfg=None):
     async def fake_run(args, timeout=0, heavy=True):
         return 0, stderr
 
     monkeypatch.setattr(renderer, "run_ffmpeg", fake_run)
     return asyncio.run(renderer._measure_loudnorm(
-        _silent_comp(), {}, _CFG, Path(tmp_path)))
+        _silent_comp(), {}, dict(cfg or _CFG), Path(tmp_path)))
+
+
+# +6 dB of gain lands the −9 dBTP peak at −3: ffmpeg stays linear.
+_NORMAL = (
+    'progress {"frame": 1}\n{\n"input_i" : "-20.00",\n'
+    '"input_tp" : "-9.00",\n"input_lra" : "6.20",\n'
+    '"input_thresh" : "-30.50",\n"target_offset" : "0.40"\n}\n'
+)
+_WIDE = (
+    '{\n"input_i" : "-14.77",\n"input_tp" : "-1.45",\n"input_lra" : "6.30",\n'
+    '"input_thresh" : "-25.00",\n"target_offset" : "0.60"\n}\n'
+)
 
 
 def test_silent_measurement_returns_none(monkeypatch, tmp_path):
@@ -39,7 +51,7 @@ def test_silent_measurement_returns_none(monkeypatch, tmp_path):
         '"input_lra" : "0.00",\n"input_thresh" : "-70.00",\n'
         '"target_offset" : "0.00"\n}\n'
     )
-    assert _measure_with_stderr(monkeypatch, tmp_path, stderr) is None
+    assert _measure_with_stderr(monkeypatch, tmp_path, stderr) == (None, None)
 
 
 def test_near_silent_measurement_returns_none(monkeypatch, tmp_path):
@@ -50,24 +62,50 @@ def test_near_silent_measurement_returns_none(monkeypatch, tmp_path):
         '"input_lra" : "0.00",\n"input_thresh" : "-94.30",\n'
         '"target_offset" : "0.00"\n}\n'
     )
-    assert _measure_with_stderr(monkeypatch, tmp_path, stderr) is None
+    assert _measure_with_stderr(monkeypatch, tmp_path, stderr) == (None, None)
 
 
 def test_normal_measurement_returns_linear_two_pass(monkeypatch, tmp_path):
-    stderr = (
-        'progress {"frame": 1}\n{\n"input_i" : "-23.10",\n'
-        '"input_tp" : "-4.50",\n"input_lra" : "6.20",\n'
-        '"input_thresh" : "-33.50",\n"target_offset" : "0.40"\n}\n'
-    )
-    flt = _measure_with_stderr(monkeypatch, tmp_path, stderr)
+    flt, report = _measure_with_stderr(monkeypatch, tmp_path, _NORMAL)
     assert flt is not None
-    assert "measured_I=-23.10" in flt
-    assert "linear=true" in flt
+    assert "measured_I=-20.00" in flt
+    assert "linear=true" in flt and flt.endswith(",aresample=48000")
+    assert report["normalization_type"] == "linear"
+
+
+def test_auto_mode_predicts_and_warns_on_dynamic_fallback(monkeypatch, tmp_path):
+    flt, report = _measure_with_stderr(monkeypatch, tmp_path, _WIDE)
+    assert "linear=true" in flt          # ffmpeg decides — and will go dynamic
+    assert report["normalization_type"] == "dynamic"
+    issues = []
+    graph = renderer._apply_loudnorm("[a]__LOUDNORM__[out]", flt, report, issues)
+    assert graph == f"[a]{flt}[out]"
+    assert len(issues) == 1 and "DYNAMIC" in issues[0]["message"]
+    assert 'mode to "linear"' in issues[0]["message"]
+
+
+def test_linear_mode_never_enters_loudnorm(monkeypatch, tmp_path):
+    flt, report = _measure_with_stderr(monkeypatch, tmp_path, _WIDE,
+                                       cfg=dict(_CFG, mode="linear"))
+    assert flt.startswith("volume=0.77dB,aresample=192000,alimiter=")
+    assert "loudnorm" not in flt
+    assert report["normalization_type"] == "linear"
+    issues = []
+    renderer._apply_loudnorm("__LOUDNORM__", flt, report, issues)
+    assert issues == []
+
+
+def test_silent_mix_substitutes_anull_with_a_warning():
+    issues = []
+    graph = renderer._apply_loudnorm("[a]__LOUDNORM__[out]", None, None, issues)
+    assert graph == "[a]anull[out]"
+    assert issues[0]["message"].startswith("mix is silent")
 
 
 def test_unparseable_measurement_falls_back_to_single_pass(monkeypatch, tmp_path):
-    flt = _measure_with_stderr(monkeypatch, tmp_path, "no json here")
-    assert flt == "loudnorm=I=-14.0:TP=-1.5:LRA=11.0"
+    flt, report = _measure_with_stderr(monkeypatch, tmp_path, "no json here")
+    assert flt == "loudnorm=I=-14.0:TP=-1.5:LRA=11.0,aresample=48000"
+    assert report is None
 
 
 def test_render_budget_env_override(monkeypatch):

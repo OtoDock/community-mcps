@@ -66,7 +66,7 @@ def test_karaoke_k_durations_are_centiseconds(tmp_path):
                          preset="karaoke")
     # First word runs 0.10→0.35 but fills to the NEXT word's start (0.35):
     # 25cs. Verify a \k tag with that value exists on the first line.
-    line = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+    line = next(ln for ln in ass.splitlines() if ln.startswith("Dialogue:"))
     assert "{\\k25}Meet" in line
     assert "PlayResX: 1080" in ass and "PlayResY: 1920" in ass
 
@@ -80,7 +80,7 @@ def test_karaoke_colors_sung_vs_unsung():
 def test_word_pop_one_event_per_word_no_overlap(tmp_path):
     ass = caps.build_ass(_transcript_file(tmp_path), 1080, 1920,
                          preset="word-pop")
-    dialogues = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
+    dialogues = [ln for ln in ass.splitlines() if ln.startswith("Dialogue:")]
     assert len(dialogues) == len(WORDS)
     assert "\\t(0,90," in dialogues[0]          # pop-in transform
     assert "MEET" in dialogues[0]               # uppercase default
@@ -89,7 +89,7 @@ def test_word_pop_one_event_per_word_no_overlap(tmp_path):
 def test_clean_preset_plain_sentence_cues(tmp_path):
     ass = caps.build_ass(_transcript_file(tmp_path), 1920, 1080,
                          preset="clean", position="lower_third")
-    dialogues = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
+    dialogues = [ln for ln in ass.splitlines() if ln.startswith("Dialogue:")]
     assert all("\\k" not in d for d in dialogues)
     assert "Meet OtoDock, your agents" in dialogues[0]
 
@@ -106,7 +106,7 @@ def test_positions_map_to_alignment(tmp_path):
 def test_offset_shifts_all_events(tmp_path):
     ass = caps.build_ass(_transcript_file(tmp_path), 1080, 1920,
                          preset="clean", offset=10.0)
-    first = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+    first = next(ln for ln in ass.splitlines() if ln.startswith("Dialogue:"))
     assert first.split(",")[1] == "0:00:10.10"
 
 
@@ -128,7 +128,7 @@ def test_srt_with_karaoke_distributes_word_timing(tmp_path):
     srt = tmp_path / "subs.srt"
     srt.write_text("1\n00:00:00,000 --> 00:00:02,000\none two\n")
     ass = caps.build_ass(str(srt), 1080, 1920, preset="karaoke")
-    line = next(l for l in ass.splitlines() if l.startswith("Dialogue:"))
+    line = next(ln for ln in ass.splitlines() if ln.startswith("Dialogue:"))
     assert "{\\k100}one" in line  # 2s / 2 words = 100 cs each
 
 
@@ -141,5 +141,44 @@ def test_ass_source_passes_through(tmp_path):
 def test_font_size_scales_with_playres(tmp_path):
     small = caps.build_ass(_transcript_file(tmp_path), 540, 960, preset="karaoke")
     large = caps.build_ass(_transcript_file(tmp_path), 1080, 1920, preset="karaoke")
-    size_of = lambda a: int(a.split("Style: Cap,Inter,")[1].split(",")[0])
+    def size_of(a):
+        return int(a.split("Style: Cap,Inter,")[1].split(",")[0])
     assert size_of(large) == 2 * size_of(small)
+
+
+def test_font_family_bold_italic_land_in_the_style_line(tmp_path):
+    srt = tmp_path / "f.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    default = caps.build_ass(str(srt), 1080, 1920, preset="clean")
+    assert "Style: Cap,Inter," in default
+    assert ",-1,0,0,0,100,100," in default          # bold on, italic off
+    styled = caps.build_ass(str(srt), 1080, 1920, preset="clean",
+                                font="Comfortaa", bold=False, italic=True)
+    assert "Style: Cap,Comfortaa," in styled
+    assert ",0,-1,0,0,100,100," in styled
+    # A comma in a family name would shift every following Style field.
+    odd = caps.build_ass(str(srt), 1080, 1920, font="Bad, Name")
+    assert "Style: Cap,Bad  Name," in odd
+
+
+def test_ass_filter_carries_fontsdir():
+    assert caps.ass_filter("/t/c.ass") == "ass=filename='/t/c.ass'"
+    assert caps.ass_filter("/t/c.ass", "/t/fonts") == \
+        "ass=filename='/t/c.ass':fontsdir='/t/fonts'"
+
+
+def test_font_file_family_reads_the_declared_name(tmp_path):
+    import glob
+    files = glob.glob("/usr/share/fonts/**/DejaVuSans.ttf", recursive=True)
+    if not files:
+        pytest.skip("no DejaVuSans.ttf on this machine")
+    assert caps.font_file_family(files[0]) == "DejaVu Sans"
+    bogus = tmp_path / "not-a-font.ttf"
+    bogus.write_bytes(b"nope")
+    with pytest.raises(caps.CaptionError):
+        caps.font_file_family(str(bogus))
+
+
+def test_installed_font_families_is_lowercased_or_none():
+    fams = caps.installed_font_families()
+    assert fams is None or all(f == f.lower() for f in fams)

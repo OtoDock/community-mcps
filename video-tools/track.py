@@ -449,8 +449,10 @@ def _blur_frame(frame, boxes, pixelate: bool = False):
     for bx, by, bw, bh in boxes:
         # 12% dilation: privacy over-covers, never under-covers.
         dx, dy = bw * 0.12, bh * 0.12
-        x0 = max(0, int(bx - dx)); y0 = max(0, int(by - dy))
-        x1 = min(W, int(bx + bw + dx)); y1 = min(H, int(by + bh + dy))
+        x0 = max(0, int(bx - dx))
+        y0 = max(0, int(by - dy))
+        x1 = min(W, int(bx + bw + dx))
+        y1 = min(H, int(by + bh + dy))
         if x1 - x0 < 2 or y1 - y0 < 2:
             continue
         roi = frame[y0:y1, x0:x1]

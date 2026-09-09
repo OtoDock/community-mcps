@@ -3,65 +3,87 @@ name: build-mcp-images
 # Build the `runtime: docker` community MCPs and push their pre-built images to
 # GHCR. Self-hosted OtoDock installs on the Docker-Compose (T2) topology PULL
 # these images: a containerised proxy can't `docker build` (its docker-socket-
-# proxy blocks the build endpoint), so every Docker MCP in the launch catalog
-# must publish an image.
+# proxy blocks the build endpoint), so every Docker MCP in the catalog must
+# publish an image.
 #
-# The image tag is read from each MCP's manifest (`server.image`) — the manifest
-# is the single source of truth, so bumping the tag there is what drives CI to
-# publish a new tag. An MCP with no `server.image` is skipped (not an error).
+# The list of MCPs to build is derived from the manifests: every folder whose
+# manifest.json declares `server.image` is built, so a new docker MCP needs no
+# edit here. The image tag comes from that field (the manifest is the single
+# source of truth; bumping the tag there is what drives a new publish). A
+# push that changes no docker MCP builds nothing.
 #
 # FIRST-RUN, ONE-TIME (per package): after the first successful push, open
 # Packages → <package> → Package settings and (a) set visibility to Public and
 # (b) link it to this repository. GHCR packages default to private + unlinked.
 # Auth uses the built-in GITHUB_TOKEN (packages: write) — no PAT required.
+#
+# This file lives in the PREP repo and is synced to the public catalog by
+# dev/publish-catalog.sh; it runs on the public repo's main.
 
 on:
   workflow_dispatch: {}
   push:
     branches: [main]
-    paths:
-      - 'camoufox/**'
-      - 'github-mcp/**'
-      - 'video-tools/**'
-      - 'm365-mcp/**'
-      - '.github/workflows/build-mcp-images.yml'
 
 permissions:
   contents: read
   packages: write
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      mcps: ${{ steps.list.outputs.mcps }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: List the docker MCPs this push touches
+        id: list
+        run: |
+          # Docker MCPs = folders whose manifest declares server.image. Only
+          # those touched by the push (or all on workflow_dispatch) are built.
+          changed=""
+          if [ "${{ github.event_name }}" = push ] && git rev-parse -q --verify HEAD~1 >/dev/null; then
+            changed="$(git diff --name-only HEAD~1 HEAD | cut -d/ -f1 | sort -u)"
+          fi
+          list="$(python3 - "$changed" <<'PY'
+          import json, os, sys
+          changed = set(sys.argv[1].split())
+          out = []
+          for d in sorted(os.listdir(".")):
+              m = os.path.join(d, "manifest.json")
+              if not os.path.isfile(m):
+                  continue
+              server = (json.load(open(m)).get("server") or {})
+              if server.get("runtime") == "docker" and server.get("image") and (not changed or d in changed):
+                  out.append(d)
+          print(json.dumps(out))
+          PY
+          )"
+          echo "mcps=$list" >> "$GITHUB_OUTPUT"
+          echo "::notice::docker MCPs to build: $list"
+
   build:
+    needs: plan
+    if: needs.plan.outputs.mcps != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        mcp: [camoufox, github-mcp, video-tools, m365-mcp]
+        mcp: ${{ fromJSON(needs.plan.outputs.mcps) }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Resolve image tag from manifest
         id: meta
         run: |
-          # An MCP can leave the catalog (unpublished, moved back to staging)
-          # while its matrix entry stays: skip it instead of failing the run.
-          if [ ! -f "${{ matrix.mcp }}/manifest.json" ]; then
-            echo "::notice::${{ matrix.mcp }} is not in the catalog — skipped"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           image=$(python3 -c "import json; print(json.load(open('${{ matrix.mcp }}/manifest.json'))['server'].get('image',''))")
-          if [ -z "$image" ]; then
-            echo "::notice::${{ matrix.mcp }} has no server.image — nothing to publish"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "image=$image" >> "$GITHUB_OUTPUT"
-            echo "latest=${image%:*}:latest" >> "$GITHUB_OUTPUT"
-            echo "::notice::building ${{ matrix.mcp }} -> $image"
-          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "latest=${image%:*}:latest" >> "$GITHUB_OUTPUT"
+          echo "::notice::building ${{ matrix.mcp }} -> $image"
 
       - name: Log in to GHCR
-        if: steps.meta.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -69,11 +91,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: steps.meta.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
-        if: steps.meta.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.mcp }}

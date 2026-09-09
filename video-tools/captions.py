@@ -17,9 +17,17 @@ ASS notes (the classic bugs, so they stay fixed):
 
 import json
 import re
+import shutil
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 DEFAULT_PRESET = "karaoke"
+
+# Families baked into the image (Dockerfile) — what `font` can name without
+# a font_file. Listed for the validator's hint, not enforced.
+SHIPPED_FONTS = ("Inter", "Roboto", "Comfortaa", "Montserrat", "Liberation Sans",
+                 "DejaVu Sans", "Noto Sans", "JetBrains Mono")
 
 # Per-preset defaults. font_scale is fraction of PlayResY; margin_v_scale is
 # the bottom/top margin for lower_third/top positions.
@@ -88,6 +96,54 @@ class CaptionError(ValueError):
 
 
 # ---------------------------------------------------------------------------
+# Fonts
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def installed_font_families() -> frozenset | None:
+    """Lower-cased family names fontconfig knows, or None where fontconfig
+    is unavailable (the check is then skipped, never failed)."""
+    fc = shutil.which("fc-list")
+    if not fc:
+        return None
+    try:
+        out = subprocess.run([fc, ":", "family"], capture_output=True,
+                             text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = set()
+    for line in out.splitlines():
+        for fam in line.split(","):
+            fam = fam.strip().lower()
+            if fam:
+                names.add(fam)
+    return frozenset(names)
+
+
+def font_file_family(path: str) -> str:
+    """The family name a font file declares — libass matches fontsdir faces
+    by that name, so the Style line must carry it, whatever the file is
+    called. Raises CaptionError on an unreadable font."""
+    from PIL import ImageFont
+    try:
+        family, _style = ImageFont.truetype(str(path)).getname()
+    except (OSError, ValueError) as exc:
+        raise CaptionError(f"cannot read font file '{path}': {exc}")
+    if not family:
+        raise CaptionError(f"font file '{path}' declares no family name")
+    return family
+
+
+def ass_filter(ass_path: str, fonts_dir: str | None = None) -> str:
+    """The libass burn atom; `fontsdir` makes staged user fonts visible."""
+    flt = f"ass=filename='{ass_path}'"
+    if fonts_dir:
+        flt += f":fontsdir='{fonts_dir}'"
+    return flt
+
+
+# ---------------------------------------------------------------------------
 # Source parsing
 # ---------------------------------------------------------------------------
 
@@ -95,6 +151,12 @@ class CaptionError(ValueError):
 def _sanitize(text: str) -> str:
     """Strip characters that would corrupt ASS override blocks."""
     return re.sub(r"[{}\\]", "", str(text)).strip()
+
+
+def _sanitize_family(name: str) -> str:
+    """A Style line is comma-separated: a comma or newline in the family
+    name would shift every following field."""
+    return re.sub(r"[,\r\n{}\\]", " ", str(name)).strip() or "Inter"
 
 
 def parse_transcript_json(path: str) -> list[dict]:
@@ -234,11 +296,16 @@ def build_ass(
     uppercase: bool | None = None,
     max_words_per_cue: int | None = None,
     offset: float = 0.0,
+    font: str | None = None,
+    bold: bool | None = None,
+    italic: bool = False,
 ) -> str:
     """Build a styled ASS document from a transcript JSON or SRT.
 
     ``play_w``/``play_h`` must match the RENDER canvas — regenerate for
-    preview renders so text scales with the frame.
+    preview renders so text scales with the frame. ``font`` overrides the
+    preset's family (a shipped family, or the family a staged font_file
+    declares); ``bold`` defaults to the preset's bold face.
     """
     ext = Path(source_path).suffix.lower()
     if ext == ".ass":
@@ -291,6 +358,10 @@ def build_ass(
     # Karaoke: PrimaryColour is the SUNG color, SecondaryColour the unsung.
     primary = highlight if cfg["karaoke"] else white
     secondary = white
+    family = _sanitize_family(font) if font else cfg["font"]
+    # Style booleans are -1 (true) / 0 (false); every preset is bold.
+    bold_flag = -1 if (bold is None or bold) else 0
+    italic_flag = -1 if italic else 0
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -302,7 +373,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{cfg['font']},{size},{primary},{secondary},{outline_col},{hex_to_ass('#000000', 0x50)},-1,0,0,0,100,100,0,0,{border_style},{outline},{shadow},{align},{margin_lr},{margin_lr},{margin_v},1
+Style: Cap,{family},{size},{primary},{secondary},{outline_col},{hex_to_ass('#000000', 0x50)},{bold_flag},{italic_flag},0,0,100,100,0,0,{border_style},{outline},{shadow},{align},{margin_lr},{margin_lr},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

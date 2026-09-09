@@ -26,17 +26,20 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 
 ## Current catalog
 
-| MCP | Runtime | Upstream | Use case |
-|-----|---------|----------|----------|
-| [camoufox](./camoufox/) | docker | Camoufox + `@playwright/mcp` | Anti-detect browser automation |
-| [github-mcp](./github-mcp/) | docker | official GitHub MCP (Dockerized) | Repos, issues, PRs, Actions, code search |
-| [ha-mcp](./ha-mcp/) | python | `pypi:ha-mcp` | Home Assistant smart-home control |
-| [nextcloud](./nextcloud/) | node | `nextcloud-mcp-server` | Nextcloud files, Notes, Calendar |
-| [notion-mcp](./notion-mcp/) | node | `@notionhq/notion-mcp-server` | Notion pages, databases, search |
+<!-- catalog:start -->
+| MCP | Runtime | Source | Use case |
+|-----|---------|--------|----------|
+| [camoufox](./camoufox/) | docker | `camoufox + @playwright/mcp@0.0.68` | Anti-detect browser automation via Playwright MCP |
+| [email-server](./email-server/) | node | `mcp-mail-server` | Email via IMAP/SMTP |
+| [github-mcp](./github-mcp/) | docker | `github-mcp` | GitHub repositories, issues, pull requests, actions, and code search |
+| [home-assistant](./ha-mcp/) | python | `ha-mcp` | Smart home control (~97 tools) |
+| [nextcloud](./nextcloud/) | node | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
+| [notion-mcp](./notion-mcp/) | node | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
 | [prometheus](./prometheus/) | node | `prometheus-mcp` | Metrics and monitoring queries |
-| [unifi-network](./unifi-network/) | python | `pypi:unifi-network-mcp` | UniFi network management and monitoring |
-| [uptime-kuma](./uptime-kuma/) | node | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring (Kuma v2) |
-| [video-tools](./video-tools/) | docker | OtoDock (FFmpeg + libass) | Agent-driven video editing: timelines, transitions, captions, grading |
+| [unifi-network](./unifi-network/) | python | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
+| [uptime-kuma](./uptime-kuma/) | node | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
+| [video-tools](./video-tools/) | docker | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
+<!-- catalog:end -->
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 

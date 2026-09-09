@@ -84,7 +84,7 @@ def test_write_cube_format(tmp_path):
     colormatch.write_cube(lut, size, str(path))
     lines = path.read_text().splitlines()
     assert f"LUT_3D_SIZE {size}" in lines[1]
-    assert len([l for l in lines if l and not l.startswith(("#", "LUT", "DOMAIN"))]) == size ** 3
+    assert len([ln for ln in lines if ln and not ln.startswith(("#", "LUT", "DOMAIN"))]) == size ** 3
 
 
 def test_sample_window_clamps():

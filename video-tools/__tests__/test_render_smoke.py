@@ -1521,3 +1521,329 @@ def test_quickops_loudness_normalize_lands_on_48k(noisy_vo, monkeypatch):
         capture_output=True, text=True, timeout=300)
     m = list(re.finditer(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr, re.S))
     assert m and abs(float(json.loads(m[-1].group(0))["input_i"]) + 16.0) < 1.5, proc.stderr[-300:]
+
+
+# ---------------------------------------------------------------------------
+# 0.4.3 — audio truth: latency, loudnorm modes, automation, level, rotate,
+# caption fonts
+# ---------------------------------------------------------------------------
+
+
+def _decode_mono(path: str):
+    import soundfile as sf
+    wav = Path(str(path)).with_suffix(".decoded.wav")
+    _ff("-i", str(path), "-vn", "-ac", "1", "-ar", "48000", "-c:a", "pcm_f32le", str(wav))
+    y, sr = sf.read(str(wav), dtype="float64", always_2d=True)
+    return y[:, 0], sr
+
+
+def _lag_samples(x, y, search=4800) -> int:
+    """Lag (samples) at which y best matches x — positive = y is late."""
+    import numpy as np
+    m = min(len(x), len(y))
+    best, bl = -1e18, 0
+    for lag in range(-search, search):
+        if lag >= 0:
+            c = float(np.dot(y[lag:m], x[:m - lag]))
+        else:
+            c = float(np.dot(y[:m + lag], x[-lag:m]))
+        if c > best:
+            best, bl = c, lag
+    return bl
+
+
+@pytest.fixture(scope="session")
+def impulse_vo(tmp_path_factory):
+    """Speech-like bursts plus two single-sample clicks: the clicks pin
+    the latency measurement to the sample."""
+    import numpy as np
+    import soundfile as sf
+    root = tmp_path_factory.mktemp("impulse")
+    sr = 48000
+    x = np.zeros(sr * 3)
+    rng = np.random.default_rng(1)
+    for k in range(6):
+        s = int(k * 0.5 * sr)
+        x[s:s + int(0.2 * sr)] = rng.normal(0, 0.1, int(0.2 * sr))
+    x[sr] = 0.9
+    x[int(2.2 * sr)] = -0.9
+    path = root / "impulse.wav"
+    sf.write(str(path), np.stack([x, x], 1), sr, subtype="FLOAT")
+    return path
+
+
+def test_enhance_audio_is_latency_neutral(impulse_vo, monkeypatch):
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    src, _ = _decode_mono(str(impulse_vo))
+    for preset in ("voice", "music"):
+        out = str(impulse_vo.parent / f"enh-{preset}.mp4")
+        text = _run(quickops.handle_edit_video({
+            "path": str(impulse_vo),
+            "operations": [{"type": "enhance_audio", "preset": preset}],
+            "output_path": out}))
+        assert "48 kHz" in text, text
+        got, sr = _decode_mono(out)
+        # The voice chain ran 15 ms late (rnnoise 10 + limiter 5) until 0.4.3.
+        assert abs(_lag_samples(src, got)) <= 1, (preset, _lag_samples(src, got))
+        assert abs(len(got) - len(src)) <= sr * 0.05, (len(got), len(src))
+        assert int(audio_stream(_run(probe(out)))["sample_rate"]) == 48000
+        if preset == "voice":
+            assert "10 ms processing delay is compensated" in text, text
+
+
+def test_denoise_mix_blends_between_dry_and_wet(noisy_vo, monkeypatch):
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    floors = {}
+    for mix in (0.0, 0.5, 1.0):
+        out = str(noisy_vo.parent / f"mix-{mix}.mp4")
+        _run(quickops.handle_edit_video({
+            "path": str(noisy_vo),
+            "operations": [{"type": "enhance_audio", "preset": "voice",
+                            "denoise": mix, "eq": False, "compress": False,
+                            "deess": False}],
+            "output_path": out}))
+        floors[mix] = _window_volume(out, 2.55, 2.95)
+    # 0 = untouched, 1 = the full model, 0.5 in between (≈ 6 dB of the
+    # reduction on a linear blend of clean and noisy).
+    assert floors[0.0] - floors[1.0] >= 8.0, floors
+    assert floors[0.0] - 1.0 > floors[0.5] > floors[1.0] + 1.0, floors
+
+
+@pytest.fixture(scope="session")
+def wide_lra_bed(tmp_path_factory):
+    """A quiet 6 s intro (−18 dB) into a body with hot single-sample peaks,
+    around −19 LUFS overall: the +5 dB static gain to −14 LUFS would push
+    the true peak far past the ceiling and the LRA is 18, so ffmpeg's auto
+    loudnorm goes dynamic on it."""
+    import numpy as np
+    import soundfile as sf
+    root = tmp_path_factory.mktemp("widelra")
+    sr = 48000
+    rng = np.random.default_rng(5)
+    n = sr * 16
+    x = rng.normal(0, 1, n)
+    x = np.convolve(x, np.ones(6) / 6, mode="same")
+    x /= np.sqrt(np.mean(x ** 2))
+    env = np.ones(n)
+    env[: sr * 6] = 10 ** (-18 / 20)
+    x = x * env * 10 ** (-24 / 20)
+    for p in rng.integers(sr * 7, n - 10, 40):
+        x[p] = 0.85 * np.sign(x[p])
+    path = root / "bed.wav"
+    sf.write(str(path), np.stack([x, x], 1), sr, subtype="FLOAT")
+    return path
+
+
+def _final_with_loudnorm(bed, spec, name):
+    comp = comp_mod.new_composition({"width": 320, "height": 180, "fps": 30})
+    comp["tracks"][0]["clips"] = [{"fill": "#101010", "duration": 16.0}]
+    comp["tracks"].append({"kind": "audio", "clips": [{"src": str(bed), "start": 0}]})
+    comp["audio_master"] = {"gain_db": 0, "loudnorm": spec}
+    path = bed.parent / f"{name}.vproj.json"
+    comp_mod.save_composition(str(path), comp)
+    return _run(renderer.render_composition(str(path), lambda p: p, mode="final"))
+
+
+def test_loudnorm_modes_report_and_linear_keeps_dynamics(wide_lra_bed):
+    auto = _final_with_loudnorm(wide_lra_bed, True, "auto")
+    rep = auto["audio"]["loudnorm"]
+    assert rep["mode"] == "auto" and rep["normalization_type"] == "dynamic", rep
+    assert "LRA 18" in rep["reason"] and "exceeds" in rep["reason"], rep["reason"]
+    assert any("DYNAMIC" in w["message"] for w in auto["warnings"]), auto["warnings"]
+    assert auto["audio"]["delivered"]["integrated_lufs"] < -10
+
+    lin = _final_with_loudnorm(wide_lra_bed, {"mode": "linear"}, "linear")
+    rep = lin["audio"]["loudnorm"]
+    assert rep["normalization_type"] == "linear" and rep["limiter_db"] > 0, rep
+    assert not any("DYNAMIC" in w["message"] for w in lin["warnings"])
+    d = lin["audio"]["delivered"]
+    assert abs(d["integrated_lufs"] - (-14.0)) < 1.5, d
+    # LRA is the authored dynamics: within a LU of the source's.
+    assert abs(d["lra"] - rep["measured"]["lra"]) < 1.0, (d, rep["measured"])
+    # The quiet intro keeps its relation to the body (dynamic mode lifts it).
+    intro = _window_volume(lin["output"], 1, 5)
+    body = _window_volume(lin["output"], 9, 15)
+    assert 15.0 <= body - intro <= 21.0, (intro, body)
+    a = audio_stream(_run(probe(lin["output"])))
+    assert int(a["sample_rate"]) == 48000
+
+    dyn = _final_with_loudnorm(wide_lra_bed, {"mode": "dynamic"}, "dynamic")
+    assert dyn["audio"]["loudnorm"]["normalization_type"] == "dynamic"
+    assert not any("DYNAMIC" in w["message"] for w in dyn["warnings"])
+
+
+def test_quickops_loudness_normalize_modes(wide_lra_bed, monkeypatch):
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    out = str(wide_lra_bed.parent / "ln-linear.mp4")
+    text = _run(quickops.handle_edit_video({
+        "path": str(wide_lra_bed),
+        "operations": [{"type": "loudness_normalize", "mode": "linear"}],
+        "output_path": out}))
+    assert "loudnorm linear → linear" in text and "delivered:" in text, text
+    out2 = str(wide_lra_bed.parent / "ln-auto.mp4")
+    text = _run(quickops.handle_edit_video({
+        "path": str(wide_lra_bed),
+        "operations": [{"type": "loudness_normalize"}],
+        "output_path": out2}))
+    assert "→ dynamic" in text and "WARNING" in text, text
+
+
+def test_gain_keyframes_and_base_audio_fades_render(assets):
+    def render(name, base_extra=None, music=None):
+        comp = comp_mod.new_composition({"width": 320, "height": 180, "fps": 30})
+        comp["tracks"][0]["clips"] = [
+            {"src": str(assets["clip1"]), "in": 0, "out": 4, **(base_extra or {})}]
+        if music:
+            comp["tracks"].append({"kind": "audio", "clips": [music]})
+        comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
+        path = assets["root"] / f"{name}.vproj.json"
+        comp_mod.save_composition(str(path), comp)
+        return _run(renderer.render_composition(str(path), lambda p: p, mode="final"))["output"]
+
+    # The steady 440 Hz tone reads the fades: quiet at the very start and
+    # the very end, full in the middle.
+    out = render("base-fades", {"audio_fade_in": 0.5, "audio_fade_out": 1.0})
+    mid = _window_volume(out, 1.5, 2.0)
+    assert _window_volume(out, 0.0, 0.1) < mid - 6
+    assert _window_volume(out, 3.9, 4.0) < mid - 6
+
+    out = render("automation", {"mute": True}, {
+        "src": str(assets["music"]), "start": 0, "out": 4,
+        "gain_keyframes": [{"t": 0, "gain_db": 0}, {"t": 4, "gain_db": -30}]})
+    early = _window_volume(out, 0.4, 0.6)      # ≈ −3.75 dB on the ramp
+    late = _window_volume(out, 3.4, 3.6)       # ≈ −26.25 dB
+    assert 18.0 <= early - late <= 27.0, (early, late)
+
+
+@pytest.fixture(scope="session")
+def phrase_swing(tmp_path_factory):
+    """Six 3 s 'phrases' alternating −14 / −26 dBFS RMS: the interview
+    problem a compressor barely touches."""
+    import numpy as np
+    import soundfile as sf
+    root = tmp_path_factory.mktemp("swing")
+    sr = 48000
+    rng = np.random.default_rng(11)
+    levels = [-14, -26, -14, -26, -14, -26]
+    ph, gap = 3.0, 0.4
+    x = np.zeros(int(len(levels) * (ph + gap) * sr))
+    for k, lv in enumerate(levels):
+        s = int(k * (ph + gap) * sr)
+        seg = rng.normal(0, 1, int(ph * sr))
+        seg = np.convolve(seg, np.ones(8) / 8, mode="same")
+        t = np.arange(len(seg)) / sr
+        seg *= 0.6 + 0.4 * np.sin(2 * np.pi * 5 * t)
+        seg *= 10 ** (lv / 20) / np.sqrt(np.mean(seg ** 2))
+        x[s:s + len(seg)] = seg
+    path = root / "swing.wav"
+    sf.write(str(path), np.stack([x, x], 1), sr, subtype="FLOAT")
+    return path
+
+
+def _phrase_spread(path: str) -> float:
+    vals = [_window_volume(path, k * 3.4 + 0.5, k * 3.4 + 2.5) for k in range(6)]
+    return max(vals) - min(vals)
+
+
+def test_level_narrows_a_phrase_swing(phrase_swing):
+    def render(audio, name):
+        comp = comp_mod.new_composition({"width": 320, "height": 180, "fps": 30})
+        comp["tracks"][0]["clips"] = [{"fill": "#101010", "duration": 20.4}]
+        clip = {"src": str(phrase_swing), "start": 0}
+        if audio:
+            clip["audio"] = audio
+        comp["tracks"].append({"kind": "audio", "clips": [clip]})
+        comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
+        path = phrase_swing.parent / f"{name}.vproj.json"
+        comp_mod.save_composition(str(path), comp)
+        return _run(renderer.render_composition(str(path), lambda p: p, mode="final"))["output"]
+
+    raw = _phrase_spread(render(None, "raw"))
+    # A 2 s window follows 3 s phrases; the 4.2 s default is for slower
+    # drift (a whole sentence, a presenter turning away).
+    leveled = _phrase_spread(render({"level": {"window": 2}}, "level"))
+    assert raw >= 10.0, raw
+    assert leveled <= 6.0, (raw, leveled)
+
+
+def test_quickops_rotate_bakes_pixels_and_drops_the_tag(assets, monkeypatch):
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    out = str(assets["root"] / "rot90.mp4")
+    text = _run(quickops.handle_edit_video({
+        "path": str(assets["clip1"]),
+        "operations": [{"type": "rotate", "degrees": 90}],
+        "output_path": out}))
+    assert "rotated 90° clockwise → 360x640" in text, text
+    vs = video_stream(_run(probe(out)))
+    assert (vs["width"], vs["height"]) == (360, 640)
+    assert not any(sd.get("rotation") for sd in vs.get("side_data_list", []))
+    assert stream_color(vs).get("color_space") == "bt709"
+
+    # A display-matrix-tagged file: the tag is applied first (autorotate),
+    # so +90 on a file that already shows portrait lands on landscape.
+    tagged = assets["root"] / "tagged.mp4"
+    _ff("-display_rotation", "90", "-i", str(assets["clip1"]), "-c", "copy", str(tagged))
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    report = _run(analysis.handle_probe_media({"path": str(tagged)}))
+    assert "rotation: +90° display-matrix tag" in report and "360x640" in report, report
+    out2 = str(assets["root"] / "rot-tagged.mp4")
+    text = _run(quickops.handle_edit_video({
+        "path": str(tagged),
+        "operations": [{"type": "rotate", "degrees": 90, "flip": "h"}],
+        "output_path": out2}))
+    assert "→ 640x360" in text and "display-matrix tag was applied first" in text, text
+    vs = video_stream(_run(probe(out2)))
+    assert (vs["width"], vs["height"]) == (640, 360)
+
+    text = _run(quickops.handle_edit_video({
+        "path": str(assets["clip1"]),
+        "operations": [{"type": "rotate", "degrees": 45}]}))
+    assert "error: rotate" in text and "quarter turns" in text
+
+
+def _dejavu() -> str | None:
+    import glob
+    files = glob.glob("/usr/share/fonts/**/DejaVuSans.ttf", recursive=True)
+    return files[0] if files else None
+
+
+def test_burn_subtitles_with_font_file(assets, monkeypatch):
+    font = _dejavu()
+    if not font:
+        pytest.skip("no DejaVuSans.ttf on this machine")
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    out = str(assets["root"] / "subs-font.mp4")
+    text = _run(quickops.handle_edit_video({
+        "path": str(assets["clip1"]),
+        "operations": [{"type": "burn_subtitles",
+                        "subtitle_path": str(assets["transcript"]),
+                        "preset": "clean", "font_file": font, "bold": False}],
+        "output_path": out}))
+    assert "font DejaVu Sans" in text, text
+    assert Path(out).exists()
+
+
+def test_composition_captions_take_a_font_file(demo_comp, monkeypatch):
+    font = _dejavu()
+    if not font:
+        pytest.skip("no DejaVuSans.ttf on this machine")
+    comp = comp_mod.load_composition(str(demo_comp))
+    comp["captions"].update({"font": "Something Else", "font_file": font,
+                             "italic": True})
+    path = demo_comp.parent / "demo-font.vproj.json"
+    comp_mod.save_composition(str(path), comp)
+    staged = {}
+    real = renderer._stage_captions
+
+    def spy(resolved, tmp, canvas, resolve, issues=None):
+        ass, fonts = real(resolved, tmp, canvas, resolve, issues)
+        staged["ass"] = Path(ass).read_text(encoding="utf-8")
+        staged["fonts"] = fonts and sorted(p.name for p in Path(fonts).iterdir())
+        return ass, fonts
+
+    monkeypatch.setattr(renderer, "_stage_captions", spy)
+    result = _run(renderer.render_composition(str(path), lambda p: p, mode="preview"))
+    assert "Style: Cap,DejaVu Sans," in staged["ass"]
+    assert ",-1,-1,0,0,100,100," in staged["ass"]          # bold + italic
+    assert staged["fonts"] == ["caption.ttf"]
+    assert any("declares family 'DejaVu Sans'" in w["message"] for w in result["warnings"])
