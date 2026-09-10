@@ -1,0 +1,57 @@
+name: Bug report
+description: An MCP server from this catalog fails to install, start or work on an OtoDock install.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A security problem goes through
+        [private vulnerability reporting](https://github.com/OtoDock/community-mcps/security/advisories/new),
+        never an issue. A bug in the platform itself (the proxy, the dashboard, a
+        remote machine) belongs in [OtoDock/oto-dock](https://github.com/OtoDock/oto-dock/issues/new/choose),
+        and a question in its [Discussions](https://github.com/OtoDock/oto-dock/discussions/categories/q-a).
+  - type: input
+    id: entry
+    attributes:
+      label: MCP server
+      description: The catalog name and version, as Admin → MCP Servers shows them or as `registry.json` lists them.
+      placeholder: "video-tools 0.4.3"
+    validations:
+      required: true
+  - type: input
+    id: platform_version
+    attributes:
+      label: OtoDock version
+      description: "`/health` on the proxy returns it as `version`; it is the `OTODOCK_VERSION` pinned in your `docker-compose.yml`."
+      placeholder: "1.6.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where it fails
+      options:
+        - Install or update from the catalog
+        - Start (the server does not come up)
+        - A tool call
+        - Credentials, OAuth or an instance setting
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        The install dialog shows the install log and Admin → MCP Requests keeps
+        it; `docker compose logs otodock-proxy` around the moment and, for a
+        Docker MCP, the server's own container log. Remove tokens, keys and
+        anything personal before pasting.
+      render: text

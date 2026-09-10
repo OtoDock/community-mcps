@@ -1,0 +1,40 @@
+name: New MCP server or improvement
+description: Propose an MCP server for the catalog, or a change to one that is already in it.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adding the entry yourself? `CONTRIBUTING.md` has the folder layout and
+        the manifest reference, and a pull request is welcome without an issue
+        first.
+  - type: input
+    id: entry
+    attributes:
+      label: MCP server
+      description: The catalog name of an existing entry, or a link to the upstream project for a new one.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What it should do
+      description: The tools an agent would get and the problem they solve for you.
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: For a new entry, how the server runs
+      options:
+        - A published npm package
+        - A published PyPI package
+        - A Docker image
+        - Hosted by the vendor (a remote MCP)
+        - Not sure
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to contribute it (CONTRIBUTING.md).
