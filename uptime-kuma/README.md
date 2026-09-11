@@ -11,6 +11,8 @@ Uptime monitoring dashboard integration via [`@davidfuchs/mcp-uptime-kuma`](http
 | Per-tool cost | None |
 | Assignment mode | `explicit` |
 | Requires | Uptime Kuma **v2** (current `master` / preview tag) |
+| Upstream project | [DavidFuchs](https://github.com/DavidFuchs/mcp-uptime-kuma) |
+| Icon | the Uptime Kuma icon (public/icon.svg of https://github.com/louislam/uptime-kuma, MIT), unaltered |
 
 ## What it does
 

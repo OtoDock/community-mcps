@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:30:14Z",
+  "updated_at": "2026-09-11T01:31:33Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -246,23 +246,23 @@
       "runtime": "node",
       "source": "npm:@davidfuchs/mcp-uptime-kuma",
       "version_constraint": "",
-      "manifest_hash": "8270ebec87510d88",
+      "manifest_hash": "6b4ae7f62c126449",
       "manifest_url": "./uptime-kuma/manifest.json",
       "readme_url": "./uptime-kuma/README.md",
-      "icon_url": null,
+      "icon_url": "./uptime-kuma/icon.png",
       "tags": [
         "kuma",
         "node",
         "uptime"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "DavidFuchs",
+      "author_url": "https://github.com/DavidFuchs/mcp-uptime-kuma",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 2818,
+      "size_bytes": 14398,
       "deprecated": false,
       "patched": false,
       "patch_note": null

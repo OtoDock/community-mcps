@@ -4,6 +4,8 @@
   "description": "Uptime monitoring dashboard (requires v2)",
   "version": "",
   "category": "community",
+  "author": "DavidFuchs",
+  "author_url": "https://github.com/DavidFuchs/mcp-uptime-kuma",
   "server": {
     "runtime": "node",
     "transport": "stdio",

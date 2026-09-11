@@ -37,7 +37,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [notion-mcp](./notion-mcp/) | node | [Notion](https://github.com/makenotion/notion-mcp-server) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
 | [prometheus](./prometheus/) | node | [idanfishman](https://github.com/idanfishman/prometheus-mcp) | `prometheus-mcp` | Metrics and monitoring queries |
 | [unifi-network](./unifi-network/) | python | [sirkirby](https://github.com/sirkirby/unifi-network-mcp) | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
-| [uptime-kuma](./uptime-kuma/) | node | [OtoDock](https://github.com/OtoDock) | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
+| [uptime-kuma](./uptime-kuma/) | node | [DavidFuchs](https://github.com/DavidFuchs/mcp-uptime-kuma) | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
 | [video-tools](./video-tools/) | docker | [OtoDock](https://github.com/OtoDock) | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
 <!-- catalog:end -->
 
