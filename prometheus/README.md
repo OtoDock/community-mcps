@@ -10,6 +10,8 @@ Metrics and monitoring queries against a Prometheus server, via [`prometheus-mcp
 | Credentials (per instance) | `PROMETHEUS_URL` |
 | Per-tool cost | None |
 | Assignment mode | `explicit` |
+| Upstream project | [idanfishman](https://github.com/idanfishman/prometheus-mcp) |
+| Icon | the Prometheus icon from https://github.com/cncf/artwork (projects/prometheus/icon/color): the Linux Foundation trademark policy permits unaltered project logos to state compatibility |
 
 ## What it does
 

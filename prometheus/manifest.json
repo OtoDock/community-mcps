@@ -4,6 +4,8 @@
   "description": "Metrics and monitoring queries",
   "version": "",
   "category": "community",
+  "author": "idanfishman",
+  "author_url": "https://github.com/idanfishman/prometheus-mcp",
   "server": {
     "runtime": "node",
     "transport": "stdio",

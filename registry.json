@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:26:54Z",
+  "updated_at": "2026-09-11T01:28:35Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -187,22 +187,22 @@
       "runtime": "node",
       "source": "npm:prometheus-mcp",
       "version_constraint": "",
-      "manifest_hash": "712c65e92f19e74a",
+      "manifest_hash": "6814a245b4225d9b",
       "manifest_url": "./prometheus/manifest.json",
       "readme_url": "./prometheus/README.md",
-      "icon_url": null,
+      "icon_url": "./prometheus/icon.png",
       "tags": [
         "node",
         "prometheus"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "idanfishman",
+      "author_url": "https://github.com/idanfishman/prometheus-mcp",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 2349,
+      "size_bytes": 10073,
       "deprecated": false,
       "patched": false,
       "patch_note": null
