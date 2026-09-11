@@ -1,16 +1,18 @@
 # Browser (Camoufox)
 
-Anti-detect browser automation over the Playwright MCP, using the Camoufox patched Firefox build.
+Anti-detect browser automation: [Camoufox](https://github.com/daijro/camoufox), a Firefox build that resists fingerprinting, driven through Microsoft's [Playwright MCP](https://github.com/microsoft/playwright-mcp). OtoDock wrote the wrapper (the image, the launcher and the skill); the browser and the MCP server are those two projects.
 
 | Field | Value |
 |-------|-------|
 | Manifest name | `camoufox` |
 | Server name (MCP) | `playwright` |
 | Runtime | Docker |
-| Upstream | [`@playwright/mcp@0.0.68`](https://www.npmjs.com/package/@playwright/mcp) + [`camoufox`](https://camoufox.com/) |
+| Upstream | [`@playwright/mcp@0.0.68`](https://www.npmjs.com/package/@playwright/mcp) ([microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp)) + [`camoufox`](https://camoufox.com/) ([daijro/camoufox](https://github.com/daijro/camoufox)) |
 | Transport | HTTP (`/mcp`) on port `8931` |
 | Credentials | None |
 | Per-tool cost | None |
+| Upstream project | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/camoufox) |
+| Icon | the OtoDock mark (OtoDock wrote this wrapper); Camoufox and Playwright MCP marks are not used |
 
 ## What it does
 

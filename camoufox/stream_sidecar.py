@@ -60,7 +60,6 @@ Stdlib + aiohttp; aiohttp is imported lazily so the lifecycle helpers are
 unit-testable without it.
 """
 import asyncio
-import json
 import logging
 import os
 import time

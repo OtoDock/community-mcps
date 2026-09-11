@@ -2,9 +2,11 @@
   "name": "camoufox",
   "server_name": "platform",
   "label": "Browser (Camoufox)",
-  "description": "Anti-detect browser automation via Playwright MCP",
+  "description": "Anti-detect browser automation: Camoufox, a fingerprint-resistant Firefox, driven through Microsoft's Playwright MCP",
   "version": "0.0.74",
   "category": "community",
+  "author": "OtoDock",
+  "author_url": "https://github.com/OtoDock/community-mcps/tree/main/camoufox",
 
   "server": {
     "runtime": "docker",

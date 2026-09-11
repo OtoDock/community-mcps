@@ -3,8 +3,8 @@ import subprocess
 from pathlib import Path
 
 import orjson
-from playwright._impl._driver import compute_driver_executable
 
+from camoufox.pkgman import LOCAL_DATA
 from camoufox.server import get_nodejs, to_camel_case_dict
 from camoufox.utils import launch_options
 
@@ -27,7 +27,6 @@ data = orjson.dumps(to_camel_case_dict(config))
 nodejs = get_nodejs()
 
 # Find launchServer.js
-from camoufox.pkgman import LOCAL_DATA
 launch_script = LOCAL_DATA / "launchServer.js"
 
 print("Launching camoufox server...", flush=True)
