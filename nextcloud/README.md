@@ -9,6 +9,8 @@ WebDAV file storage, Notes, and Calendar access against a Nextcloud server, via 
 | Upstream | `npm:nextcloud-mcp-server@1.1.0` |
 | Credentials | **Per-user** (`NEXTCLOUD_URL`, `NEXTCLOUD_USERNAME`, `NEXTCLOUD_PASSWORD`) |
 | Per-tool cost | None |
+| Upstream project | [abdullahMASHUK](https://github.com/abdullahMASHUK/nextcloud-mcp-server) |
+| Icon | none: Nextcloud's trademark policy (https://nextcloud.com/trademarks/) allows compatibility references for non-commercial use only and requires permission for commercial services |
 
 ## What it does
 

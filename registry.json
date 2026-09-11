@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:11:18Z",
+  "updated_at": "2026-09-11T01:25:14Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -129,7 +129,7 @@
       "runtime": "node",
       "source": "npm:nextcloud-mcp-server",
       "version_constraint": "",
-      "manifest_hash": "8f5b116534e2145d",
+      "manifest_hash": "21eab6e209b23c32",
       "manifest_url": "./nextcloud/manifest.json",
       "readme_url": "./nextcloud/README.md",
       "icon_url": null,
@@ -137,14 +137,14 @@
         "nextcloud",
         "node"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "abdullahMASHUK",
+      "author_url": "https://github.com/abdullahMASHUK/nextcloud-mcp-server",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 4087,
+      "size_bytes": 4477,
       "deprecated": false,
       "patched": false,
       "patch_note": null

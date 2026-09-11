@@ -4,6 +4,8 @@
   "description": "Cloud file storage (WebDAV, Notes, Calendar)",
   "version": "",
   "category": "community",
+  "author": "abdullahMASHUK",
+  "author_url": "https://github.com/abdullahMASHUK/nextcloud-mcp-server",
   "server": {
     "runtime": "node",
     "transport": "stdio",
