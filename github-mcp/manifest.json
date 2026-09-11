@@ -4,6 +4,8 @@
   "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
   "version": "1.1.0",
   "category": "community",
+  "author": "GitHub",
+  "author_url": "https://github.com/github/github-mcp-server",
   "server": {
     "runtime": "docker",
     "transport": "streamable_http",

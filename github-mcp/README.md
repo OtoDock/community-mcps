@@ -5,6 +5,11 @@ official [`github/github-mcp-server`](https://github.com/github/github-mcp-serve
 Go binary, wrapped in a local Python sidecar so OtoDock can inject per-user
 auth tokens.
 
+| Field | Value |
+|-------|-------|
+| Upstream project | [GitHub](https://github.com/github/github-mcp-server) |
+| Icon | the GitHub Invertocat (black) from https://brand.github.com/foundations/logo (GitHub_Logos.zip), permitted to "inform others that your project integrates with GitHub", unaltered |
+
 ## Why a sidecar?
 
 `github-mcp-server` is stdio-only and reads its auth token from the

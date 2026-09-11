@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:31:33Z",
+  "updated_at": "2026-09-11T01:33:15Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -70,22 +70,22 @@
       "runtime": "docker",
       "source": "docker:github-mcp",
       "version_constraint": "",
-      "manifest_hash": "436a8f86e6e766d7",
+      "manifest_hash": "e4659874184bba70",
       "manifest_url": "./github-mcp/manifest.json",
       "readme_url": "./github-mcp/README.md",
-      "icon_url": null,
+      "icon_url": "./github-mcp/icon.png",
       "tags": [
         "docker",
         "github"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "GitHub",
+      "author_url": "https://github.com/github/github-mcp-server",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 50706,
+      "size_bytes": 56284,
       "deprecated": false,
       "patched": false,
       "patch_note": null
