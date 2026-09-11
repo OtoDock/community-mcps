@@ -32,7 +32,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [camoufox](./camoufox/) | docker | [OtoDock](https://github.com/OtoDock) | `camoufox + @playwright/mcp@0.0.68` | Anti-detect browser automation via Playwright MCP |
 | [email-server](./email-server/) | node | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) | `mcp-mail-server` | Email via IMAP/SMTP |
 | [github-mcp](./github-mcp/) | docker | [OtoDock](https://github.com/OtoDock) | `github-mcp` | GitHub repositories, issues, pull requests, actions, and code search |
-| [home-assistant](./ha-mcp/) | python | [OtoDock](https://github.com/OtoDock) | `ha-mcp` | Smart home control (~97 tools) |
+| [home-assistant](./ha-mcp/) | python | [Home Assistant](https://github.com/homeassistant-ai/ha-mcp) | `ha-mcp` | Smart home control (~97 tools) |
 | [nextcloud](./nextcloud/) | node | [OtoDock](https://github.com/OtoDock) | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
 | [notion-mcp](./notion-mcp/) | node | [OtoDock](https://github.com/OtoDock) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
 | [prometheus](./prometheus/) | node | [OtoDock](https://github.com/OtoDock) | `prometheus-mcp` | Metrics and monitoring queries |

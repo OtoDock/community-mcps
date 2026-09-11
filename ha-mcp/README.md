@@ -11,6 +11,8 @@ Smart-home control via Home Assistant's REST + WebSocket API, packaged as [`ha-m
 | Per-tool cost | None |
 | Assignment mode | `explicit` (admin must configure an instance) |
 | Tool count | ~97 |
+| Upstream project | [Home Assistant](https://github.com/homeassistant-ai/ha-mcp) |
+| Icon | none: the Open Home Foundation reserves the Home Assistant logo from commercial use without written permission (partner@openhomefoundation.org) |
 
 ## What it does
 

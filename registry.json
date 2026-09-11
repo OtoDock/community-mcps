@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T00:56:31Z",
+  "updated_at": "2026-09-11T01:11:18Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -99,7 +99,7 @@
       "runtime": "python",
       "source": "pypi:ha-mcp",
       "version_constraint": "",
-      "manifest_hash": "c2efa0e2af6b3f10",
+      "manifest_hash": "14796bdc6910e2a3",
       "manifest_url": "./ha-mcp/manifest.json",
       "readme_url": "./ha-mcp/README.md",
       "icon_url": null,
@@ -108,14 +108,14 @@
         "home",
         "python"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "Home Assistant",
+      "author_url": "https://github.com/homeassistant-ai/ha-mcp",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 4467,
+      "size_bytes": 4798,
       "deprecated": false,
       "patched": false,
       "patch_note": null

@@ -4,6 +4,8 @@
   "description": "Smart home control (~97 tools)",
   "version": "",
   "category": "community",
+  "author": "Home Assistant",
+  "author_url": "https://github.com/homeassistant-ai/ha-mcp",
   "server": {
     "runtime": "python",
     "transport": "stdio",
