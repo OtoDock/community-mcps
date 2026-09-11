@@ -95,6 +95,35 @@ def _validate(manifest: dict, mcp_dir: Path) -> None:
         )
     if not (mcp_dir / "README.md").is_file():
         raise SystemExit(f"{mcp_dir.name}: README.md missing")
+    author_url = manifest.get("author_url")
+    if author_url is not None and not str(author_url).startswith("https://"):
+        raise SystemExit(f"{mcp_dir.name}: author_url must be an https:// URL, got {author_url!r}")
+    icon = mcp_dir / "icon.png"
+    if icon.is_file():
+        problem = _icon_problem(icon)
+        if problem:
+            raise SystemExit(f"{mcp_dir.name}: icon.png {problem}")
+
+
+ICON_SIZE = 256
+ICON_MAX_BYTES = 256 * 1024
+
+
+def _icon_problem(path: Path) -> str | None:
+    """Why an icon.png is not the 256×256 PNG the catalog contract asks for
+    (None when it is). Reads the signature and the IHDR chunk by hand so the
+    script needs no imaging library."""
+    if path.stat().st_size > ICON_MAX_BYTES:
+        return f"is {path.stat().st_size} bytes (limit {ICON_MAX_BYTES})"
+    with path.open("rb") as fh:
+        head = fh.read(24)
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return "is not a PNG"
+    width = int.from_bytes(head[16:20], "big")
+    height = int.from_bytes(head[20:24], "big")
+    if (width, height) != (ICON_SIZE, ICON_SIZE):
+        return f"is {width}x{height}, must be {ICON_SIZE}x{ICON_SIZE}"
+    return None
 
 
 def _directory_size(path: Path) -> int:
@@ -149,6 +178,9 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
         "readme_url": f"./{mcp_dir.name}/README.md",
         "icon_url": f"./{mcp_dir.name}/icon.png" if has_icon else None,
         "tags": _derive_tags(manifest),
+        # Who wrote the server code the entry wraps and where it lives. The
+        # catalog gate requires both; the defaults only cover entries that
+        # were published before the fields existed and are regenerated here.
         "author": manifest.get("author", "OtoDock"),
         "author_url": manifest.get("author_url", "https://github.com/OtoDock"),
         "license": manifest.get("license", "MIT"),

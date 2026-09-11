@@ -27,18 +27,18 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 ## Current catalog
 
 <!-- catalog:start -->
-| MCP | Runtime | Source | Use case |
-|-----|---------|--------|----------|
-| [camoufox](./camoufox/) | docker | `camoufox + @playwright/mcp@0.0.68` | Anti-detect browser automation via Playwright MCP |
-| [email-server](./email-server/) | node | `mcp-mail-server` | Email via IMAP/SMTP |
-| [github-mcp](./github-mcp/) | docker | `github-mcp` | GitHub repositories, issues, pull requests, actions, and code search |
-| [home-assistant](./ha-mcp/) | python | `ha-mcp` | Smart home control (~97 tools) |
-| [nextcloud](./nextcloud/) | node | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
-| [notion-mcp](./notion-mcp/) | node | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
-| [prometheus](./prometheus/) | node | `prometheus-mcp` | Metrics and monitoring queries |
-| [unifi-network](./unifi-network/) | python | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
-| [uptime-kuma](./uptime-kuma/) | node | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
-| [video-tools](./video-tools/) | docker | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
+| MCP | Runtime | From | Source | Use case |
+|-----|---------|------|--------|----------|
+| [camoufox](./camoufox/) | docker | [OtoDock](https://github.com/OtoDock) | `camoufox + @playwright/mcp@0.0.68` | Anti-detect browser automation via Playwright MCP |
+| [email-server](./email-server/) | node | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) | `mcp-mail-server` | Email via IMAP/SMTP |
+| [github-mcp](./github-mcp/) | docker | [OtoDock](https://github.com/OtoDock) | `github-mcp` | GitHub repositories, issues, pull requests, actions, and code search |
+| [home-assistant](./ha-mcp/) | python | [OtoDock](https://github.com/OtoDock) | `ha-mcp` | Smart home control (~97 tools) |
+| [nextcloud](./nextcloud/) | node | [OtoDock](https://github.com/OtoDock) | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
+| [notion-mcp](./notion-mcp/) | node | [OtoDock](https://github.com/OtoDock) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
+| [prometheus](./prometheus/) | node | [OtoDock](https://github.com/OtoDock) | `prometheus-mcp` | Metrics and monitoring queries |
+| [unifi-network](./unifi-network/) | python | [OtoDock](https://github.com/OtoDock) | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
+| [uptime-kuma](./uptime-kuma/) | node | [OtoDock](https://github.com/OtoDock) | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
+| [video-tools](./video-tools/) | docker | [OtoDock](https://github.com/OtoDock) | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
 <!-- catalog:end -->
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).

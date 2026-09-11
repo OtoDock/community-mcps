@@ -4,6 +4,8 @@
   "description": "Email via IMAP/SMTP",
   "version": "",
   "category": "community",
+  "author": "yunfeizhu",
+  "author_url": "https://github.com/yunfeizhu/mcp-mail-server",
   "server": {
     "runtime": "node",
     "transport": "stdio",

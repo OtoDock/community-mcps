@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-10T22:29:58Z",
+  "updated_at": "2026-09-11T00:56:31Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -41,7 +41,7 @@
       "runtime": "node",
       "source": "npm:mcp-mail-server",
       "version_constraint": "",
-      "manifest_hash": "653ebc2e671126d5",
+      "manifest_hash": "d929000ea80b49b9",
       "manifest_url": "./email-server/manifest.json",
       "readme_url": "./email-server/README.md",
       "icon_url": null,
@@ -49,14 +49,14 @@
         "email",
         "node"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "yunfeizhu",
+      "author_url": "https://github.com/yunfeizhu/mcp-mail-server",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 3474,
+      "size_bytes": 3685,
       "deprecated": false,
       "patched": false,
       "patch_note": null

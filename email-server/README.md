@@ -10,6 +10,8 @@ IMAP + SMTP email account access for agents, via [`mcp-mail-server`](https://www
 | Credentials | **Per-user** (`EMAIL_USER`, `EMAIL_PASS`) |
 | Config (admin / user-overridable) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_SECURE` |
 | Per-tool cost | None |
+| Upstream project | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) |
+| Icon | none: the project has no mark |
 
 ## What it does
 
