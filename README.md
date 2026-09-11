@@ -34,7 +34,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [github-mcp](./github-mcp/) | docker | [OtoDock](https://github.com/OtoDock) | `github-mcp` | GitHub repositories, issues, pull requests, actions, and code search |
 | [home-assistant](./ha-mcp/) | python | [Home Assistant](https://github.com/homeassistant-ai/ha-mcp) | `ha-mcp` | Smart home control (~97 tools) |
 | [nextcloud](./nextcloud/) | node | [abdullahMASHUK](https://github.com/abdullahMASHUK/nextcloud-mcp-server) | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
-| [notion-mcp](./notion-mcp/) | node | [OtoDock](https://github.com/OtoDock) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
+| [notion-mcp](./notion-mcp/) | node | [Notion](https://github.com/makenotion/notion-mcp-server) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
 | [prometheus](./prometheus/) | node | [OtoDock](https://github.com/OtoDock) | `prometheus-mcp` | Metrics and monitoring queries |
 | [unifi-network](./unifi-network/) | python | [OtoDock](https://github.com/OtoDock) | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
 | [uptime-kuma](./uptime-kuma/) | node | [OtoDock](https://github.com/OtoDock) | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |

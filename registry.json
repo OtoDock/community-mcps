@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:25:14Z",
+  "updated_at": "2026-09-11T01:26:54Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -158,7 +158,7 @@
       "runtime": "node",
       "source": "npm:@notionhq/notion-mcp-server",
       "version_constraint": "",
-      "manifest_hash": "732ea6daa8fa0496",
+      "manifest_hash": "b6dc8108a4e0f441",
       "manifest_url": "./notion-mcp/manifest.json",
       "readme_url": "./notion-mcp/README.md",
       "icon_url": null,
@@ -166,14 +166,14 @@
         "node",
         "notion"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "Notion",
+      "author_url": "https://github.com/makenotion/notion-mcp-server",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 10579,
+      "size_bytes": 10931,
       "deprecated": false,
       "patched": false,
       "patch_note": null

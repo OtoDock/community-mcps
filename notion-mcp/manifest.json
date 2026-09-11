@@ -4,6 +4,8 @@
   "description": "Notion pages, databases, blocks, and search via the official Notion MCP server",
   "version": "",
   "category": "community",
+  "author": "Notion",
+  "author_url": "https://github.com/makenotion/notion-mcp-server",
   "server": {
     "runtime": "node",
     "transport": "stdio",

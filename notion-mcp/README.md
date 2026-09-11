@@ -2,6 +2,11 @@
 
 Connects OtoDock agents to **Notion** by running Notion's official local MCP server (`@notionhq/notion-mcp-server`) as a stdio subprocess. OtoDock runs the OAuth dance and injects the user's Notion token (`NOTION_TOKEN`) into the server's environment; the server then calls the Notion API directly with that token.
 
+| Field | Value |
+|-------|-------|
+| Upstream project | [Notion](https://github.com/makenotion/notion-mcp-server) |
+| Icon | none: Notion's brand guidelines page was not publicly reachable when this entry was written; add the mark once the terms are verified |
+
 ## What admins need to do
 
 1. **Create a Notion integration**
