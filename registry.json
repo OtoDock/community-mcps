@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:35:01Z",
+  "updated_at": "2026-09-11T01:40:56Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -276,23 +276,23 @@
       "runtime": "docker",
       "source": "docker:video-tools-mcp (ffmpeg + libass)",
       "version_constraint": "",
-      "manifest_hash": "60bc5fb1d813c67a",
+      "manifest_hash": "9abd7e8f6aba2712",
       "manifest_url": "./video-tools/manifest.json",
       "readme_url": "./video-tools/README.md",
-      "icon_url": null,
+      "icon_url": "./video-tools/icon.png",
       "tags": [
         "docker",
         "tools",
         "video"
       ],
       "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author_url": "https://github.com/OtoDock/community-mcps/tree/main/video-tools",
       "license": "MIT",
       "requires_credentials": false,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 2059577,
+      "size_bytes": 2066833,
       "deprecated": false,
       "patched": false,
       "patch_note": null

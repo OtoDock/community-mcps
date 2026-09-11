@@ -5,6 +5,11 @@ composition file (`<name>.vproj.json`) — clips, transitions, overlays, music
 with ducking, word-level animated captions, color grades — and this MCP
 compiles it to an FFmpeg filtergraph and renders web-safe MP4.
 
+| Field | Value |
+|-------|-------|
+| Upstream project | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/video-tools) |
+| Icon | the OtoDock mark (OtoDock wrote this MCP) |
+
 ## Tools
 
 | Tool | What |

@@ -4,6 +4,8 @@
   "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
   "version": "0.4.3",
   "category": "community",
+  "author": "OtoDock",
+  "author_url": "https://github.com/OtoDock/community-mcps/tree/main/video-tools",
   "server": {
     "runtime": "docker",
     "transport": "http",

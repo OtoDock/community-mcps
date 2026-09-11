@@ -38,7 +38,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [prometheus](./prometheus/) | node | [idanfishman](https://github.com/idanfishman/prometheus-mcp) | `prometheus-mcp` | Metrics and monitoring queries |
 | [unifi-network](./unifi-network/) | python | [sirkirby](https://github.com/sirkirby/unifi-network-mcp) | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
 | [uptime-kuma](./uptime-kuma/) | node | [DavidFuchs](https://github.com/DavidFuchs/mcp-uptime-kuma) | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
-| [video-tools](./video-tools/) | docker | [OtoDock](https://github.com/OtoDock) | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
+| [video-tools](./video-tools/) | docker | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/video-tools) | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
 <!-- catalog:end -->
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
