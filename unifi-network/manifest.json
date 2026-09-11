@@ -4,6 +4,8 @@
   "description": "Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR)",
   "version": "",
   "category": "community",
+  "author": "sirkirby",
+  "author_url": "https://github.com/sirkirby/unifi-network-mcp",
   "server": {
     "runtime": "python",
     "transport": "stdio",

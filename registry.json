@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-11T01:28:35Z",
+  "updated_at": "2026-09-11T01:30:14Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -216,7 +216,7 @@
       "runtime": "python",
       "source": "pypi:unifi-network-mcp",
       "version_constraint": "",
-      "manifest_hash": "123baaeafa5760e9",
+      "manifest_hash": "35fec52c686ceb51",
       "manifest_url": "./unifi-network/manifest.json",
       "readme_url": "./unifi-network/README.md",
       "icon_url": null,
@@ -225,14 +225,14 @@
         "python",
         "unifi"
       ],
-      "author": "OtoDock",
-      "author_url": "https://github.com/OtoDock",
+      "author": "sirkirby",
+      "author_url": "https://github.com/sirkirby/unifi-network-mcp",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 3602,
+      "size_bytes": 3929,
       "deprecated": false,
       "patched": false,
       "patch_note": null

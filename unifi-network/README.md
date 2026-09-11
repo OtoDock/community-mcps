@@ -11,6 +11,8 @@ Network management, firewall, monitoring, DPI, VPN, and client tracking for UniF
 | Per-tool cost | None |
 | Assignment mode | `explicit` |
 | Tool count | ~156 |
+| Upstream project | [sirkirby](https://github.com/sirkirby/unifi-network-mcp) |
+| Icon | none: Ubiquiti's trademark guidelines require written permission for any use of the UniFi logo and forbid placing it next to third-party products |
 
 ## What it does
 
