@@ -2,7 +2,7 @@
   "name": "github-mcp",
   "label": "GitHub",
   "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "category": "community",
   "author": "GitHub",
   "author_url": "https://github.com/github/github-mcp-server",
@@ -13,7 +13,7 @@
     "port": 8935,
     "health_endpoint": "/health",
     "url_template": "http://${docker_mcp_host}:${port}/mcp",
-    "image": "ghcr.io/otodock/github-mcp:1.1.0",
+    "image": "ghcr.io/otodock/github-mcp:1.1.1",
     "source": "docker:github-mcp"
   },
   "credentials": {
@@ -188,6 +188,70 @@
           "label": "GitHub Actions workflow runs",
           "description": "Fires when a workflow run is requested, completed, or fails.",
           "required_scopes": ["repo"]
+        },
+        {
+          "key": "discussion",
+          "label": "Discussions lifecycle",
+          "description": "Fires when a discussion is created, edited, answered, categorized, or closed.",
+          "required_scopes": ["repo"],
+          "subevents": ["created", "edited", "answered", "unanswered", "category_changed", "closed", "reopened"]
+        },
+        {
+          "key": "discussion_comment",
+          "label": "Discussion comments",
+          "description": "Fires on new comments and replies in discussions.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "pull_request_review",
+          "label": "Pull request reviews",
+          "description": "Fires when a review is submitted, edited, or dismissed on a pull request.",
+          "required_scopes": ["repo"],
+          "subevents": ["submitted", "edited", "dismissed"]
+        },
+        {
+          "key": "pull_request_review_comment",
+          "label": "Pull request review comments",
+          "description": "Fires on comments left on lines of a pull request diff.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "commit_comment",
+          "label": "Commit comments",
+          "description": "Fires when someone comments on a commit.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "create",
+          "label": "Branch or tag created",
+          "description": "Fires when a branch or tag is created.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "delete",
+          "label": "Branch or tag deleted",
+          "description": "Fires when a branch or tag is deleted.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "star",
+          "label": "Stars",
+          "description": "Fires when someone stars or unstars the repository.",
+          "required_scopes": ["repo"],
+          "subevents": ["created", "deleted"]
+        },
+        {
+          "key": "fork",
+          "label": "Forks",
+          "description": "Fires when someone forks the repository.",
+          "required_scopes": ["repo"]
+        },
+        {
+          "key": "repository",
+          "label": "Repository settings",
+          "description": "Fires when the repository is renamed, archived, transferred, or its visibility changes.",
+          "required_scopes": ["repo"],
+          "subevents": ["renamed", "archived", "unarchived", "transferred", "publicized", "privatized", "edited"]
         }
       ],
       "payload_normalization": {
@@ -202,6 +266,7 @@
           "id_path": [
             "body.pull_request.number",
             "body.issue.number",
+            "body.discussion.number",
             "body.release.id",
             "body.workflow_run.id",
             "body.comment.id",
@@ -210,6 +275,7 @@
           "title_path": [
             "body.pull_request.title",
             "body.issue.title",
+            "body.discussion.title",
             "body.release.name",
             "body.workflow_run.name",
             "body.comment.body",
@@ -218,6 +284,7 @@
           "url_path": [
             "body.pull_request.html_url",
             "body.issue.html_url",
+            "body.discussion.html_url",
             "body.release.html_url",
             "body.workflow_run.html_url",
             "body.comment.html_url",

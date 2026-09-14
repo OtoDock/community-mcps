@@ -12,13 +12,22 @@ name: build-mcp-images
 # source of truth; bumping the tag there is what drives a new publish). A
 # push that changes no docker MCP builds nothing.
 #
+# ARCHITECTURES: every image publishes linux/amd64 AND linux/arm64 as a
+# manifest list, so `docker pull` resolves per host with no compose change.
+# Each platform builds on a NATIVE runner (ubuntu-24.04-arm for arm64, free
+# for public repositories) and is pushed by digest; the `merge` job assembles
+# the list per MCP, applies the tags and refuses a list that lacks either
+# architecture. The build cache lives in the registry, keyed per MCP and
+# platform (`<image>:buildcache-<platform>` tags on each package).
+#
 # FIRST-RUN, ONE-TIME (per package): after the first successful push, open
 # Packages → <package> → Package settings and (a) set visibility to Public and
 # (b) link it to this repository. GHCR packages default to private + unlinked.
 # Auth uses the built-in GITHUB_TOKEN (packages: write) — no PAT required.
 #
 # This file lives in the PREP repo and is synced to the public catalog by
-# dev/publish-catalog.sh; it runs on the public repo's main.
+# dev/publish-catalog.sh; it runs on the public repo's main only (the
+# repository guard below keeps the prep's own pushes from building).
 
 on:
   workflow_dispatch: {}
@@ -31,6 +40,8 @@ permissions:
 
 jobs:
   plan:
+    # Images publish only from the public catalog (never the prep or a fork).
+    if: github.repository == 'OtoDock/community-mcps'
     runs-on: ubuntu-latest
     outputs:
       mcps: ${{ steps.list.outputs.mcps }}
@@ -67,21 +78,27 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.mcps != '[]'
-    runs-on: ubuntu-latest
+    # Native runner per platform — the browser, ffmpeg and model layers are
+    # far too slow to emulate under QEMU.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         mcp: ${{ fromJSON(needs.plan.outputs.mcps) }}
+        platform: [linux/amd64, linux/arm64]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve image tag from manifest
+      - name: Sanitise the platform for use in file/tag names
+        run: echo "PLATFORM_PAIR=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_ENV"
+
+      - name: Resolve image from manifest
         id: meta
         run: |
           image=$(python3 -c "import json; print(json.load(open('${{ matrix.mcp }}/manifest.json'))['server'].get('image',''))")
           echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "latest=${image%:*}:latest" >> "$GITHUB_OUTPUT"
-          echo "::notice::building ${{ matrix.mcp }} -> $image"
+          echo "repo=${image%:*}" >> "$GITHUB_OUTPUT"
+          echo "::notice::building ${{ matrix.mcp }} (${{ matrix.platform }}) -> $image"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -93,15 +110,92 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.mcp }}
-          # amd64 only for launch; add linux/arm64 here (buildx multi-arch) later.
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}
-            ${{ steps.meta.outputs.latest }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          # No `tags` here: each leg pushes an untagged, digest-addressed image
+          # and the merge job below tags the assembled manifest list.
+          outputs: type=image,name=${{ steps.meta.outputs.repo }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ steps.meta.outputs.repo }}:buildcache-${{ env.PLATFORM_PAIR }}
+          cache-to: type=registry,ref=${{ steps.meta.outputs.repo }}:buildcache-${{ env.PLATFORM_PAIR }},mode=max
+
+      - name: Export the digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest='${{ steps.build.outputs.digest }}'
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          # A double-dash delimiter: the merge job's download pattern is a
+          # prefix match, and no MCP name contains "--".
+          name: digests--${{ matrix.mcp }}--${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    # One manifest list per MCP from the per-platform digests, tagged from the
+    # manifest. A failed build leg skips this job (no `if: always()`), so a
+    # half-built image never gets a tag.
+    needs: [plan, build]
+    if: needs.plan.outputs.mcps != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcp: ${{ fromJSON(needs.plan.outputs.mcps) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download this MCP's digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests--${{ matrix.mcp }}--*
+          merge-multiple: true
+
+      - name: Resolve image from manifest
+        id: meta
+        run: |
+          image=$(python3 -c "import json; print(json.load(open('${{ matrix.mcp }}/manifest.json'))['server'].get('image',''))")
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "repo=${image%:*}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create the manifest list and tag it
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          REPO: ${{ steps.meta.outputs.repo }}
+        run: |
+          # The digests directory holds one empty file per platform, named by
+          # the digest the build leg pushed.
+          refs=()
+          for d in *; do refs+=("${REPO}@sha256:${d}"); done
+          docker buildx imagetools create -t "$IMAGE" -t "${REPO}:latest" "${refs[@]}"
+
+      - name: Verify both architectures
+        # The list also carries buildx's provenance attestations (os "unknown"),
+        # which do not count as an architecture.
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          docker buildx imagetools inspect "$IMAGE"
+          docker buildx imagetools inspect --raw "$IMAGE" \
+            | jq -e '[.manifests[]?.platform | select(.os != "unknown") | "\(.os)/\(.architecture)"]
+                     | index("linux/amd64") != null and index("linux/arm64") != null' >/dev/null \
+            || { echo "::error::$IMAGE lacks linux/amd64 or linux/arm64"; exit 1; }
