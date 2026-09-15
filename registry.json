@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-09-14T08:36:45Z",
+  "updated_at": "2026-09-15T13:19:09Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -293,6 +293,36 @@
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
       "size_bytes": 2070863,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "google-workspace",
+      "label": "Google Workspace",
+      "description": "Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Google Tasks, Contacts, Chat, Apps Script via OAuth",
+      "category": "community",
+      "version": "",
+      "runtime": "python",
+      "source": "pypi:workspace-mcp",
+      "version_constraint": "",
+      "manifest_hash": "ff997f2c50838bc5",
+      "manifest_url": "./workspace-mcp/manifest.json",
+      "readme_url": "./workspace-mcp/README.md",
+      "icon_url": null,
+      "tags": [
+        "google",
+        "python",
+        "workspace"
+      ],
+      "author": "taylorwilsdon",
+      "author_url": "https://github.com/taylorwilsdon/google_workspace_mcp",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "1.0.0",
+      "assignment_mode": "auto",
+      "size_bytes": 11650,
       "deprecated": false,
       "patched": false,
       "patch_note": null
