@@ -2,7 +2,7 @@
   "name": "github-mcp",
   "label": "GitHub",
   "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "category": "community",
   "author": "GitHub",
   "author_url": "https://github.com/github/github-mcp-server",
@@ -13,7 +13,7 @@
     "port": 8935,
     "health_endpoint": "/health",
     "url_template": "http://${docker_mcp_host}:${port}/mcp",
-    "image": "ghcr.io/otodock/github-mcp:1.1.1",
+    "image": "ghcr.io/otodock/github-mcp:1.2.0",
     "source": "docker:github-mcp"
   },
   "credentials": {
@@ -98,6 +98,12 @@
           "label": "User profile",
           "description": "Read your profile, email addresses, and following/followers",
           "scopes": ["read:user", "user:email"]
+        },
+        {
+          "key": "org_webhooks",
+          "label": "Organization webhooks",
+          "description": "Register one webhook for every repository in an organization you own (event subscriptions of the organization kind)",
+          "scopes": ["admin:org_hook"]
         }
       ]
     },
@@ -302,7 +308,28 @@
         "label": "Repository (owner/name)",
         "placeholder": "octocat/hello-world",
         "validation_regex": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
-        "help_text": "You must have admin access on this repo to install webhooks."
+        "help_text": "You must have admin access on this repo to install webhooks.",
+        "target_kinds": [
+          {
+            "key": "repository",
+            "label": "One repository",
+            "placeholder": "octocat/hello-world",
+            "validation_regex": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "help_text": "You must have admin access on this repo to install webhooks."
+          },
+          {
+            "key": "organization",
+            "label": "Every repository in an organization",
+            "placeholder": "octocat-org",
+            "validation_regex": "^[A-Za-z0-9_.-]+$",
+            "help_text": "One hook for every repository in the organization, present and future. Needs the Organization webhooks permission on the connected account and owner rights on the organization.",
+            "required_scopes": ["admin:org_hook"],
+            "registration": {
+              "create": {"url_template": "https://api.github.com/orgs/${vendor_target}/hooks"},
+              "delete": {"url_template": "https://api.github.com/orgs/${vendor_target}/hooks/${vendor_subscription_id}"}
+            }
+          }
+        ]
       },
       "event_id_field": "headers.X-GitHub-Delivery"
     }

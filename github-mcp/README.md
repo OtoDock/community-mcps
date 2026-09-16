@@ -59,11 +59,35 @@ the form → pastes the token they generated at
 1. User settings → **Accounts** → click **Connect GitHub**.
 2. Pick the auth method:
    - **OAuth** — browser consent flow, then granted services map to scopes
-     (`repo`, `workflow`, `read:user`, `user:email`).
+     (`repo`, `workflow`, `read:user`, `user:email`, and `admin:org_hook`
+     for organization-wide event subscriptions).
    - **Personal Access Token** — paste a token you generated yourself with
      the scopes for the services you want.
 3. The platform persists the token under
    `sessions/github-tokens/user/<your-label>.json`.
+
+## Events (webhooks)
+
+The MCP can also receive GitHub events: User settings → **Accounts** → the
+GitHub account → **Subscribe to events** (or Agent Settings → MCPs → GitHub
+→ Subscribe to events for this agent). A subscription registers a webhook
+with GitHub and fires the triggers bound to it — pushes, pull requests,
+issues and their comments, reviews, discussions, releases, workflow runs,
+stars, forks, branch and tag lifecycle, commit comments and repository
+changes. Two kinds of subscription:
+
+- **One repository** (`owner/name`): a repository webhook. Needs admin
+  access on that repository.
+- **Every repository in an organization** (`org`): one organization
+  webhook covering every repository the organization has now and later.
+  Needs the **Organization webhooks** permission on the connected account
+  (`admin:org_hook`: tick it when connecting, or reconnect) and owner
+  rights on the organization. A repository already covered by an
+  organization subscription fires twice if it also has its own: pick one.
+
+Events are delivered straight from GitHub to the platform's public URL and
+verified with a per-subscription secret; the hosted OAuth relay is not in
+that path.
 
 ## OAuth vs PAT — when to pick which
 
