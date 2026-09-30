@@ -129,7 +129,12 @@ def _icon_problem(path: Path) -> str | None:
 def _directory_size(path: Path) -> int:
     total = 0
     for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if d not in {"node_modules", "venv", ".venv", "__pycache__", ".git"}]
+        # Only what ships counts: the gate's test and lint runs leave caches
+        # in an entry that a clean checkout (CI, the publish) does not have.
+        dirs[:] = [d for d in dirs if d not in {
+            "node_modules", "venv", ".venv", "__pycache__", ".git",
+            ".pytest_cache", ".ruff_cache", ".mypy_cache",
+        }]
         for name in files:
             try:
                 total += (Path(root) / name).stat().st_size
