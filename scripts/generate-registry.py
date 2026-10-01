@@ -20,6 +20,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -103,10 +104,47 @@ def _validate(manifest: dict, mcp_dir: Path) -> None:
         problem = _icon_problem(icon)
         if problem:
             raise SystemExit(f"{mcp_dir.name}: icon.png {problem}")
+    replaces = manifest.get("replaces", [])
+    if replaces is None:
+        replaces = []
+    if not isinstance(replaces, list):
+        raise SystemExit(f"{mcp_dir.name}: replaces must be a list")
+    for entry in replaces:
+        problem = _replaces_entry_problem(entry)
+        if problem:
+            raise SystemExit(f"{mcp_dir.name}: replaces entry {entry!r} {problem}")
 
 
 ICON_SIZE = 256
 ICON_MAX_BYTES = 256 * 1024
+
+# A credential key in a `replaces` rename: a plain identifier, never one of
+# the platform's `_`-prefixed control keys. Mirrors the platform's rule
+# (`replaces_entry_error`), so a declared move never shows as undeclared
+# because of a typo the catalog let through.
+REPLACES_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _replaces_entry_problem(entry) -> str | None:
+    """Why one `replaces[]` entry is malformed (None when well formed): an
+    object with a non-empty string `source` and an optional `credentials`
+    map of identifiers to identifiers."""
+    if not isinstance(entry, dict):
+        return "must be an object"
+    source = entry.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return "needs a non-empty string source"
+    creds = entry.get("credentials", {})
+    if creds is None:
+        creds = {}
+    if not isinstance(creds, dict):
+        return "credentials must be an object of old key to new key"
+    for old, new in creds.items():
+        if not isinstance(old, str) or not REPLACES_KEY_RE.fullmatch(old):
+            return f"credential key {old!r} is not a plain identifier"
+        if not isinstance(new, str) or not REPLACES_KEY_RE.fullmatch(new):
+            return f"credential key {new!r} is not a plain identifier"
+    return None
 
 
 def _icon_problem(path: Path) -> str | None:
@@ -143,6 +181,16 @@ def _directory_size(path: Path) -> int:
     return total
 
 
+def _url_host(server: dict) -> str:
+    """The host of a remote MCP's `url_template`, lower-cased ("" when the
+    template is not a URL)."""
+    from urllib.parse import urlsplit
+    try:
+        return (urlsplit(str(server.get("url_template") or "")).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 def _derive_tags(manifest: dict) -> list[str]:
     tags = set()
     label = manifest.get("label", "").lower()
@@ -174,6 +222,11 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
         "version": manifest["version"],
         "runtime": runtime,
         "source": server.get("source", ""),
+        # The source identity the platform judges an installed entry against
+        # without fetching the manifest: a container's image repository and
+        # a hosted MCP's endpoint host ("" where the runtime has none).
+        "image": str(server.get("image") or "") if runtime == "docker" else "",
+        "url_host": _url_host(server) if runtime == "remote" else "",
         # node/python auto-update bound (PEP 440 specifier; "" = unbounded latest).
         "version_constraint": server.get("version_constraint", ""),
         # Hash of the integration manifest (minus the locally-pinned version+source);
