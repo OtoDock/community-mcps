@@ -5,9 +5,9 @@ Anti-detect browser automation: [Camoufox](https://github.com/daijro/camoufox), 
 | Field | Value |
 |-------|-------|
 | Manifest name | `camoufox` |
-| Server name (MCP) | `playwright` |
+| Server name (MCP) | `platform` |
 | Runtime | Docker |
-| Upstream | [`@playwright/mcp@0.0.68`](https://www.npmjs.com/package/@playwright/mcp) ([microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp)) + [`camoufox`](https://camoufox.com/) ([daijro/camoufox](https://github.com/daijro/camoufox)) |
+| Upstream | [`@playwright/mcp@0.0.78`](https://www.npmjs.com/package/@playwright/mcp) ([microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp)) + [`camoufox`](https://camoufox.com/) ([daijro/camoufox](https://github.com/daijro/camoufox)) |
 | Transport | HTTP (`/mcp`) on port `8931` |
 | Credentials | None |
 | Per-tool cost | None |
@@ -33,6 +33,7 @@ This folder contains:
 
 ## Operator notes
 
+- The image pins three versions together, the Dockerfile's `ARG`s: camoufox, Python Playwright and `@playwright/mcp` (the browser build follows camoufox's own pin). `@playwright/mcp` is welded to the one nightly Playwright build it bundles, and camoufox supports Playwright below 1.63, so a newer `@playwright/mcp` waits for a camoufox that supports its Playwright.
 - First boot of the container takes minutes — the Camoufox Firefox binary and the Playwright runtime are downloaded into the image.
 - The container exposes port `8931`; the platform auto-discovers it via the manifest's `health_endpoint`.
 - The container writes screenshots to a shared `/screenshots` dir (swept of orphans by the sidecar); the platform relocates each into the user's hidden `.screenshots/` workspace folder, bounded by the manifest's `outputs[*].keep_recent` cap (newest 15). The repo's `.gitignore` excludes runtime PNG/JPG/CSV files.

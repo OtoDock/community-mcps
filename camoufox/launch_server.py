@@ -1,45 +1,18 @@
-import base64
-import subprocess
-from pathlib import Path
+"""Serve camoufox's patched Firefox over Playwright's websocket protocol.
 
-import orjson
+`launch_server` hands the Playwright driver package to camoufox's
+launchServer.js, sends the launch options as one frame and keeps stdin open:
+the Node process reads EOF as a shutdown request.
+"""
 
-from camoufox.pkgman import LOCAL_DATA
-from camoufox.server import get_nodejs, to_camel_case_dict
-from camoufox.utils import launch_options
+from camoufox.server import launch_server
 
-# Get launch config
-config = launch_options(
+print("Launching camoufox server...", flush=True)
+
+launch_server(
     headless=True,
     os="windows",
     humanize=True,
     port=3000,
     ws_path="connect",
 )
-
-# Strip None values — Playwright's launchServer chokes on proxy: null
-config = {k: v for k, v in config.items() if v is not None}
-
-# Convert to camelCase for JS
-data = orjson.dumps(to_camel_case_dict(config))
-
-# Get Node.js binary bundled with Playwright
-nodejs = get_nodejs()
-
-# Find launchServer.js
-launch_script = LOCAL_DATA / "launchServer.js"
-
-print("Launching camoufox server...", flush=True)
-
-process = subprocess.Popen(
-    [nodejs, str(launch_script)],
-    cwd=Path(nodejs).parent / "package",
-    stdin=subprocess.PIPE,
-    text=True,
-)
-
-if process.stdin:
-    process.stdin.write(base64.b64encode(data).decode())
-    process.stdin.close()
-
-process.wait()

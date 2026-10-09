@@ -45,7 +45,7 @@ echo "Camoufox ready, starting MCP server..."
 # Start playwright-mcp on an INTERNAL port (127.0.0.1:8930). The stream sidecar
 # (below) is the public listener on 8931 and forwards to it — see
 # stream_sidecar.py. --isolated gives each MCP session its own browser context.
-npx @playwright/mcp@0.0.68 \
+playwright-mcp \
   --config /app/mcp-config.json \
   --port 8930 \
   --host 127.0.0.1 \
@@ -97,9 +97,12 @@ trap 'kill "$MCP_PID" "$SIDECAR_PID" "$KEEPALIVE_PID" 2>/dev/null; exit 0' TERM 
 # The loop also recycles PROACTIVELY on high memory: every probe (ours + the
 # compose healthcheck's) costs one browser context — unavoidable, see
 # healthprobe.py — and camoufox's Firefox permanently leaks ~1-2MB per context
-# cycle, ~2.9GB/day at these cadences. Recycling at 2.5GiB (cgroup accounting,
-# same counter the compose mem_limit:3g OOM-kills on) turns an eventual
-# mid-action OOM kill into a clean restart with headroom to spare.
+# cycle, ~2.9GB/day at these cadences. Recycling at 2.5GiB of memory the
+# kernel cannot reclaim (cgroup v2 anon + shmem) turns an eventual mid-action
+# OOM kill under the compose mem_limit:3g into a clean restart with headroom to
+# spare. Page cache is left out: the browser maps ~2 GB of fingerprint fonts,
+# and that cache is reclaimed under the limit (six parallel sessions peak at
+# the limit with no OOM), so counting it would recycle healthy bursts.
 MEM_RECYCLE_BYTES=$((2560 * 1024 * 1024))
 fails=0
 while true; do
@@ -121,8 +124,9 @@ while true; do
     kill "$MCP_PID" "$SIDECAR_PID" 2>/dev/null
     exit 1
   fi
-  mem_now=$(cat /sys/fs/cgroup/memory.current 2>/dev/null \
-    || cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo 0)
+  mem_now=$(awk '$1 == "anon" || $1 == "shmem" { n += $2 } END { if (NR) print n + 0 }' \
+    /sys/fs/cgroup/memory.stat 2>/dev/null)
+  [ -n "$mem_now" ] || mem_now=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo 0)
   if [ "$mem_now" -gt "$MEM_RECYCLE_BYTES" ]; then
     echo "[watchdog] memory ${mem_now} > ${MEM_RECYCLE_BYTES} — recycling before the mem_limit OOM does it mid-action." >&2
     kill "$MCP_PID" "$SIDECAR_PID" "$KEEPALIVE_PID" 2>/dev/null

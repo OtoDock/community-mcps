@@ -1,5 +1,13 @@
 FROM python:3.13-slim
 
+# The three pins move together: @playwright/mcp bundles one exact nightly
+# Playwright build, and camoufox caps the Playwright it supports. 0.0.78
+# bundles 1.62.0-alpha; 0.0.79+ bundle 1.63+, outside camoufox 0.5.8's
+# `playwright<1.63`.
+ARG PLAYWRIGHT_VERSION=1.62.0
+ARG CAMOUFOX_VERSION=0.5.8
+ARG PLAYWRIGHT_MCP_VERSION=0.0.78
+
 # System deps for the patched Firefox + Xvfb. curl/gnupg/ca-certificates are
 # for the NodeSource setup below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -11,41 +19,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation fonts-noto \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 20 LTS, PINNED via NodeSource. Debian trixie's `nodejs` package has
-# moved to Node 24; this image ran on Node 20 for months. Pinning keeps the
-# build reproducible and matches the @playwright/mcp@0.0.68 + Playwright 1.59
-# stack below (an unpinned Node 24 broke a rebuild).
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Node.js 22 LTS, PINNED via NodeSource (Debian trixie's `nodejs` follows the
+# newest major). It runs @playwright/mcp only; camoufox's launch server runs on
+# the node binary bundled with the Python driver.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install camoufox (Python) + its patched Firefox. PIN Playwright to 1.59.0:
-# camoufox 0.4.11 does NOT pin Playwright (requires_dist just says "playwright"),
-# so a fresh build otherwise pulls a too-new Playwright. 1.59.0 gives a node
-# binary + driver that still ship `browserServerImpl.js` (camoufox's launchServer
-# requires it; 1.60+ dropped it). The driver's playwright-core is then OVERWRITTEN
-# below with @playwright/mcp's exact build so the connect protocol matches.
-RUN pip install --no-cache-dir "playwright==1.59.0" "camoufox[geoip]==0.4.11" \
-    && python3 -m camoufox fetch --browserforge
+# Non-root user (camoufox crashes as root on Linux), created first so the
+# browser is fetched straight into its cache: a copy in a later layer would
+# store the 2.5 GB browser (mostly its fingerprint fonts) twice.
+RUN useradd -m camoufox \
+    && mkdir -p /screenshots && chown camoufox:camoufox /screenshots
 
-# @playwright/mcp 0.0.68 is a thin shim over playwright/lib/mcp, which exists
-# ONLY in the nightly playwright build it bundles (playwright-core 1.59.0-alpha-1771104257000):
-# the MCP server is welded to that exact build and will NOT run on stable
-# playwright. 0.0.72+ need playwright 1.60+ (drops browserServerImpl), so 0.0.68 is
-# the ceiling for camoufox 0.4.11.
-RUN npm install -g --no-fund --no-audit "@playwright/mcp@0.0.68"
+# Install camoufox (Python) + its patched Firefox, the browser build camoufox
+# pins for this release (`browser-pin.json`). `fetch` exits 0 even when the
+# download failed, so the build checks that the pinned build is on disk. The
+# driver's playwright-core is then OVERWRITTEN below with @playwright/mcp's
+# exact build so the connect protocol matches.
+RUN pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" "camoufox[geoip]==${CAMOUFOX_VERSION}" \
+    && HOME=/home/camoufox python3 -m camoufox fetch \
+    && python3 -c "import camoufox, glob, json, pathlib, sys; pin = json.loads((pathlib.Path(camoufox.__file__).parent / 'browser-pin.json').read_text()); sys.exit(0 if glob.glob(f'/home/camoufox/.cache/camoufox/browsers/*/{pin[\"version\"]}-{pin[\"build\"]}*') else 'pinned browser missing after fetch')" \
+    && chown -R camoufox:camoufox /home/camoufox/.cache
+
+# @playwright/mcp is a thin shim over playwright/lib/mcp, which exists ONLY in
+# the nightly playwright build it bundles: the MCP server is welded to that
+# exact build and will NOT run on stable playwright.
+RUN npm install -g --no-fund --no-audit "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}"
 
 # Align camoufox's launch driver with @playwright/mcp's playwright-core. The MCP
 # client connects to camoufox's launchServer over Playwright's wire protocol,
-# matched per EXACT build — a stable-1.59 server vs the alpha-1.59 client fails
-# mid-call ("Cannot find object to __adopt__"). camoufox's launchServer.js does
-# require(`${cwd}/lib/browserServerImpl.js`) where cwd is the Python driver's
-# playwright-core, so overwrite that package with @playwright/mcp's bundled alpha
-# core: now both ends share ONE identical pinned build (the alpha timestamp is
-# frozen → reproducible). The driver's node binary (a sibling dir) is kept.
+# matched per EXACT build — a stable server vs the alpha client fails
+# mid-call ("Cannot find object to __adopt__"). camoufox's launchServer.js loads
+# the entrypoint (`index.js`) of the Python driver's playwright-core, so
+# overwrite that package with @playwright/mcp's bundled alpha core: now both
+# ends share ONE identical pinned build (the alpha timestamp is frozen →
+# reproducible). The driver's node binary (a sibling dir) is kept.
 RUN MCP_CORE="$(npm root -g)/@playwright/mcp/node_modules/playwright-core" \
  && PY_PKG="$(python3 -c 'from camoufox.server import get_nodejs; from pathlib import Path; print(Path(get_nodejs()).parent / "package")')" \
- && test -f "$MCP_CORE/lib/browserServerImpl.js" \
+ && test -f "$MCP_CORE/index.js" \
  && rm -rf "$PY_PKG" && cp -r "$MCP_CORE" "$PY_PKG" \
  && node -e "const v=require('$PY_PKG/package.json').version; console.log('camoufox launch core ->', v); if(!v.includes('alpha')) process.exit(1)"
 
@@ -54,13 +66,6 @@ RUN pip install --no-cache-dir aiohttp
 
 # Xvfb socket directory
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
-
-# Non-root user (camoufox crashes as root on Linux)
-RUN useradd -m camoufox \
-    && mkdir -p /home/camoufox/.cache \
-    && cp -r /root/.cache/camoufox /home/camoufox/.cache/camoufox \
-    && chown -R camoufox:camoufox /home/camoufox/.cache \
-    && mkdir -p /screenshots && chown camoufox:camoufox /screenshots
 
 COPY launch_server.py /app/launch_server.py
 COPY camoufox-mcp-config.json /app/mcp-config.json
