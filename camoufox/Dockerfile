@@ -36,8 +36,14 @@ RUN useradd -m camoufox \
 # pins for this release (`browser-pin.json`). `fetch` exits 0 even when the
 # download failed, so the build checks that the pinned build is on disk. The
 # driver's playwright-core is then OVERWRITTEN below with @playwright/mcp's
-# exact build so the connect protocol matches.
-RUN pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" "camoufox[geoip]==${CAMOUFOX_VERSION}" \
+# exact build so the connect protocol matches. A dependency (indexed-zstd)
+# publishes no linux/arm64 wheel, so the compiler it builds with is installed
+# for this step and removed in the same layer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ libzstd-dev \
+    && pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" "camoufox[geoip]==${CAMOUFOX_VERSION}" \
+    && apt-get purge -y --auto-remove g++ libzstd-dev \
+    && rm -rf /var/lib/apt/lists/* \
     && HOME=/home/camoufox python3 -m camoufox fetch \
     && python3 -c "import camoufox, glob, json, pathlib, sys; pin = json.loads((pathlib.Path(camoufox.__file__).parent / 'browser-pin.json').read_text()); sys.exit(0 if glob.glob(f'/home/camoufox/.cache/camoufox/browsers/*/{pin[\"version\"]}-{pin[\"build\"]}*') else 'pinned browser missing after fetch')" \
     && chown -R camoufox:camoufox /home/camoufox/.cache
