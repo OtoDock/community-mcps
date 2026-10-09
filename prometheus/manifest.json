@@ -4,17 +4,14 @@
   "description": "Metrics and monitoring queries",
   "version": "",
   "category": "community",
-  "author": "idanfishman",
-  "author_url": "https://github.com/idanfishman/prometheus-mcp",
+  "author": "pab1it0",
+  "author_url": "https://github.com/pab1it0/prometheus-mcp-server",
   "server": {
-    "runtime": "node",
+    "runtime": "python",
     "transport": "stdio",
-    "command": "node",
-    "args": [
-      "${mcp_dir}/node_modules/prometheus-mcp/dist/index.mjs",
-      "stdio"
-    ],
-    "source": "npm:prometheus-mcp"
+    "command": "venv/bin/prometheus-mcp-server",
+    "args": [],
+    "source": "pypi:prometheus-mcp-server"
   },
   "credentials": {
     "type": "none"
@@ -26,17 +23,51 @@
         "key": "PROMETHEUS_URL",
         "label": "Prometheus URL",
         "input_type": "url",
-        "default": "http://localhost:9090"
+        "default": "http://localhost:9090",
+        "required": true
+      },
+      {
+        "key": "PROMETHEUS_USERNAME",
+        "label": "Username (basic auth; empty for none)",
+        "input_type": "text"
+      },
+      {
+        "key": "PROMETHEUS_PASSWORD",
+        "label": "Password (basic auth)",
+        "input_type": "password",
+        "secret": true
+      },
+      {
+        "key": "PROMETHEUS_TOKEN",
+        "label": "Bearer token (wins over username and password)",
+        "input_type": "password",
+        "secret": true
+      },
+      {
+        "key": "ORG_ID",
+        "label": "Org ID / tenant, sent as X-Scope-OrgID (Mimir, Cortex, Thanos; empty for plain Prometheus)",
+        "input_type": "text"
+      },
+      {
+        "key": "PROMETHEUS_URL_SSL_VERIFY",
+        "label": "Verify the TLS certificate (true or false)",
+        "input_type": "text",
+        "default": "true"
       }
     ],
     "max_instances": 0
   },
   "config": [],
-  "env": {},
+  "env": {
+    "PROMETHEUS_MCP_SERVER_TRANSPORT": "stdio"
+  },
   "agent_env": {},
   "assignment_mode": "explicit",
   "exclude_from": [],
   "skills": [],
+  "replaces": [
+    { "source": "npm:prometheus-mcp" }
+  ],
   "patched": false,
   "patch_note": null,
   "network_targets": [
