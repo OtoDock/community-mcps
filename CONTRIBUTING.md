@@ -20,7 +20,7 @@ CI runs `scripts/generate-registry.py --check` plus schema validation. The maint
 your-mcp-name/
 ├── manifest.json          # required
 ├── README.md              # required
-├── icon.png               # optional, 256×256 PNG
+├── icon.png               # optional, 256×256 PNG — the upstream project's official mark (see Provenance and icon)
 ├── package.json           # if runtime=node — pins the upstream npm package
 ├── Dockerfile             # if runtime=docker
 ├── docker-compose.yml     # if runtime=docker
@@ -28,7 +28,7 @@ your-mcp-name/
 ├── requirements.txt       # if runtime=python — lockfile, regenerated on contribution
 ├── patches/               # optional — patches applied after the upstream package installs
 │   └── *.py.patch
-└── skills/                # optional — markdown skill files loaded into agent prompts
+└── skills/                # optional — Agent Skills (SKILL.md folders) attached to agents
     └── *.md
 ```
 
@@ -50,6 +50,8 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 | `description` | string | yes | One-line description for catalog cards. |
 | `version` | string | yes | **node/python:** leave empty (`""`) — these are unpinned and install the latest published version (the platform records the resolved version into each install's local manifest). **docker/git+:** semver, bumped on any user-visible change. |
 | `category` | string | yes | Always `"community"` here. (`core` / `custom` are platform-bundled tiers.) Community MCPs install **disabled** until an admin enables them platform-wide, then opt-in per agent. |
+| `author` | string | yes | Who wrote the server code this entry wraps, written the way its home shows it: an organisation (`"GitHub"`, `"Notion"`) or a handle (`"cameronrye"`); a vendor-hosted remote MCP names the vendor. Shown in the platform next to the MCP with a link. See [Provenance and icon](#provenance-and-icon). |
+| `author_url` | string | yes | Where that code lives: the repository (`https://…`), or the vendor's MCP page for a remote MCP. |
 | `server` | object | yes | Runtime + transport config (see [`server` object](#server-object)). |
 | `credentials` | object | no | How the MCP authenticates — `type: "none" \| "per_user" \| "infra"`, plus optional `oauth`, `service_account`, `webhooks`. See [Credentials](#credentials). |
 | `instances` | object | no | Admin-managed instances (URL + token, multi-host configs). See [Instances](#instances-object-admin-managed-credentialsconfig). |
@@ -57,7 +59,7 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 | `env` | object | no | Static env vars set on every launch (Docker `.env` write, or every stdio session start). |
 | `agent_env` | object | no | Per-session env vars resolved at session start. Use `${session.*}` tokens. |
 | `path_env` | object | no | Workspace-relative paths declared by role — see [Path conventions](#path-conventions--shared-contract). |
-| `skills` | array | no | Markdown skill files auto-loaded into agent prompts. See [Skills](#skills). |
+| `skills` | array | no | Agent Skills attached when the MCP is assigned — inlined (`loading: "always"`) or loaded on demand by the CLI (`"on_demand"`, default). See [Skills](#skills). |
 | `agent_context` | array | no | Per-session prompt blocks with `${...}` substitution / out-of-band lookups. See [Dynamic context](#dynamic-context-agent_context). |
 | `outputs` | array | no | Files the MCP writes that the platform should ferry into the workspace (screenshots, renders). See [Output relocation](#output-relocation-outputs). |
 | `costs` | object | no | Per-tool cost rules — see [Cost reporting](#cost-reporting-contract). |
@@ -78,6 +80,7 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 | `patch_note` | string | no | One-line summary of what the patch does. |
 | `deprecated` | bool | no | If `true`, the catalog shows a deprecation banner. |
 | `platform_min_version` | semver | no | Minimum OtoDock version that supports this MCP (catalog metadata). |
+| `replaces` | array | no | The sources this entry supersedes, with the credential keys the new source renames: `[{"source": "<previous source>", "credentials": {"OLD_KEY": "NEW_KEY"}}]`. Information for the admin's switch, never an authorization. See [Source changes](#source-changes). |
 
 > Some manifest fields are platform-internal and **not** for community MCPs: `requires_capability` (gates on a platform feature like audio/phone), `hosted` (OtoDock-managed relay config), and `server.proxy_callbacks` (proxy-callback auth — only the bundled file-tools MCP uses it). They're listed here only so you recognise them; a community MCP that integrates an external service never sets them.
 
@@ -96,7 +99,7 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 | `health_endpoint` | no | For Docker MCPs — an HTTP health-check path (e.g. `/health`). |
 | `docker_compose` | conditional | For Docker MCPs — the compose file name. |
 | `service_name` | no | For Docker MCPs — the service-DNS name the containerised proxy dials; defaults to `name`. |
-| `image` | conditional | For Docker MCPs — a pre-built image reference (e.g. a GHCR image). **Required for the containerised deployment**, which cannot `docker build`; absent ⇒ build-from-context (bare-metal only). |
+| `image` | conditional | For Docker MCPs — a pre-built image reference: one OtoDock builds (`ghcr.io/otodock/<name>:<version>`) or the vendor's own image. **Required for the containerised deployment**, which cannot `docker build`; absent ⇒ build-from-context (bare-metal only). |
 
 
 ### Remote (vendor-hosted) MCPs
@@ -149,7 +152,8 @@ Pick the `credentials.type` that matches how your MCP authenticates:
 ```
 
 - **stdio OAuth MCPs** also declare a `path_env` entry with `role: "credentials_dir"` (below) — the framework copies the bound account's token file in at session start and writes refreshed tokens back at close.
-- **remote bearer MCPs** (`server.transport: "http"`, hosted by the vendor) set `bearer_required: true` + `proposed_hosts: ["mcp.vendor.com"]`; the framework injects `Authorization: Bearer <token>` — no file copy.
+- **remote bearer MCPs** (`server.transport: "http"`, hosted by the vendor) set `bearer_required: true` + `proposed_hosts: ["mcp.vendor.com"]`; the platform adds the `Authorization: Bearer <token>` on the way out through its credential gateway — the token is never written into the session's config or a paired machine's disk.
+- **remote API-key-header MCPs** (a vendor server that takes a key in a header of its own, e.g. Google Maps Grounding Lite with `X-Goog-Api-Key`) declare `credentials.api_key_header: {name, value_from, proposed_hosts}` instead of `oauth`: `name` is the header, `value_from` names a `credentials.fields` password field (or an env-delivered `instances` field) the admin or user fills, `proposed_hosts` lists the vendor hosts. Streamable-HTTP transport, a literal `url_template` host among `proposed_hosts`; the gateway adds the header on the way out.
 - **`credentials.service_account: true`** (a sibling of `oauth`, not nested) lets a manager bind one of their own connected accounts as an agent's service identity, so the MCP works in agent-scope sessions (phone/task/trigger). There is no platform service-account tier.
 - **`credentials.webhooks`** declares an inbound webhook receiver (signature scheme, subscription mode, event catalog) wired automatically at install — use when the vendor pushes events you want to drive triggers.
 
@@ -172,7 +176,7 @@ The block above is the common case. OAuth also supports the `authorization_code_
 ```
 
 - `delivery: "env"` injects the first agent-matching instance's fields as env vars on the MCP process.
-- `delivery: "config_file"` writes a JSON config file (all agent-matching instances) the MCP reads via `config_file_arg` (used by e.g. ssh-server).
+- `delivery: "config_file"` writes a JSON config file (all agent-matching instances) the MCP reads via `config_file_arg`.
 - `max_instances: 0` means "unlimited".
 - `instances` is the standard home for community-MCP **secrets** (API keys, server URLs) — they're stored Fernet-encrypted, never on disk, since `.env` files are banned.
 
@@ -282,15 +286,45 @@ For MCPs that write files to a fixed directory they can't configure per-session 
 
 ## Skills
 
-Markdown how-to files loaded into the agent's system prompt when your MCP is assigned. Declare them in the manifest and put the files under `skills/`:
+Instruction content attached to the agent when your MCP is assigned —
+[Agent Skills](https://agentskills.io) format. Declare each skill in the
+manifest and put its content under `skills/`:
 
 ```json
 "skills": [
-  { "id": "yourmcp-usage", "file": "skills/usage.md",
-    "description": "When and how to use these tools",
+  { "id": "yourmcp-usage", "file": "skills/yourmcp-usage/SKILL.md",
+    "loading": "on_demand",
+    "description": "When and how to use these tools. Use when <the task a user would actually ask for>.",
     "default_exclude_from": ["phone"] }
 ]
 ```
+
+**`loading` decides how the skill reaches the agent:**
+
+- `"on_demand"` (**default**) — the skill is materialized as a standard
+  `SKILL.md` folder into the session's CLI skills directory; Claude Code /
+  Codex index only its name + description and read the body when a task
+  matches. Right for task-shaped content with a clear trigger (a production
+  workflow, a big reference). The **`description` is the activation
+  trigger** — write "what it does AND when to use it" with the words a user
+  would actually say, not a UI label. The skill may ship extra reference
+  files next to its `SKILL.md`; keep them inert (markdown/templates — no
+  executable payloads).
+- `"always"` — the full body is inlined into every session's system prompt.
+  Reserve for genuinely behavior-shaping content the agent must know before
+  deciding anything (routing judgment, when-to-use rules), and keep it lean:
+  it costs tokens in every session. Big reference material belongs in an
+  `on_demand` companion skill.
+
+Skill ids are lowercase alphanumerics with single hyphens (≤64 chars) and
+are **permanent once released** — installs key per-agent state off them, so
+never rename an id; add a new skill instead. Legacy flat files
+(`"file": "skills/usage.md"`) remain valid: the platform synthesizes the
+standard folder around them at load time.
+
+`default_exclude_from` lists session contexts the skill should not load in
+(`"phone"`, `"task"`, `"terminal"`, `"meeting"`, `"trigger"`) — an authoring
+decision shown to operators, not something they configure per agent.
 
 Write skills as agent-facing instructions (when to use each tool, gotchas, examples). Keep them accurate and concise. **Do not mention platform-internal auth** (the proxy session key is service-to-service and never relevant to the agent).
 
@@ -405,7 +439,37 @@ Maintainers reviewing community MCP PRs verify:
 - [ ] Docker MCPs use `url_template: http://${docker_mcp_host}:${port}` and ship a pre-built `server.image`.
 - [ ] If the MCP hits a billable upstream API, a `costs` block is declared (pricing in the manifest only — never POST cost from the server).
 - [ ] OS deps that must be present are in `system_requirements` (enforced), not just `requires_system_packages` (display-only).
+- [ ] `author` / `author_url` name the upstream project whose server code the entry wraps; an `icon.png`, if present, is that project's official mark, unaltered and permitted for this use, with its source recorded in the README (see [Provenance and icon](#provenance-and-icon)).
 - [ ] `registry.json` regenerated (`python scripts/generate-registry.py`) and committed.
+
+## Provenance and icon
+
+Every entry says where its server code comes from, and may carry the
+project's mark. The platform shows both: the Browse Community MCPs dialog,
+Admin → MCP Servers and an agent's MCPs tab render the icon and a link to
+the upstream project.
+
+- `author` is the maintainer of the code the entry wraps, not the person
+  who wrote the manifest. Write it the way the project shows it: an
+  organisation (`"GitHub"`, `"Home Assistant"`) or a handle
+  (`"cameronrye"`). A vendor-hosted remote MCP names the vendor
+  (`"Linear"`). `"OtoDock"` only when OtoDock wrote or maintains the code.
+- `author_url` is that code's repository. A remote MCP links the vendor's
+  page about its MCP server.
+- `icon.png` is optional: a 256×256 PNG, the project's **official** mark
+  taken from its brand page or repository, unaltered. Scaling and centring
+  on a transparent canvas with clear space is fine; recolouring, cropping,
+  adding a background or combining it with anything else is not. The
+  purpose is to identify the integration, nothing more. Before adding one,
+  read the owner's trademark or brand guidelines: many require written
+  permission for third-party use, exclude commercial use, or allow the mark
+  only in specific placements. When the terms do not clearly permit this
+  use, ship no icon (the platform draws a letter tile) and say why in the
+  README. Record the asset's source URL and the permitting guideline in the
+  README's field table under `Icon`.
+- `icon.png` is not part of `manifest_hash`: an icon-only change does not
+  reach existing installs by itself. Pair it with a manifest change or a
+  version bump when installs should pick it up.
 
 ## README template (per MCP)
 
@@ -422,6 +486,8 @@ Maintainers reviewing community MCP PRs verify:
 | Credentials | <`None` | `Per-user (...)` | `OAuth (...)` | `Per-instance (...)`> |
 | Per-tool cost | <`None` | `Yes, see manifest.costs`> |
 | Assignment mode | <`auto` | `explicit`> |
+| Upstream project | [<author>](<author_url>) |
+| Icon | <the mark's source URL and the guideline that permits the use> or none: <why> |
 
 ## What it does
 
@@ -439,14 +505,34 @@ firewall rules to open, common gotchas, links to upstream docs.>
 
 ## Versioning
 
-This repo follows semver tags (`v0.1.0`, `v0.2.0`, …). Each OtoDock platform release pins a specific tag and reads `registry.json` from it.
+This repo follows semver tags (`v0.1.0`, `v0.2.0`, …). The platform reads `registry.json` from `main`; pinning a release to a tag is a roadmap item.
 
 **node/python MCPs are unpinned.** Their `source` is a bare package pointer (`npm:<pkg>` / `pypi:<pkg>`) and `version` is `""`. The upstream registry (npm / PyPI) is the version of record: a fresh install pulls the latest, the platform records the resolved concrete version into the install's local manifest, and a weekly auto-update keeps installs current. Do **not** bump these in the catalog when upstream publishes, and do **not** commit `package.json` / `package-lock.json` for node MCPs — the platform generates `package.json` from `source` at install time, and a committed lockfile would pin a stale version and defeat "pull latest".
 
-**docker and git+ MCPs stay pinned.** OtoDock owns the docker images (installs can't pull from upstream) and git+ MCPs pin a git ref, so their `source` carries the version/tag and `version` is the semver — bump these in the catalog on each new release.
+**docker and git+ MCPs stay pinned.** A docker entry runs an image OtoDock builds from the folder (`ghcr.io/otodock/<name>`, published by the catalog's image workflow) or, when the vendor publishes a maintained multi-arch image, the vendor's own image by its tag (no Dockerfile in the folder; nothing is built). Either way `version` equals the image tag. A git+ entry pins the commit of a release tag (`@<40-hex sha>`, so a moved tag cannot change what installs get) and `version` is that tag. Bump these in the catalog on each new release; the maintainers run a weekly job that proposes the bumps.
 
 **Bounding node/python auto-update (`version_constraint`).** By default node/python track the absolute latest. If an upstream package makes breaking changes across majors, set `server.version_constraint` (e.g. `">=2,<3"`) so auto-update stays within the validated range. To adopt a new major: update the manifest's integration fields (e.g. `args`, `oauth`) for the new version **and** widen the bound in the same change — installs pick up both on the next update. Any catalog manifest edit (args/oauth/skills/constraint) is detected as an "integration update" and re-applied to installs automatically, so you don't need to bump a version to push an integration fix.
 
-## Questions
+**An install ahead of the catalog is left alone.** The platform never moves an install back to an older catalog version on its own (an out-of-band deploy, a newer zip): the update check reports a container entry or a skill package that is ahead (an npm/pypi install is never ahead of an unbounded entry), and only an admin's explicit revert from the MCP Servers page applies the catalog's version. A fix therefore ships as a newer version, not as a rollback.
 
-Open a [GitHub Discussion](https://github.com/OtoDock/oto-dock/discussions) for anything the community can benefit from, or email [contributions@otodock.io](mailto:contributions@otodock.io) to reach the maintainers directly.
+## Source changes
+
+The source of an entry is its identity: the registry and package of an `npm:`/`pypi:` source, the image repository of a container (`server.image`, tag aside), the scheme, host, repository and subdirectory of a `git+` source, the host of a remote MCP's `url_template`. Moving an entry to another source (another upstream package, a new image repository, a vendor's new endpoint) is never applied to an install by the automatic update: the platform shows the admin the old and the new source and the admin switches it, keeping the install's name, settings, credentials and agent assignments.
+
+Declare the move so the admin sees it as intended:
+
+```json
+"server": { "runtime": "node", "transport": "stdio", "command": "node",
+            "args": ["${mcp_dir}/node_modules/nextcloud-next/dist/index.js"],
+            "source": "npm:nextcloud-next" },
+"replaces": [
+  { "source": "npm:nextcloud-mcp-server",
+    "credentials": { "NEXTCLOUD_USER": "NEXTCLOUD_USERNAME" } }
+]
+```
+
+- `source` is the previous source as a string: the package pointer, the previous `server.image` for a container, the previous host or URL for a remote MCP. It is matched by identity, so a version, tag or ref difference does not matter.
+- `credentials` maps the old credential, instance-field or config keys to the new ones; the switch renames the stored values where the new key holds nothing yet, within the same block (a key moved between blocks is not renamed). A key is a plain identifier (no leading `_`).
+- A source change without a `replaces` entry naming the installed source is shown to admins as unexplained, with a warning to verify the new source before switching. Keep the entry's `name`: a renamed entry is a new MCP, not a move.
+
+The registry carries two fields for this besides `source`: `image` (a container's `server.image`) and `url_host` (a remote MCP's endpoint host), both generated from the manifest.

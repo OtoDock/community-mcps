@@ -7,8 +7,9 @@ name: build-mcp-images
 # publish an image.
 #
 # The list of MCPs to build is derived from the manifests: every folder whose
-# manifest.json declares `server.image` is built, so a new docker MCP needs no
-# edit here. The image tag comes from that field (the manifest is the single
+# manifest.json declares a `server.image` under ghcr.io/otodock/ is built, so a
+# new docker MCP needs no edit here. An entry that names its vendor's own image
+# (m365-mcp) is never built or pushed: the vendor publishes it. The image tag comes from that field (the manifest is the single
 # source of truth; bumping the tag there is what drives a new publish). A
 # push that changes no docker MCP builds nothing.
 #
@@ -53,8 +54,9 @@ jobs:
       - name: List the docker MCPs this push touches
         id: list
         run: |
-          # Docker MCPs = folders whose manifest declares server.image. Only
-          # those touched by the push (or all on workflow_dispatch) are built.
+          # Docker MCPs = folders whose manifest declares one of our images
+          # (ghcr.io/otodock/). Only those touched by the push (or all on
+          # workflow_dispatch) are built.
           changed=""
           if [ "${{ github.event_name }}" = push ] && git rev-parse -q --verify HEAD~1 >/dev/null; then
             changed="$(git diff --name-only HEAD~1 HEAD | cut -d/ -f1 | sort -u)"
@@ -68,7 +70,8 @@ jobs:
               if not os.path.isfile(m):
                   continue
               server = (json.load(open(m)).get("server") or {})
-              if server.get("runtime") == "docker" and server.get("image") and (not changed or d in changed):
+              image = server.get("image") or ""
+              if server.get("runtime") == "docker" and image.startswith("ghcr.io/otodock/") and (not changed or d in changed):
                   out.append(d)
           print(json.dumps(out))
           PY

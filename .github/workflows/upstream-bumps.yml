@@ -1,0 +1,34 @@
+name: Upstream bumps
+
+# The pinned entries (a git ref, a vendor image tag, an image we build) move
+# only when the catalog is edited. Every Monday this lists what moved upstream
+# and opens one issue per bump with the commands to apply it; the maintainer
+# applies, gates and publishes it (dev/upstream-bumps.py). Nothing is committed
+# here. This file lives in the PREP repo and is synced to the public catalog
+# by dev/publish-catalog.sh; the repository guard keeps it from running there.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    if: github.repository == 'OtoDock/community-mcps-prep'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Open an issue per upstream bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 dev/upstream-bumps.py --issues

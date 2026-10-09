@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-01T01:01:45Z",
+  "updated_at": "2026-10-09T03:00:43Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -45,7 +45,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "d929000ea80b49b9",
+      "manifest_hash": "0e60080a5780f005",
       "manifest_url": "./email-server/manifest.json",
       "readme_url": "./email-server/README.md",
       "icon_url": null,
@@ -60,7 +60,7 @@
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "auto",
-      "size_bytes": 3685,
+      "size_bytes": 5170,
       "deprecated": false,
       "patched": false,
       "patch_note": null

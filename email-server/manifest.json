@@ -50,7 +50,7 @@
     },
     {
       "key": "SMTP_SECURE",
-      "label": "SMTP TLS",
+      "label": "SMTP TLS: true = TLS from the start (port 465), false = STARTTLS required (port 587)",
       "input_type": "text",
       "default": "true",
       "user_overridable": true
@@ -71,13 +71,33 @@
     },
     {
       "key": "IMAP_SECURE",
-      "label": "IMAP TLS",
+      "label": "IMAP TLS: keep true (port 993); the server refuses false, it cannot guarantee STARTTLS before login",
       "input_type": "text",
       "default": "true",
+      "user_overridable": true
+    },
+    {
+      "key": "EMAIL_ADDRESS",
+      "label": "From address, when it differs from the login (empty = the login)",
+      "input_type": "email",
+      "default": "",
       "user_overridable": true
     }
   ],
   "env": {},
+  "path_env": {
+    "MAIL_ALLOWED_ROOTS": {
+      "values": [{ "role": "workspace" }, { "role": "user_root" }, { "role": "shared_workspace" }],
+      "join": ":"
+    }
+  },
+  "tool_arg_paths": {
+    "send_email": { "attachments[*]": { "mode": "read", "optional": true } },
+    "save_attachment": { "savePath": { "mode": "write" } }
+  },
+  "system_requirements": {
+    "node_min": "22.13"
+  },
   "agent_env": {},
   "exclude_from": [],
   "skills": [],
