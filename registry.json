@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-09T03:02:29Z",
+  "updated_at": "2026-10-09T03:04:09Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -264,7 +264,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "6b4ae7f62c126449",
+      "manifest_hash": "d6e7a34e77a6a0aa",
       "manifest_url": "./uptime-kuma/manifest.json",
       "readme_url": "./uptime-kuma/README.md",
       "icon_url": "./uptime-kuma/icon.png",
@@ -280,7 +280,7 @@
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 15538,
+      "size_bytes": 16232,
       "deprecated": false,
       "patched": false,
       "patch_note": null

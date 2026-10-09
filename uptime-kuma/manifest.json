@@ -25,19 +25,24 @@
         "key": "UPTIME_KUMA_URL",
         "label": "Uptime Kuma URL",
         "input_type": "url",
-        "default": "http://localhost:3001"
+        "default": "http://localhost:3001",
+        "required": true
       },
       {
         "key": "UPTIME_KUMA_USERNAME",
-        "label": "Username",
-        "input_type": "text",
-        "required": true
+        "label": "Username (empty for an instance without login)",
+        "input_type": "text"
       },
       {
         "key": "UPTIME_KUMA_PASSWORD",
         "label": "Password",
         "input_type": "password",
-        "required": true,
+        "secret": true
+      },
+      {
+        "key": "UPTIME_KUMA_JWT_TOKEN",
+        "label": "JWT token (instead of username and password; the way in when 2FA is on)",
+        "input_type": "password",
         "secret": true
       }
     ],
@@ -49,16 +54,14 @@
   "assignment_mode": "explicit",
   "exclude_from": [],
   "skills": [],
+  "system_requirements": {
+    "node_min": "22"
+  },
   "patched": false,
   "patch_note": null,
   "network_targets": [
     {
       "source": "instance",
-      "host_key": "UPTIME_KUMA_URL",
-      "port_default": 3001
-    },
-    {
-      "source": "config",
       "host_key": "UPTIME_KUMA_URL",
       "port_default": 3001
     }
