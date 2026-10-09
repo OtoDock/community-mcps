@@ -5,7 +5,7 @@
   "version": "",
   "category": "community",
   "author": "sirkirby",
-  "author_url": "https://github.com/sirkirby/unifi-network-mcp",
+  "author_url": "https://github.com/sirkirby/unifi-mcp",
   "server": {
     "runtime": "python",
     "transport": "stdio",

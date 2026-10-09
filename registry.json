@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-09T03:04:09Z",
+  "updated_at": "2026-10-09T03:05:27Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -232,7 +232,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "35fec52c686ceb51",
+      "manifest_hash": "1e7eb67b4c43ad7e",
       "manifest_url": "./unifi-network/manifest.json",
       "readme_url": "./unifi-network/README.md",
       "icon_url": null,
@@ -242,13 +242,13 @@
         "unifi"
       ],
       "author": "sirkirby",
-      "author_url": "https://github.com/sirkirby/unifi-network-mcp",
+      "author_url": "https://github.com/sirkirby/unifi-mcp",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 3929,
+      "size_bytes": 4077,
       "deprecated": false,
       "patched": false,
       "patch_note": null
