@@ -32,7 +32,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [camoufox](./camoufox/) | docker | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/camoufox) | `camoufox + @playwright/mcp@0.0.68` | Anti-detect browser automation: Camoufox, a fingerprint-resistant Firefox, driven through Microsoft's… |
 | [email-server](./email-server/) | node | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) | `mcp-mail-server` | Email via IMAP/SMTP |
 | [github-mcp](./github-mcp/) | docker | [GitHub](https://github.com/github/github-mcp-server) | `github-mcp` | GitHub repositories, issues, pull requests, actions, and code search |
-| [home-assistant](./ha-mcp/) | python | [Home Assistant](https://github.com/homeassistant-ai/ha-mcp) | `ha-mcp` | Smart home control (~97 tools) |
+| [home-assistant](./ha-mcp/) | python | [homeassistant-ai](https://github.com/homeassistant-ai/ha-mcp) | `ha-mcp` | Smart home control through the unofficial ha-mcp server |
 | [nextcloud](./nextcloud/) | node | [abdullahMASHUK](https://github.com/abdullahMASHUK/nextcloud-mcp-server) | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
 | [notion-mcp](./notion-mcp/) | node | [Notion](https://github.com/makenotion/notion-mcp-server) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
 | [prometheus](./prometheus/) | node | [idanfishman](https://github.com/idanfishman/prometheus-mcp) | `prometheus-mcp` | Metrics and monitoring queries |

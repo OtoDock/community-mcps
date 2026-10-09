@@ -1,10 +1,10 @@
 {
   "name": "home-assistant",
   "label": "Home Assistant",
-  "description": "Smart home control (~97 tools)",
+  "description": "Smart home control through the unofficial ha-mcp server",
   "version": "",
   "category": "community",
-  "author": "Home Assistant",
+  "author": "homeassistant-ai",
   "author_url": "https://github.com/homeassistant-ai/ha-mcp",
   "server": {
     "runtime": "python",

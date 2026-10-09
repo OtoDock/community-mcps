@@ -1,17 +1,16 @@
 # Home Assistant
 
-Smart-home control via Home Assistant's REST + WebSocket API, packaged as [`ha-mcp`](https://pypi.org/project/ha-mcp/).
+Smart-home control via Home Assistant's REST + WebSocket API, packaged as [`ha-mcp`](https://pypi.org/project/ha-mcp/), the unofficial server of the homeassistant-ai project (not made by Home Assistant or the Open Home Foundation).
 
 | Field | Value |
 |-------|-------|
 | Manifest name | `home-assistant` |
 | Runtime | Python (stdio) |
-| Upstream | `pypi:ha-mcp@7.2.0` |
+| Upstream | `pypi:ha-mcp` (unpinned: installs the latest release) |
 | Credentials (per instance) | `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` |
 | Per-tool cost | None |
 | Assignment mode | `explicit` (admin must configure an instance) |
-| Tool count | ~97 |
-| Upstream project | [Home Assistant](https://github.com/homeassistant-ai/ha-mcp) |
+| Upstream project | [homeassistant-ai](https://github.com/homeassistant-ai/ha-mcp) |
 | Icon | none: the Open Home Foundation reserves the Home Assistant logo from commercial use without written permission (partner@openhomefoundation.org) |
 
 ## What it does

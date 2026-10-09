@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-09T03:00:43Z",
+  "updated_at": "2026-10-09T03:02:29Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -99,7 +99,7 @@
     {
       "name": "home-assistant",
       "label": "Home Assistant",
-      "description": "Smart home control (~97 tools)",
+      "description": "Smart home control through the unofficial ha-mcp server",
       "category": "community",
       "version": "",
       "runtime": "python",
@@ -107,7 +107,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "14796bdc6910e2a3",
+      "manifest_hash": "dddd7177eae2d4f2",
       "manifest_url": "./ha-mcp/manifest.json",
       "readme_url": "./ha-mcp/README.md",
       "icon_url": null,
@@ -116,14 +116,14 @@
         "home",
         "python"
       ],
-      "author": "Home Assistant",
+      "author": "homeassistant-ai",
       "author_url": "https://github.com/homeassistant-ai/ha-mcp",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
       "platform_min_version": "1.0.0",
       "assignment_mode": "explicit",
-      "size_bytes": 4798,
+      "size_bytes": 4952,
       "deprecated": false,
       "patched": false,
       "patch_note": null
