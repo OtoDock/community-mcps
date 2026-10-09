@@ -8,6 +8,9 @@ MCPs UI.
 Usage:
     python scripts/generate-registry.py            # write registry.json
     python scripts/generate-registry.py --check    # exit non-zero if stale
+    python scripts/generate-registry.py --check --against <git rev>
+                                                   # also hold git+ entries to
+                                                   # the registry at that rev
 
 The script is intentionally dependency-free so CI doesn't need a venv.
 """
@@ -31,6 +34,34 @@ PLATFORM_MIN_VERSION = "1.0.0"
 
 REQUIRED_MANIFEST_FIELDS = ("name", "label", "description", "version", "server")
 ALLOWED_RUNTIMES = {"python", "node", "docker", "remote"}
+
+# How far the catalog vouches for an entry's server code, shown as a badge in
+# Browse (nothing gates on it). In the registry only: inside manifest.json it
+# would move every entry's manifest_hash. "first-party": OtoDock writes or
+# forks the server; "maintained": the vendor's own server (hosted or
+# published), reviewed by the catalog; "third-party": a community package
+# that follows its upstream. An entry not listed here is third-party.
+TRUST = {
+    "camoufox": "first-party",
+    "espo-crm": "first-party",
+    "video-tools": "first-party",
+    "blender": "maintained",
+    "github-mcp": "maintained",
+    "google-analytics-mcp": "maintained",
+    "linear-mcp": "maintained",
+    "notion-mcp": "maintained",
+    "postiz-mcp": "maintained",
+    "slack-mcp": "maintained",
+    "zoom-mcp": "maintained",
+}
+TRUST_TIERS = {"first-party", "maintained", "third-party"}
+
+# A git+ source pins the full commit of a release: a tag can be moved
+# upstream with no catalog change, and from platform 1.8.0 the weekly update
+# builds a git+ entry's new ref unattended.
+GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# The version a pinned entry carries (PEP 440, the subset catalogs use).
+VERSION_RE = re.compile(r"^\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?$")
 
 
 def _iter_mcp_dirs() -> list[Path]:
@@ -104,6 +135,22 @@ def _validate(manifest: dict, mcp_dir: Path) -> None:
         problem = _icon_problem(icon)
         if problem:
             raise SystemExit(f"{mcp_dir.name}: icon.png {problem}")
+    source = str(manifest["server"].get("source", ""))
+    if source.startswith("git+"):
+        locator = source[4:].split("#", 1)[0]
+        ref = locator.rpartition("@")[2] if "@" in locator else ""
+        if not GIT_COMMIT_RE.fullmatch(ref):
+            raise SystemExit(
+                f"{mcp_dir.name}: a git+ source must pin a full 40-character commit "
+                f"(git+<url>@<commit>#subdirectory=...), got ref {ref or '(none)'!r}"
+            )
+        if not VERSION_RE.fullmatch(str(manifest.get("version", ""))):
+            raise SystemExit(
+                f"{mcp_dir.name}: a git+ entry's version must be the release it pins "
+                f"(e.g. 1.0.3), got {manifest.get('version')!r}"
+            )
+    if manifest["name"] in TRUST and TRUST[manifest["name"]] not in TRUST_TIERS:
+        raise SystemExit(f"{mcp_dir.name}: unknown trust tier {TRUST[manifest['name']]!r}")
     replaces = manifest.get("replaces", [])
     if replaces is None:
         replaces = []
@@ -245,6 +292,7 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
         "requires_credentials": requires_credentials,
         "requires_system_packages": manifest.get("requires_system_packages", []),
         "platform_min_version": manifest.get("platform_min_version", PLATFORM_MIN_VERSION),
+        "trust": TRUST.get(manifest["name"], "third-party"),
         "assignment_mode": assignment_mode,
         "size_bytes": _directory_size(mcp_dir),
         "deprecated": bool(manifest.get("deprecated", False)),
@@ -264,6 +312,35 @@ def _build_registry() -> dict:
     }
 
 
+def _git_ref_moves_without_version(previous: dict, registry: dict) -> list[str]:
+    """git+ entries whose pinned ref moved while their version stayed: an
+    install would read the move as an integration update instead of the new
+    release, so the version must move with the ref."""
+    before = {e.get("name"): e for e in previous.get("mcps", []) if isinstance(e, dict)}
+    problems = []
+    for entry in registry["mcps"]:
+        old = before.get(entry["name"])
+        if not old or not str(entry["source"]).startswith("git+"):
+            continue
+        if old.get("source") != entry["source"] and old.get("version") == entry["version"]:
+            problems.append(
+                f"{entry['name']}: the git ref moved but the version is still "
+                f"{entry['version']!r}; bump the version with the ref"
+            )
+    return problems
+
+
+def _registry_at(rev: str) -> dict:
+    import subprocess
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "show", f"{rev}:registry.json"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"cannot read registry.json at {rev}: {out.stderr.strip()}")
+    return json.loads(out.stdout)
+
+
 def _write(registry: dict, path: Path) -> None:
     text = json.dumps(registry, indent=2, ensure_ascii=False) + "\n"
     path.write_text(text, encoding="utf-8")
@@ -276,9 +353,26 @@ def main() -> int:
         action="store_true",
         help="Exit non-zero if registry.json is stale instead of writing.",
     )
+    parser.add_argument(
+        "--against",
+        metavar="REV",
+        help="With --check: also compare the git+ entries with registry.json at "
+             "this git revision (a ref that moved needs a new version).",
+    )
     args = parser.parse_args()
 
     registry = _build_registry()
+
+    previous = None
+    if args.against:
+        previous = _registry_at(args.against)
+    elif not args.check and REGISTRY_PATH.is_file():
+        previous = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    if previous is not None:
+        problems = _git_ref_moves_without_version(previous, registry)
+        if problems:
+            print("\n".join(problems), file=sys.stderr)
+            return 1
 
     if args.check:
         if not REGISTRY_PATH.is_file():

@@ -20,11 +20,24 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Registry is current and every manifest validates
-        run: python3 scripts/generate-registry.py --check
+        # Against the base as well: a git+ entry whose pinned commit moved
+        # must move its version (an install reads the version as the release).
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
+          if [ -n "$base" ] && git rev-parse -q --verify "$base^{commit}" >/dev/null; then
+            python3 scripts/generate-registry.py --check --against "$base"
+          else
+            python3 scripts/generate-registry.py --check
+          fi
       - name: No install-time rejects
         run: |
           # The two things the installer rejects outright: a committed .env
