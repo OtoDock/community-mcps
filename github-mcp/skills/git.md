@@ -9,9 +9,10 @@ resolve conflicts, complex history ops).
 
 When you do use local `git`, it's already wired up for you:
 
-- **Push/clone are pre-authenticated.** Your connected GitHub token is injected
-  (`GH_TOKEN`), which `gh` reads as its credential, so `git clone`/`fetch`/`push`
-  against `github.com` just work — no `gh auth login` or `gh auth setup-git` needed.
+- **Push/clone are pre-authenticated.** The platform signs `git` and `gh` in
+  with your connected GitHub account, so `git clone`/`fetch`/`push` against
+  `github.com` and `gh` commands just work — no `gh auth login` or
+  `gh auth setup-git` needed.
 - **Set the commit identity once** before your first local commit (the sandbox
   has no default), derived from your account:
   ```bash

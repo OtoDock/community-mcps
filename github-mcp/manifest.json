@@ -1,20 +1,15 @@
 {
   "name": "github-mcp",
   "label": "GitHub",
-  "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
-  "version": "1.2.0",
+  "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway.",
+  "version": "2.0.0",
   "category": "community",
   "author": "GitHub",
   "author_url": "https://github.com/github/github-mcp-server",
   "server": {
-    "runtime": "docker",
     "transport": "streamable_http",
-    "docker_compose": "docker-compose.yml",
-    "port": 8935,
-    "health_endpoint": "/health",
-    "url_template": "http://${docker_mcp_host}:${port}/mcp",
-    "image": "ghcr.io/otodock/github-mcp:1.2.0",
-    "source": "docker:github-mcp"
+    "url_template": "https://api.githubcopilot.com/mcp/",
+    "source": "remote:api.githubcopilot.com"
   },
   "credentials": {
     "type": "per_user",
@@ -41,7 +36,7 @@
       "supports_multi_account": true,
       "registered_app_required": true,
       "bearer_required": true,
-      "proposed_hosts": ["localhost"],
+      "proposed_hosts": ["api.githubcopilot.com"],
       "env_injection": ["GH_TOKEN", "GITHUB_TOKEN"],
       "git_credential_helper": {
         "host": "github.com",
@@ -335,14 +330,12 @@
     }
   },
   "config": [],
-  "env": {
-    "MCP_PORT": "${platform.mcp_port}"
-  },
+  "env": {},
   "path_env": {},
   "agent_env": {},
   "agent_context": [
     {
-      "template": "## GitHub Identity\n\nYou are acting on GitHub as **${account.email}**. Your bearer token grants whatever access this account has on GitHub. When calling `repo`-scoped tools, default to repositories owned by this user unless the prompt explicitly names a different org.\n\nThe sidecar spawns one `github-mcp-server` subprocess per chat session with your token set in env — if the token rotates mid-session, start a new chat to pick up the refreshed credentials.",
+      "template": "## GitHub Identity\n\nYou are acting on GitHub as **${account.email}**. Your bearer token grants whatever access this account has on GitHub. When calling `repo`-scoped tools, default to repositories owned by this user unless the prompt explicitly names a different org.",
       "requires": ["account.email"]
     }
   ],
@@ -357,6 +350,10 @@
   "hosted": {
     "oauth_app": { "available": true, "default_mode": "hosted" }
   },
+  "platform_min_version": "1.7.1",
+  "replaces": [
+    { "source": "ghcr.io/otodock/github-mcp" }
+  ],
   "patched": false,
   "patch_note": null
 }

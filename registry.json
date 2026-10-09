@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-09T03:07:08Z",
+  "updated_at": "2026-10-09T03:08:48Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -68,20 +68,19 @@
     {
       "name": "github-mcp",
       "label": "GitHub",
-      "description": "GitHub repositories, issues, pull requests, actions, and code search. Wraps the official github/github-mcp-server Go binary in a local sidecar so per-user OAuth tokens (or PATs) are injected via Authorization: Bearer.",
+      "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway.",
       "category": "community",
-      "version": "1.2.0",
-      "runtime": "docker",
-      "source": "docker:github-mcp",
-      "image": "ghcr.io/otodock/github-mcp:1.2.0",
-      "url_host": "",
+      "version": "2.0.0",
+      "runtime": "remote",
+      "source": "remote:api.githubcopilot.com",
+      "image": "",
+      "url_host": "api.githubcopilot.com",
       "version_constraint": "",
-      "manifest_hash": "f093bfe9cf18b29f",
+      "manifest_hash": "92ad424cf1a6d5eb",
       "manifest_url": "./github-mcp/manifest.json",
       "readme_url": "./github-mcp/README.md",
       "icon_url": "./github-mcp/icon.png",
       "tags": [
-        "docker",
         "github"
       ],
       "author": "GitHub",
@@ -89,9 +88,9 @@
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
-      "platform_min_version": "1.0.0",
+      "platform_min_version": "1.7.1",
       "assignment_mode": "auto",
-      "size_bytes": 61977,
+      "size_bytes": 26736,
       "deprecated": false,
       "patched": false,
       "patch_note": null
