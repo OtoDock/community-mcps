@@ -12,6 +12,13 @@ Usage:
                                                    # also hold git+ entries to
                                                    # the registry at that rev
 
+Each entry's `platform_min_version` in the registry is the higher of the one
+its manifest declares and the floor its fields imply, read from the OtoDock
+platform's manifest schema (`mcps/manifest.schema.json` of OtoDock/oto-dock):
+`--schema PATH`, else `$OTODOCK_MANIFEST_SCHEMA` (CI fetches the file at a
+pinned release), else the `oto-dock` checkout beside this repository. There
+is no default: the registry must not change with where it was generated.
+
 The script is intentionally dependency-free so CI doesn't need a venv.
 """
 
@@ -62,6 +69,94 @@ TRUST_TIERS = {"first-party", "maintained", "third-party"}
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 # The version a pinned entry carries (PEP 440, the subset catalogs use).
 VERSION_RE = re.compile(r"^\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?$")
+
+
+SCHEMA_ENV = "OTODOCK_MANIFEST_SCHEMA"
+_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+
+
+def _schema_path(arg: str | None) -> Path:
+    if arg:
+        return Path(arg)
+    if os.environ.get(SCHEMA_ENV):
+        return Path(os.environ[SCHEMA_ENV])
+    return REPO_ROOT.parent / "oto-dock" / "mcps" / "manifest.schema.json"
+
+
+def _load_schema(arg: str | None) -> dict:
+    path = _schema_path(arg)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"the platform's manifest schema is needed to compute each entry's floor: {path} ({exc}); "
+            f"pass --schema PATH or set {SCHEMA_ENV}"
+        )
+
+
+# The floor walk. The same algorithm as the platform's
+# services/mcp/manifest_floor.py, whose release gate holds the two equal on
+# every manifest of this catalog: the annotations `x-otodock-since` (a field)
+# and `x-otodock-floors` (a value pattern of server.source) of every subschema
+# that describes a value the manifest gives, composition keywords followed
+# without evaluating them.
+
+def _version_key(version) -> tuple:
+    m = _SEMVER_RE.match(str(version or ""))
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (0, 0, 0)
+
+
+def _floor_walk(inst, node, root: dict, path: str, found: dict, seen: set) -> None:
+    if not isinstance(node, dict):
+        return
+    key = (id(node), id(inst))
+    if key in seen:
+        return
+    seen.add(key)
+    if isinstance(node.get("$ref"), str) and node["$ref"].startswith("#/"):
+        target = root
+        for part in node["$ref"].lstrip("#/").split("/"):
+            target = target[part]
+        _floor_walk(inst, target, root, path, found, seen)
+    since = node.get("x-otodock-since")
+    if since and inst not in (None, "", [], {}, False):
+        _floor_note(found, path or "/", since)
+    if isinstance(inst, str):
+        for floor in node.get("x-otodock-floors") or []:
+            if re.search(floor["pattern"], inst):
+                _floor_note(found, f"{path} matching {floor['pattern']}", floor["since"])
+    for kw in ("allOf", "anyOf", "oneOf"):
+        for sub in node.get(kw) or []:
+            _floor_walk(inst, sub, root, path, found, seen)
+    for kw in ("then", "else"):
+        if kw in node:
+            _floor_walk(inst, node[kw], root, path, found, seen)
+    if isinstance(inst, dict):
+        props = node.get("properties") or {}
+        extra = node.get("additionalProperties")
+        for name, value in inst.items():
+            if name in props:
+                _floor_walk(value, props[name], root, f"{path}/{name}", found, seen)
+            elif isinstance(extra, dict):
+                _floor_walk(value, extra, root, f"{path}/{name}", found, seen)
+    elif isinstance(inst, list) and isinstance(node.get("items"), dict):
+        for i, value in enumerate(inst):
+            _floor_walk(value, node["items"], root, f"{path}/{i}", found, seen)
+
+
+def _floor_note(found: dict, where: str, since: str) -> None:
+    if _version_key(since) > _version_key(found.get(where, "0.0.0")):
+        found[where] = since
+
+
+def _platform_floor(manifest: dict, schema: dict) -> tuple[str, list[str]]:
+    """The lowest platform release that reads every field the manifest uses."""
+    found: dict = {}
+    _floor_walk(manifest, schema, schema, "", found, set())
+    floor = max(found.values(), key=_version_key, default=PLATFORM_MIN_VERSION)
+    if _version_key(floor) < _version_key(PLATFORM_MIN_VERSION):
+        floor = PLATFORM_MIN_VERSION
+    return floor, [f"{where} ({since})" for where, since in sorted(found.items())]
 
 
 def _iter_mcp_dirs() -> list[Path]:
@@ -250,7 +345,7 @@ def _derive_tags(manifest: dict) -> list[str]:
     return sorted(tags)
 
 
-def _entry_for_mcp(mcp_dir: Path) -> dict:
+def _entry_for_mcp(mcp_dir: Path, schema: dict) -> dict:
     manifest = _read_manifest(mcp_dir / "manifest.json")
     _validate(manifest, mcp_dir)
     server = manifest["server"]
@@ -291,7 +386,11 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
         "license": manifest.get("license", "MIT"),
         "requires_credentials": requires_credentials,
         "requires_system_packages": manifest.get("requires_system_packages", []),
-        "platform_min_version": manifest.get("platform_min_version", PLATFORM_MIN_VERSION),
+        # The higher of the declared floor and the one the fields imply.
+        "platform_min_version": max(
+            (str(manifest.get("platform_min_version") or PLATFORM_MIN_VERSION), _platform_floor(manifest, schema)[0]),
+            key=_version_key,
+        ),
         "trust": TRUST.get(manifest["name"], "third-party"),
         "assignment_mode": assignment_mode,
         "size_bytes": _directory_size(mcp_dir),
@@ -302,8 +401,8 @@ def _entry_for_mcp(mcp_dir: Path) -> dict:
     return entry
 
 
-def _build_registry() -> dict:
-    mcps = [_entry_for_mcp(d) for d in _iter_mcp_dirs()]
+def _build_registry(schema: dict) -> dict:
+    mcps = [_entry_for_mcp(d, schema) for d in _iter_mcp_dirs()]
     return {
         "registry_version": REGISTRY_VERSION,
         "updated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -359,9 +458,14 @@ def main() -> int:
         help="With --check: also compare the git+ entries with registry.json at "
              "this git revision (a ref that moved needs a new version).",
     )
+    parser.add_argument(
+        "--schema",
+        metavar="PATH",
+        help=f"The platform's manifest schema (default: ${SCHEMA_ENV}, else ../oto-dock/mcps/manifest.schema.json).",
+    )
     args = parser.parse_args()
 
-    registry = _build_registry()
+    registry = _build_registry(_load_schema(args.schema))
 
     previous = None
     if args.against:

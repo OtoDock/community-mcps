@@ -12,7 +12,7 @@ Thanks for wanting to add an MCP! This guide covers the layout, schemas, and con
 6. Run `python scripts/generate-registry.py` to refresh `registry.json`.
 7. Open a PR.
 
-CI runs `scripts/generate-registry.py --check` plus schema validation. The maintainer review checks for the items in the **PR review checklist** at the end of this file.
+CI runs `scripts/generate-registry.py --check` plus validation of every `manifest.json` against the platform's manifest schema (`mcps/manifest.schema.json` in [OtoDock/oto-dock](https://github.com/OtoDock/oto-dock), fetched at the release named in `.github/workflows/validate.yml`). The maintainer review checks for the items in the **PR review checklist** at the end of this file.
 
 ## File layout — one folder per MCP
 
@@ -80,7 +80,7 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 | `patched` | bool | no | `true` if you ship patches against the upstream package. |
 | `patch_note` | string | no | One-line summary of what the patch does. |
 | `deprecated` | bool | no | If `true`, the catalog shows a deprecation banner. |
-| `platform_min_version` | semver | no | Minimum OtoDock version that supports this MCP: an older platform refuses the install with a clear message. Required with a field or form an older platform cannot read (PyPI extras, `result_files`: `1.8.0`). |
+| `platform_min_version` | semver | no | Minimum OtoDock version that supports this MCP: an older platform refuses the install with a clear message. The registry carries the higher of this value and the floor the entry's fields imply, which the generator reads from the platform's manifest schema (its `x-otodock-since` annotations): `1.7.1` for `audience`, a skill's `audience`, `replaces`, `credentials.api_key_header` and `credentials.oauth.authorization_server`; `1.8.0` for `result_files`, `tool_filter.regex_env_var_name` and a PyPI source with extras. Declare it to match (the release gate warns when it is lower). Do not add a `$schema` key to an entry: it moves the manifest hash and every install converges once. |
 | `replaces` | array | no | The sources this entry supersedes, with the credential keys the new source renames: `[{"source": "<previous source>", "credentials": {"OLD_KEY": "NEW_KEY"}}]`. Information for the admin's switch, never an authorization. See [Source changes](#source-changes). |
 
 > Some manifest fields are platform-internal and **not** for community MCPs: `requires_capability` (gates on a platform feature like audio/phone), `hosted` (OtoDock-managed relay config), and `server.proxy_callbacks` (proxy-callback auth — only the bundled file-tools MCP uses it). They're listed here only so you recognise them; a community MCP that integrates an external service never sets them.

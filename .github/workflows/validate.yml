@@ -2,8 +2,11 @@ name: Validate catalog
 
 # The catalog's own contract, on every push and pull request: registry.json
 # matches the manifests, and every entry passes the schema the platform
-# installs against. This file lives in the PREP repo and is synced to the
-# public catalog by dev/publish-catalog.sh.
+# installs against (mcps/manifest.schema.json of OtoDock/oto-dock, fetched at
+# the latest release and checked against its sha256: its id names the release,
+# so the two values move together after every publish, and the platform's
+# release gate reports a pin that lags). This file lives in the PREP repo and
+# is synced to the public catalog by dev/publish-catalog.sh.
 
 on:
   push:
@@ -12,6 +15,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  SCHEMA_URL: https://raw.githubusercontent.com/OtoDock/oto-dock/v1.8.1/mcps/manifest.schema.json
+  SCHEMA_SHA256: 55efa94c3ce67e122bec76f926cbde5ca6168268a6b27722c191c9687e8b6ebd
 
 jobs:
   check:
@@ -24,6 +31,28 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
+      - name: The platform's manifest schema
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/manifest.schema.json" "$SCHEMA_URL"
+          echo "$SCHEMA_SHA256  $RUNNER_TEMP/manifest.schema.json" | sha256sum -c -
+          echo "OTODOCK_MANIFEST_SCHEMA=$RUNNER_TEMP/manifest.schema.json" >> "$GITHUB_ENV"
+      - name: Every manifest follows the schema
+        run: |
+          python3 -m pip install -q "jsonschema==4.26.0"
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+          from jsonschema import Draft202012Validator
+          schema = json.loads(pathlib.Path(os.environ["OTODOCK_MANIFEST_SCHEMA"]).read_text(encoding="utf-8"))
+          validator = Draft202012Validator(schema)
+          bad = 0
+          for path in sorted(pathlib.Path(".").glob("*/manifest.json")):
+              for e in sorted(validator.iter_errors(json.loads(path.read_text(encoding="utf-8"))), key=lambda e: list(e.absolute_path)):
+                  where = "/" + "/".join(str(p) for p in e.absolute_path)
+                  print(f"::error file={path}::{where}: {e.message[:300]}")
+                  bad += 1
+          print(f"{bad} schema error(s)")
+          sys.exit(1 if bad else 0)
+          PY
       - name: Registry is current and every manifest validates
         # Against the base as well: a git+ entry whose pinned commit moved
         # must move its version (an install reads the version as the release).
