@@ -1,0 +1,72 @@
+{
+  "name": "google-maps",
+  "label": "Google Maps",
+  "description": "Places search and details, directions by car, foot, bike or public transport, multi-stop routes, geocoding, weather and map pictures",
+  "version": "",
+  "category": "community",
+  "author": "cablate",
+  "author_url": "https://github.com/cablate/mcp-google-map",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/@cablate/mcp-google-map/dist/cli.js",
+      "--stdio"
+    ],
+    "source": "npm:@cablate/mcp-google-map",
+    "version_constraint": ">=0.0.69,<1"
+  },
+  "credentials": {
+    "type": "none"
+  },
+  "instances": {
+    "delivery": "env",
+    "fields": [
+      {
+        "key": "GOOGLE_MAPS_API_KEY",
+        "label": "API key (enable Routes API, Places API (New), Geocoding API and Maps Static API on its project)",
+        "input_type": "password",
+        "required": true,
+        "secret": true
+      }
+    ],
+    "max_instances": 0
+  },
+  "config": [
+    {
+      "key": "GOOGLE_MAPS_ENABLED_TOOLS",
+      "label": "Enabled tools (comma-separated; * = all, including the local rank tracker, which runs a grid of billed searches)",
+      "input_type": "text",
+      "default": "maps_search_nearby,maps_search_places,maps_place_details,maps_explore_area,maps_compare_places,maps_search_along_route,maps_directions,maps_plan_route,maps_distance_matrix,maps_geocode,maps_reverse_geocode,maps_batch_geocode,maps_static_map,maps_weather,maps_air_quality,maps_timezone,maps_elevation",
+      "user_overridable": false
+    }
+  ],
+  "env": {},
+  "agent_env": {},
+  "assignment_mode": "explicit",
+  "exclude_from": [],
+  "result_files": {
+    "tools": [
+      "maps_static_map"
+    ],
+    "subdir": "maps"
+  },
+  "skills": [
+    {
+      "id": "google-maps-usage",
+      "loading": "always",
+      "file": "skills/google-maps.md",
+      "description": "Places, routes and links: how to search, route, link to Google Maps and read API errors",
+      "default_exclude_from": []
+    }
+  ],
+  "platform_min_version": "1.8.0",
+  "replaces": [
+    {
+      "source": "git+https://github.com/OtoDock/google-maps-mcp-server.git"
+    }
+  ],
+  "patched": false,
+  "patch_note": null
+}

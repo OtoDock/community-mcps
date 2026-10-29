@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T19:01:06Z",
+  "updated_at": "2026-10-29T19:05:03Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -94,6 +94,39 @@
       "trust": "maintained",
       "assignment_mode": "auto",
       "size_bytes": 41015,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "google-maps",
+      "label": "Google Maps",
+      "description": "Places search and details, directions by car, foot, bike or public transport, multi-stop routes, geocoding, weather and map pictures",
+      "category": "community",
+      "version": "",
+      "runtime": "node",
+      "source": "npm:@cablate/mcp-google-map",
+      "image": "",
+      "url_host": "",
+      "version_constraint": ">=0.0.69,<1",
+      "manifest_hash": "e1015e0011745e3a",
+      "manifest_url": "./google-maps/manifest.json",
+      "readme_url": "./google-maps/README.md",
+      "icon_url": null,
+      "tags": [
+        "google",
+        "maps",
+        "node"
+      ],
+      "author": "cablate",
+      "author_url": "https://github.com/cablate/mcp-google-map",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "1.8.0",
+      "trust": "third-party",
+      "assignment_mode": "explicit",
+      "size_bytes": 7837,
       "deprecated": false,
       "patched": false,
       "patch_note": null
