@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T18:55:53Z",
+  "updated_at": "2026-10-29T18:57:51Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -137,28 +137,28 @@
       "description": "Cloud file storage (WebDAV, Notes, Calendar)",
       "category": "community",
       "version": "",
-      "runtime": "node",
-      "source": "npm:nextcloud-mcp-server",
+      "runtime": "python",
+      "source": "pypi:nextcloud-mcp-server[documents]",
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "21eab6e209b23c32",
+      "manifest_hash": "a6a23ad79c23a1c7",
       "manifest_url": "./nextcloud/manifest.json",
       "readme_url": "./nextcloud/README.md",
       "icon_url": null,
       "tags": [
         "nextcloud",
-        "node"
+        "python"
       ],
-      "author": "abdullahMASHUK",
-      "author_url": "https://github.com/abdullahMASHUK/nextcloud-mcp-server",
+      "author": "cbcoutinho",
+      "author_url": "https://github.com/cbcoutinho/nextcloud-mcp-server",
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
-      "platform_min_version": "1.0.0",
+      "platform_min_version": "1.8.0",
       "trust": "third-party",
       "assignment_mode": "auto",
-      "size_bytes": 4477,
+      "size_bytes": 6404,
       "deprecated": false,
       "patched": false,
       "patch_note": null

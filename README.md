@@ -33,7 +33,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [email-server](./email-server/) | node | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) | `mcp-mail-server` | Email via IMAP/SMTP |
 | [github-mcp](./github-mcp/) | remote | [GitHub](https://github.com/github/github-mcp-server) | `api.githubcopilot.com` | GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's… |
 | [home-assistant](./ha-mcp/) | python | [homeassistant-ai](https://github.com/homeassistant-ai/ha-mcp) | `ha-mcp` | Smart home control through the unofficial ha-mcp server |
-| [nextcloud](./nextcloud/) | node | [abdullahMASHUK](https://github.com/abdullahMASHUK/nextcloud-mcp-server) | `nextcloud-mcp-server` | Cloud file storage (WebDAV, Notes, Calendar) |
+| [nextcloud](./nextcloud/) | python | [cbcoutinho](https://github.com/cbcoutinho/nextcloud-mcp-server) | `nextcloud-mcp-server[documents]` | Cloud file storage (WebDAV, Notes, Calendar) |
 | [notion-mcp](./notion-mcp/) | node | [Notion](https://github.com/makenotion/notion-mcp-server) | `@notionhq/notion-mcp-server` | Notion pages, databases, blocks, and search via the official Notion MCP server |
 | [prometheus](./prometheus/) | python | [pab1it0](https://github.com/pab1it0/prometheus-mcp-server) | `prometheus-mcp-server` | Metrics and monitoring queries |
 | [unifi-network](./unifi-network/) | python | [sirkirby](https://github.com/sirkirby/unifi-mcp) | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |

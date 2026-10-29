@@ -4,16 +4,14 @@
   "description": "Cloud file storage (WebDAV, Notes, Calendar)",
   "version": "",
   "category": "community",
-  "author": "abdullahMASHUK",
-  "author_url": "https://github.com/abdullahMASHUK/nextcloud-mcp-server",
+  "author": "cbcoutinho",
+  "author_url": "https://github.com/cbcoutinho/nextcloud-mcp-server",
   "server": {
-    "runtime": "node",
+    "runtime": "python",
     "transport": "stdio",
-    "command": "node",
-    "args": [
-      "${mcp_dir}/node_modules/nextcloud-mcp-server/build/index.js"
-    ],
-    "source": "npm:nextcloud-mcp-server"
+    "command": "venv/bin/nextcloud-mcp-server",
+    "args": ["run", "--transport", "stdio"],
+    "source": "pypi:nextcloud-mcp-server[documents]"
   },
   "credentials": {
     "type": "per_user",
@@ -21,8 +19,8 @@
     "description": "Connect your Nextcloud account",
     "fields": [
       {
-        "key": "NEXTCLOUD_URL",
-        "label": "Nextcloud Server URL",
+        "key": "NEXTCLOUD_HOST",
+        "label": "Nextcloud server URL, without a trailing / (https://cloud.example.com)",
         "input_type": "url"
       },
       {
@@ -32,7 +30,7 @@
       },
       {
         "key": "NEXTCLOUD_PASSWORD",
-        "label": "Password",
+        "label": "App password (Nextcloud: Settings > Security > Devices & sessions)",
         "input_type": "password"
       }
     ],
@@ -46,16 +44,20 @@
       "id": "nextcloud-usage",
       "loading": "always",
       "file": "skills/nextcloud.md",
-      "description": "Nextcloud file reading, editing workflow, and safety rules",
+      "description": "Nextcloud files (read, write, the binary-document limits), its apps, and the safety rules",
       "default_exclude_from": []
     }
+  ],
+  "platform_min_version": "1.8.0",
+  "replaces": [
+    { "source": "npm:nextcloud-mcp-server", "credentials": { "NEXTCLOUD_URL": "NEXTCLOUD_HOST" } }
   ],
   "patched": false,
   "patch_note": null,
   "network_targets": [
     {
       "source": "per_user_credential",
-      "host_key": "NEXTCLOUD_URL",
+      "host_key": "NEXTCLOUD_HOST",
       "port_default": 443
     }
   ]
