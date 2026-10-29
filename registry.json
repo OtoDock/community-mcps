@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T18:57:51Z",
+  "updated_at": "2026-10-29T18:59:26Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -238,7 +238,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "1e7eb67b4c43ad7e",
+      "manifest_hash": "bad0984a915a9c35",
       "manifest_url": "./unifi-network/manifest.json",
       "readme_url": "./unifi-network/README.md",
       "icon_url": null,
@@ -255,7 +255,7 @@
       "platform_min_version": "1.0.0",
       "trust": "third-party",
       "assignment_mode": "explicit",
-      "size_bytes": 4077,
+      "size_bytes": 4308,
       "deprecated": false,
       "patched": false,
       "patch_note": null

@@ -69,6 +69,19 @@
   "skills": [],
   "patched": false,
   "patch_note": null,
+  "permissions": {
+    "default_tier": "sensitive",
+    "rules": [
+      {
+        "tool": "unifi_execute",
+        "tier": "sensitive"
+      },
+      {
+        "tool": "unifi_batch",
+        "tier": "sensitive"
+      }
+    ]
+  },
   "network_targets": [
     {
       "source": "instance",
