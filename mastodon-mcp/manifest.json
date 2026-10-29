@@ -1,0 +1,67 @@
+{
+  "name": "mastodon-mcp",
+  "label": "Mastodon",
+  "description": "Mastodon and the Fediverse: read timelines and trends, search, post, boost, and follow",
+  "version": "",
+  "category": "community",
+  "author": "cameronrye",
+  "author_url": "https://github.com/cameronrye/activitypub-mcp",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/activitypub-mcp/dist/mcp-main.js"
+    ],
+    "source": "npm:activitypub-mcp",
+    "version_constraint": ">=3.2.1,<4"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "Mastodon",
+    "description": "Mastodon/Fediverse account (instance URL + access token)",
+    "fields": [
+      {
+        "key": "ACTIVITYPUB_DEFAULT_INSTANCE",
+        "label": "Instance (e.g. mastodon.social)",
+        "input_type": "text"
+      },
+      {
+        "key": "ACTIVITYPUB_DEFAULT_TOKEN",
+        "label": "Access Token",
+        "input_type": "password"
+      }
+    ],
+    "service_account": true
+  },
+  "config": [
+    {
+      "key": "ACTIVITYPUB_ENABLE_WRITES",
+      "label": "Enable write tools (post, boost, follow, …)",
+      "input_type": "text",
+      "default": "true",
+      "user_overridable": true
+    }
+  ],
+  "env": {
+    "ACTIVITYPUB_ENABLE_WRITES": "true"
+  },
+  "path_env": {
+    "ACTIVITYPUB_CONFIG_DIR": {
+      "role": "workspace",
+      "subpath": ".activitypub-mcp"
+    }
+  },
+  "tool_arg_paths": {
+    "upload-media": {
+      "filePath": {
+        "mode": "read"
+      }
+    }
+  },
+  "agent_env": {},
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null
+}

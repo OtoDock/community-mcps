@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T19:06:42Z",
+  "updated_at": "2026-10-29T19:49:19Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -192,6 +192,38 @@
       "trust": "third-party",
       "assignment_mode": "explicit",
       "size_bytes": 4952,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "mastodon-mcp",
+      "label": "Mastodon",
+      "description": "Mastodon and the Fediverse: read timelines and trends, search, post, boost, and follow",
+      "category": "community",
+      "version": "",
+      "runtime": "node",
+      "source": "npm:activitypub-mcp",
+      "image": "",
+      "url_host": "",
+      "version_constraint": ">=3.2.1,<4",
+      "manifest_hash": "61559ff07f70f199",
+      "manifest_url": "./mastodon-mcp/manifest.json",
+      "readme_url": "./mastodon-mcp/README.md",
+      "icon_url": null,
+      "tags": [
+        "mastodon",
+        "node"
+      ],
+      "author": "cameronrye",
+      "author_url": "https://github.com/cameronrye/activitypub-mcp",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "1.0.0",
+      "trust": "third-party",
+      "assignment_mode": "auto",
+      "size_bytes": 5256,
       "deprecated": false,
       "patched": false,
       "patch_note": null
