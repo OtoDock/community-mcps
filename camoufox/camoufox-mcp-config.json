@@ -1,6 +1,9 @@
 {
   "browser": {
     "browserName": "firefox",
-    "remoteEndpoint": "ws://localhost:3000/connect"
+    "remoteEndpoint": {
+      "endpoint": "ws://localhost:3000/connect",
+      "timeout": 20000
+    }
   }
 }

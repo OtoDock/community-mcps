@@ -17,8 +17,8 @@ permissions:
   contents: read
 
 env:
-  SCHEMA_URL: https://raw.githubusercontent.com/OtoDock/oto-dock/v1.8.1/mcps/manifest.schema.json
-  SCHEMA_SHA256: 55efa94c3ce67e122bec76f926cbde5ca6168268a6b27722c191c9687e8b6ebd
+  SCHEMA_URL: https://raw.githubusercontent.com/OtoDock/oto-dock/v1.9.0/mcps/manifest.schema.json
+  SCHEMA_SHA256: 1ad15ea8db44c8d465641392d9e092effd56b19557494203dcdd0e9e5ab64c9e
 
 jobs:
   check:

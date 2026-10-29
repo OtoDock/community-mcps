@@ -1,5 +1,6 @@
 """Unit tests for stream_sidecar's session-lifecycle helpers (stdlib-only —
 aiohttp is imported lazily by the handlers, so the module imports clean).
+The same text is the platform's ``mcps/_shared/stream_sidecar.py``.
 
 The regression under test (2026-07-09): the idle GC reaped sessions whose
 client still held the standalone SSE GET open — a warm CLI/codex daemon idles
@@ -11,6 +12,7 @@ activity; ``_refresh`` must never resurrect a session that was already
 DELETEd/GC'd (its upstream state is gone).
 """
 
+import asyncio
 import time
 
 import pytest
@@ -70,3 +72,30 @@ def test_forget_does_not_clobber_reinit_mapping():
     sc._touch("mcp-new", "oto-1")  # remap
     sc._forget("mcp-old")
     assert sc._oto_to_mcp["oto-1"] == "mcp-new"
+
+
+def test_open_sessions_leaves_out_the_checker():
+    sc._touch("held", "otodock-checker-held")
+    sc._touch("fresh", "otodock-checker-fresh")
+    sc._touch("agent", "6e5475d2-3492")
+    sc._touch("anon", "")
+    assert sc._open_sessions() == 4
+    # A session with no OtoDock id still counts: unknown use is use.
+    assert sc._open_sessions("otodock-checker") == 2
+
+
+def test_gc_pass_deletes_only_stale_sessions(monkeypatch):
+    deleted = []
+
+    async def fake_delete(sid):
+        deleted.append(sid)
+        return 200
+
+    monkeypatch.setattr(sc, "_delete_upstream", fake_delete)
+    monkeypatch.setattr(sc, "SCREENSHOTS_DIR", "/nonexistent-screenshots")
+    sc._touch("old", "oto-old")
+    sc._touch("new", "oto-new")
+    sc._sessions["old"]["last"] = time.time() - sc.SESSION_IDLE_S - 1
+    asyncio.run(sc._gc_pass())
+    assert deleted == ["old"]
+    assert list(sc._sessions) == ["new"]

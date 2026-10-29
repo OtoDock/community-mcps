@@ -28,6 +28,8 @@ This folder contains:
 - `Dockerfile` — builds Python 3.13 + Node + Camoufox + `@playwright/mcp`.
 - `docker-compose.yml` — runs the container with shared memory tuned for Firefox.
 - `entrypoint.sh` + `launch_server.py` — start an Xvfb display and run Camoufox via its Playwright `launchServer` integration.
+- `healthprobe.py` — the health checker the container runs, and the reads of its result for the healthcheck and the watchdog.
+- `stream_sidecar.py` — the session sidecar in front of the MCP server (the same text as the platform's shared copy).
 - `camoufox-mcp-config.json` — the Playwright MCP config template.
 - `skills/web-browsing.md` — best-practice skill loaded into agent prompts when this MCP is enabled.
 
@@ -37,3 +39,6 @@ This folder contains:
 - First boot of the container takes minutes — the Camoufox Firefox binary and the Playwright runtime are downloaded into the image.
 - The container exposes port `8931`; the platform auto-discovers it via the manifest's `health_endpoint`.
 - The container writes screenshots to a shared `/screenshots` dir (swept of orphans by the sidecar); the platform relocates each into the user's hidden `.screenshots/` workspace folder, bounded by the manifest's `outputs[*].keep_recent` cap (newest 15). The repo's `.gitignore` excludes runtime PNG/JPG/CSV files.
+- **Health.** A checker inside the container holds one session the way an agent does and loads a page in it every 2 minutes, and opens a fresh session every 15 minutes. A pass is a real answer from the browser. The container's health and its watchdog read that result; nothing else opens sessions for health. Two failed checks of either kind in a row restart the container, as does a checker that stops reporting.
+- **Daily restart.** Once the browser has been up a day and no agent session has been open for 30 minutes, the container restarts while nobody uses it (about 25 seconds). A long-running browser can stop opening new pages after days of use, and a fresh one never meets that. An agent session that starts inside those seconds cannot reach the browser for that session.
+- **Logs.** The checker writes a line when a check fails and when checks pass again; the watchdog writes the reason for every restart (`docker logs <container>`).
