@@ -78,3 +78,22 @@ jobs:
             echo "::error::a manifest references the master key"; bad=1
           fi
           exit $bad
+      - name: No critical tier
+        run: |
+          # `critical` (a card in every mode, refused in scheduled tasks) is
+          # kept for the platform's own tools that change who sees or does
+          # what inside OtoDock; a catalog MCP is `sensitive` at most.
+          python3 - <<'PY'
+          import json, pathlib, sys
+          bad = 0
+          for path in sorted(pathlib.Path(".").glob("*/manifest.json")):
+              perms = json.loads(path.read_text(encoding="utf-8")).get("permissions") or {}
+              named = ["default_tier"] if perms.get("default_tier") == "critical" else []
+              named += [r.get("tool") for r in perms.get("rules") or []
+                        if isinstance(r, dict) and r.get("tier") == "critical"]
+              for tool in named:
+                  print(f"::error file={path}::permissions: {tool} is critical; a catalog MCP is sensitive at most")
+                  bad += 1
+          print(f"{bad} critical tier(s)")
+          sys.exit(1 if bad else 0)
+          PY

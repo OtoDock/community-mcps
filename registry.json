@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T15:10:53Z",
+  "updated_at": "2026-10-29T18:55:53Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -70,15 +70,15 @@
     {
       "name": "github-mcp",
       "label": "GitHub",
-      "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway.",
+      "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway, and a GitHub App installed on chosen repositories narrows what an agent reaches.",
       "category": "community",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "runtime": "remote",
       "source": "remote:api.githubcopilot.com",
       "image": "",
       "url_host": "api.githubcopilot.com",
       "version_constraint": "",
-      "manifest_hash": "92ad424cf1a6d5eb",
+      "manifest_hash": "3394a88d7852fd84",
       "manifest_url": "./github-mcp/manifest.json",
       "readme_url": "./github-mcp/README.md",
       "icon_url": "./github-mcp/icon.png",
@@ -90,10 +90,10 @@
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
-      "platform_min_version": "1.7.1",
+      "platform_min_version": "1.9.0",
       "trust": "maintained",
       "assignment_mode": "auto",
-      "size_bytes": 26736,
+      "size_bytes": 41015,
       "deprecated": false,
       "patched": false,
       "patch_note": null

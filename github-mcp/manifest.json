@@ -1,8 +1,8 @@
 {
   "name": "github-mcp",
   "label": "GitHub",
-  "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway.",
-  "version": "2.0.0",
+  "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway, and a GitHub App installed on chosen repositories narrows what an agent reaches.",
+  "version": "2.1.0",
   "category": "community",
   "author": "GitHub",
   "author_url": "https://github.com/github/github-mcp-server",
@@ -18,7 +18,10 @@
     "service_account": true,
     "oauth": {
       "provider_id": "github",
-      "flows": ["authorization_code", "personal_access_token"],
+      "flows": [
+        "authorization_code",
+        "personal_access_token"
+      ],
       "authorization_url": "https://github.com/login/oauth/authorize",
       "token_url": "https://github.com/login/oauth/access_token",
       "userinfo_url": "https://api.github.com/user",
@@ -36,8 +39,13 @@
       "supports_multi_account": true,
       "registered_app_required": true,
       "bearer_required": true,
-      "proposed_hosts": ["api.githubcopilot.com"],
-      "env_injection": ["GH_TOKEN", "GITHUB_TOKEN"],
+      "proposed_hosts": [
+        "api.githubcopilot.com"
+      ],
+      "env_injection": [
+        "GH_TOKEN",
+        "GITHUB_TOKEN"
+      ],
       "git_credential_helper": {
         "host": "github.com",
         "helper": "!gh auth git-credential"
@@ -62,45 +70,118 @@
           "key": "repos",
           "label": "Repositories",
           "description": "List, read, and manage repositories you have access to",
-          "scopes": ["repo"]
+          "scopes": [
+            "repo"
+          ]
         },
         {
           "key": "issues",
           "label": "Issues",
           "description": "Read, comment on, and create issues",
-          "scopes": ["repo"]
+          "scopes": [
+            "repo"
+          ]
         },
         {
           "key": "pull_requests",
           "label": "Pull requests",
           "description": "Read and create pull requests, request reviews",
-          "scopes": ["repo"]
+          "scopes": [
+            "repo"
+          ]
         },
         {
           "key": "actions",
           "label": "GitHub Actions",
           "description": "List workflows, read run logs, trigger workflow_dispatch",
-          "scopes": ["repo", "workflow"]
+          "scopes": [
+            "repo",
+            "workflow"
+          ]
         },
         {
           "key": "code_search",
           "label": "Code search",
           "description": "Search across repositories you can read",
-          "scopes": ["repo"]
+          "scopes": [
+            "repo"
+          ]
         },
         {
           "key": "user_profile",
           "label": "User profile",
           "description": "Read your profile, email addresses, and following/followers",
-          "scopes": ["read:user", "user:email"]
+          "scopes": [
+            "read:user",
+            "user:email"
+          ]
         },
         {
           "key": "org_webhooks",
           "label": "Organization webhooks",
           "description": "Register one webhook for every repository in an organization you own (event subscriptions of the organization kind)",
-          "scopes": ["admin:org_hook"]
+          "scopes": [
+            "admin:org_hook"
+          ]
         }
-      ]
+      ],
+      "app_kinds": {
+        "key": "GITHUB_APP_KIND",
+        "kinds": [
+          {
+            "kind": "oauth_app",
+            "label": "OAuth App",
+            "fields": [
+              {
+                "key": "GITHUB_CLIENT_ID",
+                "label": "OAuth App Client ID",
+                "input_type": "text",
+                "help": "Get from github.com/settings/developers → OAuth Apps"
+              },
+              {
+                "key": "GITHUB_CLIENT_SECRET",
+                "label": "OAuth App Client Secret",
+                "input_type": "password"
+              }
+            ]
+          },
+          {
+            "kind": "github_app",
+            "label": "GitHub App",
+            "mcp_token": "user",
+            "fields": [
+              {
+                "key": "GITHUB_APP_ID",
+                "label": "App ID",
+                "input_type": "text",
+                "help": "github.com/settings/apps → your app → About"
+              },
+              {
+                "key": "GITHUB_APP_CLIENT_ID",
+                "label": "Client ID",
+                "input_type": "text"
+              },
+              {
+                "key": "GITHUB_APP_CLIENT_SECRET",
+                "label": "Client secret",
+                "input_type": "password"
+              },
+              {
+                "key": "GITHUB_APP_PRIVATE_KEY",
+                "label": "Private key (PEM)",
+                "input_type": "multiline_secret",
+                "help": "Generate a private key on the app's page and paste the .pem file's text"
+              },
+              {
+                "key": "GITHUB_APP_WEBHOOK_SECRET",
+                "label": "Webhook secret",
+                "input_type": "password",
+                "help": "The app's webhook secret; leave empty when the app's webhook is off"
+              }
+            ]
+          }
+        ]
+      }
     },
     "webhooks": {
       "available": true,
@@ -138,7 +219,9 @@
             }
           },
           "response_id_path": "id",
-          "expected_status": [201]
+          "expected_status": [
+            201
+          ]
         },
         "delete": {
           "method": "DELETE",
@@ -148,7 +231,10 @@
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28"
           },
-          "expected_status": [204, 404]
+          "expected_status": [
+            204,
+            404
+          ]
         }
       },
       "event_catalog": [
@@ -156,103 +242,415 @@
           "key": "push",
           "label": "Commits pushed",
           "description": "Fires when commits are pushed to any branch.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "pull_request",
           "label": "Pull request lifecycle",
           "description": "Fires when a PR is opened, closed, reopened, edited, synchronized, or marked ready for review.",
-          "required_scopes": ["repo"],
-          "subevents": ["opened", "closed", "reopened", "edited", "synchronize", "ready_for_review"]
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "opened",
+            "closed",
+            "reopened",
+            "edited",
+            "synchronize",
+            "ready_for_review"
+          ]
         },
         {
           "key": "issues",
           "label": "Issues lifecycle",
           "description": "Fires when an issue is opened, closed, reopened, edited, labeled, or assigned.",
-          "required_scopes": ["repo"],
-          "subevents": ["opened", "closed", "reopened", "edited", "labeled", "assigned"]
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "opened",
+            "closed",
+            "reopened",
+            "edited",
+            "labeled",
+            "assigned"
+          ]
         },
         {
           "key": "issue_comment",
           "label": "Issue and PR comments",
           "description": "Fires on new comments on issues or pull requests.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "release",
           "label": "Releases",
           "description": "Fires when a release is published, edited, or deleted.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "workflow_run",
           "label": "GitHub Actions workflow runs",
           "description": "Fires when a workflow run is requested, completed, or fails.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "discussion",
           "label": "Discussions lifecycle",
           "description": "Fires when a discussion is created, edited, answered, categorized, or closed.",
-          "required_scopes": ["repo"],
-          "subevents": ["created", "edited", "answered", "unanswered", "category_changed", "closed", "reopened"]
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "edited",
+            "answered",
+            "unanswered",
+            "category_changed",
+            "closed",
+            "reopened"
+          ]
         },
         {
           "key": "discussion_comment",
           "label": "Discussion comments",
           "description": "Fires on new comments and replies in discussions.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "pull_request_review",
           "label": "Pull request reviews",
           "description": "Fires when a review is submitted, edited, or dismissed on a pull request.",
-          "required_scopes": ["repo"],
-          "subevents": ["submitted", "edited", "dismissed"]
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "submitted",
+            "edited",
+            "dismissed"
+          ]
         },
         {
           "key": "pull_request_review_comment",
           "label": "Pull request review comments",
           "description": "Fires on comments left on lines of a pull request diff.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "commit_comment",
           "label": "Commit comments",
           "description": "Fires when someone comments on a commit.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "create",
           "label": "Branch or tag created",
           "description": "Fires when a branch or tag is created.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "delete",
           "label": "Branch or tag deleted",
           "description": "Fires when a branch or tag is deleted.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "star",
           "label": "Stars",
           "description": "Fires when someone stars or unstars the repository.",
-          "required_scopes": ["repo"],
-          "subevents": ["created", "deleted"]
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "deleted"
+          ]
         },
         {
           "key": "fork",
           "label": "Forks",
           "description": "Fires when someone forks the repository.",
-          "required_scopes": ["repo"]
+          "required_scopes": [
+            "repo"
+          ]
         },
         {
           "key": "repository",
           "label": "Repository settings",
           "description": "Fires when the repository is renamed, archived, transferred, or its visibility changes.",
-          "required_scopes": ["repo"],
-          "subevents": ["renamed", "archived", "unarchived", "transferred", "publicized", "privatized", "edited"]
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "renamed",
+            "archived",
+            "unarchived",
+            "transferred",
+            "publicized",
+            "privatized",
+            "edited"
+          ]
+        },
+        {
+          "key": "workflow_job",
+          "label": "GitHub Actions jobs",
+          "description": "Fires when a job of a workflow run is queued, waits for approval, starts, or completes, with its steps.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "queued",
+            "waiting",
+            "in_progress",
+            "completed"
+          ]
+        },
+        {
+          "key": "check_run",
+          "label": "Check runs",
+          "description": "Fires when a check run is created, completes, or is asked to run again.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "completed",
+            "rerequested",
+            "requested_action"
+          ]
+        },
+        {
+          "key": "check_suite",
+          "label": "Check suites",
+          "description": "Fires when a check suite is requested or completes.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "requested",
+            "rerequested",
+            "completed"
+          ]
+        },
+        {
+          "key": "deployment",
+          "label": "Deployments",
+          "description": "Fires when a deployment is created.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created"
+          ]
+        },
+        {
+          "key": "deployment_status",
+          "label": "Deployment status",
+          "description": "Fires when the status of a deployment changes.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created"
+          ]
+        },
+        {
+          "key": "dependabot_alert",
+          "label": "Dependabot alerts",
+          "description": "Fires when a Dependabot alert is created, dismissed, fixed, reopened, or withdrawn.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "dismissed",
+            "auto_dismissed",
+            "fixed",
+            "reintroduced",
+            "reopened",
+            "auto_reopened",
+            "withdrawn",
+            "assignees_changed"
+          ]
+        },
+        {
+          "key": "code_scanning_alert",
+          "label": "Code scanning alerts",
+          "description": "Fires when a code scanning alert is created, appears in a branch, is fixed, closed, or reopened.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "appeared_in_branch",
+            "fixed",
+            "closed_by_user",
+            "reopened",
+            "reopened_by_user",
+            "updated_assignment"
+          ]
+        },
+        {
+          "key": "secret_scanning_alert",
+          "label": "Secret scanning alerts",
+          "description": "Fires when a secret scanning alert is created, resolved, reopened, or validated.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "resolved",
+            "reopened",
+            "validated",
+            "publicly_leaked",
+            "assigned",
+            "unassigned",
+            "metadata_created",
+            "metadata_removed"
+          ]
+        },
+        {
+          "key": "repository_advisory",
+          "label": "Repository advisories",
+          "description": "Fires when a security advisory of the repository is reported or published.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "reported",
+            "published"
+          ]
+        },
+        {
+          "key": "label",
+          "label": "Labels",
+          "description": "Fires when a label is created, edited, deleted, archived, or unarchived.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "edited",
+            "deleted",
+            "archived",
+            "unarchived"
+          ]
+        },
+        {
+          "key": "milestone",
+          "label": "Milestones",
+          "description": "Fires when a milestone is created, opened, edited, closed, or deleted.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "opened",
+            "edited",
+            "closed",
+            "deleted"
+          ]
+        },
+        {
+          "key": "member",
+          "label": "Collaborators",
+          "description": "Fires when a collaborator is added to the repository, removed, or has their permission changed.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "added",
+            "edited",
+            "removed"
+          ]
+        },
+        {
+          "key": "membership",
+          "label": "Team membership",
+          "description": "Fires when a person is added to or removed from a team (an organization or installation subscription).",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "added",
+            "removed"
+          ]
+        },
+        {
+          "key": "team",
+          "label": "Teams",
+          "description": "Fires when a team is created, edited, deleted, or given or denied access to a repository (an organization or installation subscription).",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "created",
+            "edited",
+            "deleted",
+            "added_to_repository",
+            "removed_from_repository"
+          ]
+        },
+        {
+          "key": "team_add",
+          "label": "Team added to a repository",
+          "description": "Fires when a team is given access to the repository.",
+          "required_scopes": [
+            "repo"
+          ]
+        },
+        {
+          "key": "organization",
+          "label": "Organization membership",
+          "description": "Fires when a member is invited, added, or removed, or the organization is renamed or deleted (an organization or installation subscription).",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "member_invited",
+            "member_added",
+            "member_removed",
+            "renamed",
+            "deleted"
+          ]
+        },
+        {
+          "key": "public",
+          "label": "Repository made public",
+          "description": "Fires when a private repository is made public.",
+          "required_scopes": [
+            "repo"
+          ]
+        },
+        {
+          "key": "pull_request_review_thread",
+          "label": "Pull request review threads",
+          "description": "Fires when a review thread on a pull request is resolved or unresolved.",
+          "required_scopes": [
+            "repo"
+          ],
+          "subevents": [
+            "resolved",
+            "unresolved"
+          ]
         }
       ],
       "payload_normalization": {
@@ -303,30 +701,40 @@
         "label": "Repository (owner/name)",
         "placeholder": "octocat/hello-world",
         "validation_regex": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
-        "help_text": "You must have admin access on this repo to install webhooks.",
+        "help_text": "Type the repository as owner/name. You need admin access on it.",
         "target_kinds": [
           {
             "key": "repository",
             "label": "One repository",
             "placeholder": "octocat/hello-world",
             "validation_regex": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
-            "help_text": "You must have admin access on this repo to install webhooks."
+            "help_text": "Type the repository as owner/name. You need admin access on it."
           },
           {
             "key": "organization",
             "label": "Every repository in an organization",
             "placeholder": "octocat-org",
             "validation_regex": "^[A-Za-z0-9_.-]+$",
-            "help_text": "One hook for every repository in the organization, present and future. Needs the Organization webhooks permission on the connected account and owner rights on the organization.",
-            "required_scopes": ["admin:org_hook"],
+            "help_text": "Type the organization's name. One subscription covers every repository in it, now and later. You need owner rights on the organization and the Organization webhooks permission on the connected account.",
+            "required_scopes": [
+              "admin:org_hook"
+            ],
             "registration": {
-              "create": {"url_template": "https://api.github.com/orgs/${vendor_target}/hooks"},
-              "delete": {"url_template": "https://api.github.com/orgs/${vendor_target}/hooks/${vendor_subscription_id}"}
+              "create": {
+                "url_template": "https://api.github.com/orgs/${vendor_target}/hooks"
+              },
+              "delete": {
+                "url_template": "https://api.github.com/orgs/${vendor_target}/hooks/${vendor_subscription_id}"
+              }
             }
           }
         ]
       },
-      "event_id_field": "headers.X-GitHub-Delivery"
+      "event_id_field": "headers.X-GitHub-Delivery",
+      "app_webhook": {
+        "secret_credential_key": "GITHUB_APP_WEBHOOK_SECRET",
+        "installation_id_path": "body.installation.id"
+      }
     }
   },
   "config": [],
@@ -336,7 +744,9 @@
   "agent_context": [
     {
       "template": "## GitHub Identity\n\nYou are acting on GitHub as **${account.email}**. Your bearer token grants whatever access this account has on GitHub. When calling `repo`-scoped tools, default to repositories owned by this user unless the prompt explicitly names a different org.",
-      "requires": ["account.email"]
+      "requires": [
+        "account.email"
+      ]
     }
   ],
   "exclude_from": [],
@@ -344,15 +754,20 @@
     {
       "id": "github-git-usage",
       "file": "skills/git.md",
-      "description": "Local git in the shell: push/clone are pre-authenticated; how to set the commit identity from the connected account (overridable)."
+      "description": "Local git in the shell: push/clone are pre-authenticated; how to set the commit identity from the connected account or installation (overridable)."
     }
   ],
   "hosted": {
-    "oauth_app": { "available": true, "default_mode": "hosted" }
+    "oauth_app": {
+      "available": true,
+      "default_mode": "hosted"
+    }
   },
-  "platform_min_version": "1.7.1",
+  "platform_min_version": "1.9.0",
   "replaces": [
-    { "source": "ghcr.io/otodock/github-mcp" }
+    {
+      "source": "ghcr.io/otodock/github-mcp"
+    }
   ],
   "patched": false,
   "patch_note": null

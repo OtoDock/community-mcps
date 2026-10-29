@@ -23,6 +23,15 @@ When you do use local `git`, it's already wired up for you:
   (PowerShell: `$login = gh api user --jq .login; git config --global user.name $login; git config --global user.email "$login@users.noreply.github.com"`)
   The `@users.noreply.github.com` email keeps your real address private while
   still linking the commit to your GitHub account.
+- **An installation identity** (an agent whose GitHub identity is a GitHub App
+  installation): `gh api user` answers 403, since the token is the app's, not
+  a person's. Set the identity to the app's bot user instead:
+  ```bash
+  slug=$(gh api app --jq .slug 2>/dev/null || echo otodock)
+  git config --global user.name  "${slug}[bot]"
+  git config --global user.email "${slug}[bot]@users.noreply.github.com"
+  ```
+  `gh api installation/repositories` lists what the token reaches.
 - **It's overridable.** If the user asks to commit under a different name/email,
   just set those with `git config` (global, or `--local` inside a repo) — it's
   plain git config, nothing is locked.
