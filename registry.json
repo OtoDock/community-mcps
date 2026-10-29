@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T18:59:26Z",
+  "updated_at": "2026-10-29T19:01:06Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -298,13 +298,13 @@
       "label": "Video Tools",
       "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
       "category": "community",
-      "version": "0.4.5",
+      "version": "0.4.6",
       "runtime": "docker",
       "source": "docker:video-tools-mcp (ffmpeg + libass)",
-      "image": "ghcr.io/otodock/video-tools:0.4.5",
+      "image": "ghcr.io/otodock/video-tools:0.4.6",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "541415fcbab54f37",
+      "manifest_hash": "b27bbdbfc38ab8e3",
       "manifest_url": "./video-tools/manifest.json",
       "readme_url": "./video-tools/README.md",
       "icon_url": "./video-tools/icon.png",
@@ -321,7 +321,7 @@
       "platform_min_version": "1.0.0",
       "trust": "first-party",
       "assignment_mode": "auto",
-      "size_bytes": 2070607,
+      "size_bytes": 2070608,
       "deprecated": false,
       "patched": false,
       "patch_note": null
