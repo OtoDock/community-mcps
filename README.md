@@ -29,6 +29,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 <!-- catalog:start -->
 | MCP | Runtime | From | Source | Use case |
 |-----|---------|------|--------|----------|
+| [blender](./blender/) | python | [Blender](https://projects.blender.org/lab/blender_mcp) | `git+https://projects.blender.org/lab/blender_mcp.git@2cea8d566dde07fbac28a61d698909d69724e853#subdirectory=mcp` | Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy… |
 | [camoufox](./camoufox/) | docker | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/camoufox) | `camoufox + @playwright/mcp@0.0.78` | Anti-detect browser automation: Camoufox, a fingerprint-resistant Firefox, driven through Microsoft's… |
 | [email-server](./email-server/) | node | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) | `mcp-mail-server` | Email via IMAP/SMTP |
 | [github-mcp](./github-mcp/) | remote | [GitHub](https://github.com/github/github-mcp-server) | `api.githubcopilot.com` | GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's… |

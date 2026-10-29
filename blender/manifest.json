@@ -1,0 +1,72 @@
+{
+  "name": "blender",
+  "server_name": "blender",
+  "label": "Blender",
+  "description": "Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy Python, render. Requires the official Blender MCP add-on installed + enabled in Blender (the platform installs the SERVER from git; the user installs the add-on once).",
+  "version": "1.0.3",
+  "category": "community",
+  "author": "Blender",
+  "author_url": "https://projects.blender.org/lab/blender_mcp",
+
+  "server": {
+    "runtime": "python",
+    "transport": "stdio",
+    "command": "venv/bin/python",
+    "args": ["-m", "blmcp"],
+    "source": "git+https://projects.blender.org/lab/blender_mcp.git@2cea8d566dde07fbac28a61d698909d69724e853#subdirectory=mcp"
+  },
+
+  "credentials": { "type": "none" },
+
+  "config": [
+    {
+      "key": "BLENDER_PATH",
+      "label": "Blender executable for the background (_for_cli) tools",
+      "input_type": "text",
+      "default": "blender",
+      "user_overridable": true
+    }
+  ],
+  "env": {},
+  "agent_env": {},
+
+  "assignment_mode": "auto",
+
+  "placement": "satellite_only",
+  "requires_display": true,
+  "device_capability": "app",
+  "exclude_from": [],
+
+  "companion_app": {
+    "program": "blender",
+    "connect": { "host": "127.0.0.1", "transport": "tcp_json", "port": 9876 },
+    "plugin": {
+      "asset": "",
+      "min_plugin_version": "1.0.3",
+      "supported_host_versions": ["blender>=5.1"]
+    },
+    "status_tool": "",
+    "auth": "none"
+  },
+
+  "device_high_risk_tools": ["execute_blender_code", "execute_blender_code_for_cli"],
+
+  "system_requirements": {
+    "debian": ["git"],
+    "ubuntu": ["git"],
+    "notes": "Installs the official Blender Lab MCP server from git, so the machine needs `git` (Windows: `winget install Git.Git`; macOS: `brew install git`). Also requires Blender 5.1+ running with the official MCP add-on from the Blender Lab extension repository: in Blender, Preferences > Get Extensions > Repositories > add `https://lab.blender.org/`, then install and enable \"MCP\" (or drop the zip from blender.org/lab/mcp-server onto Blender twice: the first drop adds the repository, the second installs the add-on). Started, it opens a local control socket (default 127.0.0.1:9876). The platform does NOT launch Blender; the user starts it. Cross-platform (Linux X11/Wayland, macOS, Windows)."
+  },
+
+  "skills": [
+    {
+      "id": "blender-usage",
+      "loading": "always",
+      "file": "skills/blender.md",
+      "description": "How to drive Blender via the official MCP: check the connection, inspect the scene, then run bpy safely.",
+      "default_exclude_from": []
+    }
+  ],
+
+  "patched": false,
+  "patch_note": null
+}

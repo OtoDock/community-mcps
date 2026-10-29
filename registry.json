@@ -1,8 +1,40 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T19:05:03Z",
+  "updated_at": "2026-10-29T19:06:42Z",
   "platform_min_version": "1.0.0",
   "mcps": [
+    {
+      "name": "blender",
+      "label": "Blender",
+      "description": "Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy Python, render. Requires the official Blender MCP add-on installed + enabled in Blender (the platform installs the SERVER from git; the user installs the add-on once).",
+      "category": "community",
+      "version": "1.0.3",
+      "runtime": "python",
+      "source": "git+https://projects.blender.org/lab/blender_mcp.git@2cea8d566dde07fbac28a61d698909d69724e853#subdirectory=mcp",
+      "image": "",
+      "url_host": "",
+      "version_constraint": "",
+      "manifest_hash": "0bde341b95d78438",
+      "manifest_url": "./blender/manifest.json",
+      "readme_url": "./blender/README.md",
+      "icon_url": null,
+      "tags": [
+        "blender",
+        "python"
+      ],
+      "author": "Blender",
+      "author_url": "https://projects.blender.org/lab/blender_mcp",
+      "license": "MIT",
+      "requires_credentials": false,
+      "requires_system_packages": [],
+      "platform_min_version": "1.0.0",
+      "trust": "maintained",
+      "assignment_mode": "auto",
+      "size_bytes": 7105,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
     {
       "name": "camoufox",
       "label": "Browser (Camoufox)",
