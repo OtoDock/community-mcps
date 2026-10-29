@@ -18,6 +18,9 @@ After a route or a place, give a Google Maps link (it opens the app on a phone),
 - A place: `https://www.google.com/maps/search/?api=1&query=<name and area>&query_place_id=<place_id>`
 - Never put the API key in a link, and never link a `maps.googleapis.com` address.
 
+### Local ranking
+`maps_local_rank_tracker` runs one billed search per grid point and keyword: a 3x3 grid (the default) is 9 searches, a 7x7 grid with 3 keywords is 147. Use it only when the user asks how a business ranks across an area, and tell them how many searches it will run before you call it.
+
 ### Map pictures
 `maps_static_map` draws places (markers) or a route (path) as a picture. The platform shows it in the chat and saves it under `maps/` in the workspace by itself: do not call `display_images` for it. Add the Google Maps link in your reply; the picture is not clickable.
 

@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T19:50:39Z",
+  "updated_at": "2026-10-29T20:16:27Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -173,7 +173,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": ">=0.0.69,<1",
-      "manifest_hash": "e1015e0011745e3a",
+      "manifest_hash": "ab095b661006c262",
       "manifest_url": "./google-maps/manifest.json",
       "readme_url": "./google-maps/README.md",
       "icon_url": null,
@@ -190,7 +190,7 @@
       "platform_min_version": "1.8.0",
       "trust": "third-party",
       "assignment_mode": "explicit",
-      "size_bytes": 7837,
+      "size_bytes": 7758,
       "deprecated": false,
       "patched": false,
       "patch_note": null

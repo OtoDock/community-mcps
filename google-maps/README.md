@@ -27,7 +27,7 @@ Finds places (nearby, by text, along a route), compares them and reads their det
 ## Operator notes
 
 - **The key's Google Cloud project needs billing and these APIs enabled:** Routes API (directions, routes, distances), Places API (New) (search, details), Geocoding API (addresses and coordinates; the platform's own address hint for a person's location uses it too) and Maps Static API (map pictures). Optional, per tool: Weather API, Air Quality API, Time Zone API, Elevation API. A disabled API fails only its own tools; the agent names the API to enable.
-- **Enabled tools** (admin setting) lists every tool except `maps_local_rank_tracker`, which runs a grid of billed searches; `*` enables all.
+- **Every tool is on, with no setting to fill in.** The API key is the only thing an admin enters. `maps_local_rank_tracker` runs one billed search per grid point and keyword (9 by default, up to 147): the skill has the agent use it only when asked for a local ranking, and say how many searches it runs first.
 - Restrict the key to these APIs in Google Cloud. It reaches only this MCP's process and the platform's address hint.
 - Attribution: Google requires its places and reviews to be shown as Google Maps content; the skill asks the agent to name the source.
-- This entry replaced the OtoDock fork `OtoDock/google-maps-mcp-server`, which called Google's legacy Directions, Distance Matrix and Places APIs: a Google Cloud project created after 2025-03-01 cannot enable them. An install of the fork is offered the switch on the MCP Servers page; its instances and their key carry.
+- This entry replaced the former OtoDock fork `OtoDock/google-maps-mcp-server` (deleted), which called Google's legacy Directions, Distance Matrix and Places APIs: a Google Cloud project created after 2025-03-01 cannot enable them. An install of the fork is offered the switch on the MCP Servers page; its instances and their key carry.

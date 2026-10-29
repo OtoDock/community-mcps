@@ -33,15 +33,7 @@
     ],
     "max_instances": 0
   },
-  "config": [
-    {
-      "key": "GOOGLE_MAPS_ENABLED_TOOLS",
-      "label": "Enabled tools (comma-separated; * = all, including the local rank tracker, which runs a grid of billed searches)",
-      "input_type": "text",
-      "default": "maps_search_nearby,maps_search_places,maps_place_details,maps_explore_area,maps_compare_places,maps_search_along_route,maps_directions,maps_plan_route,maps_distance_matrix,maps_geocode,maps_reverse_geocode,maps_batch_geocode,maps_static_map,maps_weather,maps_air_quality,maps_timezone,maps_elevation",
-      "user_overridable": false
-    }
-  ],
+  "config": [],
   "env": {},
   "agent_env": {},
   "assignment_mode": "explicit",
