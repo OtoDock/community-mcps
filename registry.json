@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-10-29T19:49:19Z",
+  "updated_at": "2026-10-29T19:50:39Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -31,6 +31,38 @@
       "trust": "maintained",
       "assignment_mode": "auto",
       "size_bytes": 7105,
+      "deprecated": false,
+      "patched": false,
+      "patch_note": null
+    },
+    {
+      "name": "bluesky-mcp",
+      "label": "Bluesky",
+      "description": "Bluesky posting, feeds, search, and account management via the AT Protocol",
+      "category": "community",
+      "version": "",
+      "runtime": "node",
+      "source": "npm:atproto-mcp",
+      "image": "",
+      "url_host": "",
+      "version_constraint": ">=0.6.2,<1",
+      "manifest_hash": "95f72f9b55e68b1e",
+      "manifest_url": "./bluesky-mcp/manifest.json",
+      "readme_url": "./bluesky-mcp/README.md",
+      "icon_url": null,
+      "tags": [
+        "bluesky",
+        "node"
+      ],
+      "author": "cameronrye",
+      "author_url": "https://github.com/cameronrye/atproto-mcp",
+      "license": "MIT",
+      "requires_credentials": true,
+      "requires_system_packages": [],
+      "platform_min_version": "1.0.0",
+      "trust": "third-party",
+      "assignment_mode": "auto",
+      "size_bytes": 4463,
       "deprecated": false,
       "patched": false,
       "patch_note": null

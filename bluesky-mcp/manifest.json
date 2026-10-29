@@ -1,0 +1,72 @@
+{
+  "name": "bluesky-mcp",
+  "label": "Bluesky",
+  "description": "Bluesky posting, feeds, search, and account management via the AT Protocol",
+  "version": "",
+  "category": "community",
+  "author": "cameronrye",
+  "author_url": "https://github.com/cameronrye/atproto-mcp",
+  "server": {
+    "runtime": "node",
+    "transport": "stdio",
+    "command": "node",
+    "args": [
+      "${mcp_dir}/node_modules/atproto-mcp/dist/cli.js"
+    ],
+    "source": "npm:atproto-mcp",
+    "version_constraint": ">=0.6.2,<1"
+  },
+  "credentials": {
+    "type": "per_user",
+    "label": "Bluesky",
+    "description": "Bluesky account (handle + app password)",
+    "fields": [
+      {
+        "key": "ATPROTO_IDENTIFIER",
+        "label": "Handle (e.g. you.bsky.social)",
+        "input_type": "text"
+      },
+      {
+        "key": "ATPROTO_PASSWORD",
+        "label": "App Password",
+        "input_type": "password"
+      }
+    ],
+    "service_account": true
+  },
+  "config": [
+    {
+      "key": "ATPROTO_SERVICE",
+      "label": "PDS Service URL",
+      "input_type": "url",
+      "default": "https://bsky.social",
+      "user_overridable": true
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production",
+    "ATPROTO_AUTH_METHOD": "app-password"
+  },
+  "path_env": {
+    "ATPROTO_MEDIA_DIR": {
+      "role": "workspace"
+    }
+  },
+  "tool_arg_paths": {
+    "upload_image": {
+      "filePath": {
+        "mode": "read"
+      }
+    },
+    "upload_video": {
+      "filePath": {
+        "mode": "read"
+      }
+    }
+  },
+  "agent_env": {},
+  "exclude_from": [],
+  "skills": [],
+  "patched": false,
+  "patch_note": null
+}
