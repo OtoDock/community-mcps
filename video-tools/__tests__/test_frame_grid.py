@@ -145,13 +145,13 @@ def test_windowed_render_matches_single_on_offgrid_durations(
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "100000")
     single = _run(renderer.render_composition(
-        str(path), lambda p: p, mode="preview",
+        str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(offgrid_assets["root"] / "single.mp4")))
     assert not any("windows" in w["message"] for w in single["warnings"])
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "8")
     seg = _run(renderer.render_composition(
-        str(path), lambda p: p, mode="preview",
+        str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(offgrid_assets["root"] / "seg.mp4")))
     assert any("windows" in w["message"] for w in seg["warnings"]), \
         seg["warnings"]

@@ -25,8 +25,35 @@ free-to-use, not free-to-redistribute).
 """
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+# A colour that ffmpeg's filter graph carries as written: a hex value (# or 0x,
+# then 3, 6 or 8 digits) or a name of letters only, each with an optional
+# @opacity. Nothing else can reach a graph, where any other character could
+# add text to it.
+_COLOUR = re.compile(r"^(?:(?:#|0x)(?P<hex>[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})"
+                     r"|(?P<name>[A-Za-z]{1,40}))(?P<alpha>@(?:\d+(?:\.\d+)?|\.\d+))?$")
+
+
+def is_colour(value) -> bool:
+    return isinstance(value, str) and bool(_COLOUR.match(value.strip()))
+
+
+def graph_colour(value: str) -> str:
+    """A colour in ffmpeg's own form (``0xRRGGBB``, a name), or ValueError."""
+    m = _COLOUR.match((value or "").strip()) if isinstance(value, str) else None
+    if not m:
+        raise ValueError(f"not a colour: {value!r}")
+    alpha = m.group("alpha") or ""
+    if m.group("name"):
+        return m.group("name") + alpha
+    hexv = m.group("hex")
+    if len(hexv) == 3:
+        hexv = "".join(ch * 2 for ch in hexv)
+    return "0x" + hexv + alpha
+
 
 LOOKS_DIR = os.environ.get("VIDEO_TOOLS_LOOKS_DIR", "/app/looks")
 

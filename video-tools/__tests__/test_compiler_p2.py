@@ -712,6 +712,19 @@ def test_plan_segments_synthetic_points_avoid_transition_zones():
     assert any(zone[1] <= p < zone[1] + 6 for p in boundaries)
 
 
+def test_plan_segments_split_a_span_whose_furthest_window_leaves_a_short_tail():
+    """A cutless 17 s timeline just over the budget: the furthest end in
+    budget (16.5 s) leaves a tail under a window, which used to give up and
+    warn though two windows fit. It splits at the last grid point that
+    leaves a window, both pieces inside the budget."""
+    from compiler import MIN_WINDOW
+    comp = _comp([{"src": "long.mp4", "in": 0, "out": 17}])
+    budget = 16.5 * _PER_S
+    segs = plan_segments(comp, LONG, budget)
+    assert segs == [(0.0, 17.0 - MIN_WINDOW), (17.0 - MIN_WINDOW, 17.0)]
+    assert all(estimate_window_bytes(comp, LONG, a, b) <= budget for a, b in segs)
+
+
 def test_plan_segments_pathological_span_stays_single():
     comp = _comp([{"src": "a.mp4", "in": 0, "out": 6}])
     # Even MIN_WINDOW-sized pieces bust this budget: nothing to gain from

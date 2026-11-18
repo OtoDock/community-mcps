@@ -1,6 +1,7 @@
 """Composition tool handlers: create / edit / validate / render."""
 
 import base64
+import json
 from pathlib import Path
 
 from mcp.types import ImageContent, TextContent
@@ -48,7 +49,7 @@ async def _validation_block(comp: dict) -> tuple[str, list[dict], dict, dict]:
 
 async def handle_create_composition(args: dict):
     raw_path = args["path"]
-    path = _resolve_path(raw_path)
+    path = _resolve_path(raw_path, writing=True)
     if Path(path).exists() and not args.get("create_new"):
         return (f"Error: {raw_path} already exists — pass create_new=true to "
                 "overwrite, or use edit_composition to modify it")
@@ -76,7 +77,7 @@ async def handle_create_composition(args: dict):
 
 async def handle_edit_composition(args: dict):
     raw_path = args["path"]
-    path = _resolve_path(raw_path)
+    path = _resolve_path(raw_path, writing=True)
     comp = comp_mod.load_composition(path)
     operations = _normalize_operations(args.get("operations"))
     if not operations:
@@ -92,8 +93,48 @@ async def handle_edit_composition(args: dict):
 async def handle_validate_composition(args: dict):
     path = _resolve_path(args["path"])
     comp = comp_mod.load_composition(path)
-    report, _, _, _ = await _validation_block(comp)
+    report, issues, resolved, media_info = await _validation_block(comp)
+    if args.get("format") == "json":
+        return json.dumps(_timeline_json(comp, resolved, media_info, issues))
     return report
+
+
+def _timeline_json(comp: dict, resolved: dict, media_info: dict, issues: list) -> dict:
+    """The computed timeline as data, for a page that draws it: every base
+    clip with its place after the transitions, the other tracks' clips, the
+    composition's own paths (never the container's)."""
+    out: dict = {"ok": not any(i["level"] == "error" for i in issues), "issues": issues}
+    try:
+        tl = comp_mod.compute_timeline(resolved, media_info)
+    except comp_mod.CompositionError as exc:
+        out["timeline_error"] = str(exc)
+        return out
+    clips = comp_mod.base_track(comp).get("clips", [])
+    base = []
+    for entry in tl["base"]:
+        clip = clips[entry["index"]] if entry["index"] < len(clips) else {}
+        base.append({**entry, "label": _clip_label(clip),
+                     "src": clip.get("src") or clip.get("image") or "",
+                     **{k: clip[k] for k in ("in", "out", "speed", "volume_db", "mute") if k in clip}})
+    tracks = []
+    # Durations are read off the resolved copy (its paths key the probes),
+    # the paths shown off the composition.
+    for track, rtrack in zip(comp.get("tracks", []), resolved.get("tracks", [])):
+        if not isinstance(track, dict) or track.get("kind") == "video":
+            continue
+        rows = []
+        for i, (c, rc) in enumerate(zip(track.get("clips", []), rtrack.get("clips", []))):
+            if not isinstance(c, dict):
+                continue
+            try:
+                duration = round(comp_mod.clip_duration(rc, media_info), 6)
+            except (comp_mod.CompositionError, KeyError, TypeError, ValueError):
+                duration = None
+            rows.append({"index": i, "label": _clip_label(c), "src": c.get("src") or c.get("image") or "",
+                         "start": float(c.get("start", 0.0)), "duration": duration})
+        tracks.append({"kind": track.get("kind"), "clips": rows})
+    out.update({"duration": tl["duration"], "base": base, "tracks": tracks})
+    return out
 
 
 async def handle_render_composition(args: dict):
@@ -121,10 +162,24 @@ async def handle_render_composition(args: dict):
             return "Error: crf must be within the x264 range 0-51"
 
     try:
-        result = await renderer.render_composition(
+        plan = await renderer.plan_render(
             raw_path, _resolve_path, mode=mode,
             output_path=args.get("output_path"), time_range=time_range,
             crf=crf)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if args.get("background"):
+        import jobs
+        try:
+            job = await jobs.start(plan, lambda result: _render_report(result, mode))
+        except ValueError as exc:
+            return f"Error: {exc}"
+        return json.dumps({"job_id": job.id, "state": job.state,
+                           "output": _to_agents_relative(plan.out)})
+
+    try:
+        result = await renderer.run_render(plan)
     except ValueError as exc:
         return f"Error: {exc}"
 
@@ -132,7 +187,11 @@ async def handle_render_composition(args: dict):
     # deliverable — and the advertised display_video step 400s on a missing
     # file (seen in production).
     await _notify_file_written(result["output"])
+    return _render_report(result, mode)
 
+
+def _render_report(result: dict, mode: str) -> str:
+    """The answer of a finished render, in the call or for its job."""
     lines = [
         f"Rendered ({result['mode']}): {_to_agents_relative(result['output'])}",
         f"{result['canvas']} @ {result['fps']:.3g} fps · "
@@ -177,3 +236,13 @@ async def handle_render_frames(args: dict):
                      mimeType="image/png"),
         TextContent(type="text", text=note),
     ]
+
+
+async def handle_render_status(args: dict):
+    import jobs
+    return json.dumps(jobs.status(str(args.get("job_id") or "")))
+
+
+async def handle_cancel_render(args: dict):
+    import jobs
+    return json.dumps(jobs.cancel(str(args.get("job_id") or "")))

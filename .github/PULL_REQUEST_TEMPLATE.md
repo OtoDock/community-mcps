@@ -11,9 +11,10 @@
 ## Checklist
 
 - [ ] `python scripts/generate-registry.py` was run and `registry.json` is committed.
-- [ ] `manifest.json` follows CONTRIBUTING.md: path-bearing env vars through `path_env`, LLM-supplied paths through `tool_arg_paths`, every env var the source reads declared, no `OTO_*` variable defined, no reference to the master key.
+- [ ] `manifest.json` follows CONTRIBUTING.md. Path-bearing env vars go through `path_env`, and LLM-supplied paths through `tool_arg_paths`. Every env var the source reads is declared. No `OTO_*` variable is defined, and there is no reference to the master key.
 - [ ] A Docker MCP ships a pre-built `server.image` whose tag equals `version`, with `url_template` set to `http://${docker_mcp_host}:${port}`.
-- [ ] A billable upstream API has a `costs` block; OS packages the server needs are in `system_requirements`.
+- [ ] A billable upstream API has a `costs` block.
+- [ ] OS packages the server needs are in `system_requirements`.
 - [ ] No `.env` file, key or credential anywhere in the folder.
 - [ ] `README.md` documents the tools, the credentials the server needs and what its path arguments expect.
 - [ ] I have reviewed every line I submit, generated or not.

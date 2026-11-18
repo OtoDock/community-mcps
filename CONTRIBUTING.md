@@ -1,6 +1,6 @@
 # Contributing to OtoDock Community MCPs
 
-Thanks for wanting to add an MCP! This guide covers the layout, schemas, and contracts every entry must follow so the OtoDock platform can install and run it safely across local-sandboxed and remote-satellite deployments.
+Thanks for wanting to add an MCP! This guide covers the layout, schemas, and contracts every entry must follow. With them, the OtoDock platform can install and run an entry safely across local-sandboxed and remote-satellite deployments.
 
 ## Quick start
 
@@ -8,13 +8,13 @@ Thanks for wanting to add an MCP! This guide covers the layout, schemas, and con
 2. Create a new folder: `your-mcp-name/`.
 3. Write a `manifest.json` (schema below).
 4. Write a `README.md` (template at the end of this file).
-5. Add your install assets — `Dockerfile`, `package.json`, `requirements.txt`, etc.
+5. Add your install assets: `Dockerfile`, `package.json`, `requirements.txt`, etc.
 6. Run `python scripts/generate-registry.py` to refresh `registry.json`.
 7. Open a PR.
 
-CI runs `scripts/generate-registry.py --check` plus validation of every `manifest.json` against the platform's manifest schema (`mcps/manifest.schema.json` in [OtoDock/oto-dock](https://github.com/OtoDock/oto-dock), fetched at the release named in `.github/workflows/validate.yml`). The maintainer review checks for the items in the **PR review checklist** at the end of this file.
+CI runs `scripts/generate-registry.py --check`. It also validates every `manifest.json` against the platform's manifest schema: `mcps/manifest.schema.json` in [OtoDock/oto-dock](https://github.com/OtoDock/oto-dock), fetched at the release named in `.github/workflows/validate.yml`. The maintainer review checks for the items in the **PR review checklist** at the end of this file.
 
-## File layout — one folder per MCP
+## File layout: one folder per MCP
 
 ```
 your-mcp-name/
@@ -44,69 +44,117 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 
 | Field | Type | Required | Purpose |
 |-------|------|----------|---------|
-| `name` | string | yes | **Canonical slug** — the key the platform looks everything up by (assignments, config, tool namespacing). Lowercase + hyphens. Convention: match the folder name (the platform keys off `name`, not the folder, but keeping them equal avoids confusion). |
+| `name` | string | yes | **Canonical slug**: the key the platform looks everything up by (assignments, config, tool namespacing). Lowercase + hyphens. Convention: match the folder name (the platform keys off `name`, not the folder, but keeping them equal avoids confusion). |
 | `server_name` | string | no | Override for the `mcpServers` config key / tool namespace prefix. Defaults to `name`. Use only when the tool namespace must differ from the slug. |
 | `label` | string | yes | Display name shown to operators. |
 | `description` | string | yes | One-line description for catalog cards. |
-| `version` | string | yes | **node/python:** leave empty (`""`) — these are unpinned and install the latest published version (the platform records the resolved version into each install's local manifest). **docker/git+:** semver, bumped on any user-visible change; a git+ entry's version moves with every ref (the registry generator refuses a moved ref under the same version). |
+| `version` | string | yes | Empty for an unpinned entry, semver for a pinned one. See below the table. |
 | `category` | string | yes | Always `"community"` here. (`core` / `custom` are platform-bundled tiers.) Community MCPs install **disabled** until an admin enables them platform-wide, then opt-in per agent. |
-| `author` | string | yes | Who wrote the server code this entry wraps, written the way its home shows it: an organisation (`"GitHub"`, `"Notion"`) or a handle (`"cameronrye"`); a vendor-hosted remote MCP names the vendor. Shown in the platform next to the MCP with a link. See [Provenance and icon](#provenance-and-icon). |
+| `author` | string | yes | Who wrote the server code this entry wraps, written the way its home shows it: an organisation (`"GitHub"`, `"Notion"`) or a handle (`"cameronrye"`). A vendor-hosted remote MCP names the vendor. Shown in the platform next to the MCP with a link. See [Provenance and icon](#provenance-and-icon). |
 | `author_url` | string | yes | Where that code lives: the repository (`https://…`), or the vendor's MCP page for a remote MCP. |
 | `server` | object | yes | Runtime + transport config (see [`server` object](#server-object)). |
-| `credentials` | object | no | How the MCP authenticates — `type: "none" \| "per_user" \| "infra"`, plus optional `oauth`, `service_account`, `webhooks`. See [Credentials](#credentials). |
+| `credentials` | object | no | How the MCP authenticates: `type: "none" \| "per_user" \| "infra"`, plus optional `oauth`, `service_account`, `webhooks`. See [Credentials](#credentials). |
 | `instances` | object | no | Admin-managed instances (URL + token, multi-host configs). See [Instances](#instances-object-admin-managed-credentialsconfig). |
-| `config` | array | no | Admin-managed key/value config exposed in the dashboard. `user_overridable: true` lets each user override a value. From OtoDock 1.8.0 a row's `default` reaches the MCP until an admin saves another value; on an older platform only a saved value does, so a default that must hold everywhere (a safety setting) also goes in `env`, which a saved value overrides. |
+| `config` | array | no | Admin-managed key/value config exposed in the dashboard. `user_overridable: true` lets each user override a value. See below the table. |
 | `env` | object | no | Static env vars set on every launch (Docker `.env` write, or every stdio session start). |
 | `agent_env` | object | no | Per-session env vars resolved at session start. Use `${session.*}` tokens. |
-| `path_env` | object | no | Workspace-relative paths declared by role — see [Path conventions](#path-conventions--shared-contract). |
-| `skills` | array | no | Agent Skills attached when the MCP is assigned — inlined (`loading: "always"`) or loaded on demand by the CLI (`"on_demand"`, default). See [Skills](#skills). |
+| `path_env` | object | no | Workspace-relative paths declared by role. See [Path conventions](#path-conventions-shared-contract). |
+| `skills` | array | no | Agent Skills attached when the MCP is assigned: inlined (`loading: "always"`) or loaded on demand by the CLI (`"on_demand"`, default). See [Skills](#skills). |
 | `agent_context` | array | no | Per-session prompt blocks with `${...}` substitution / out-of-band lookups. See [Dynamic context](#dynamic-context-agent_context). |
 | `outputs` | array | no | Files the MCP writes that the platform should ferry into the workspace (screenshots, renders). See [Output relocation](#output-relocation-outputs). |
-| `result_files` | object | no | `{"tools": ["<tool>"], "subdir": "<folder>"}` (OtoDock 1.8.0): for these tools the platform saves each picture (`image` block) or file (`resource` block with a blob) a result carries under `<subdir>/` in the session's workspace and shows it in the chat, the result's text as its caption (the first `https://` URL in the text becomes its open link: never a key-bearing URL). `tools`: 1 to 64 exact names, no globs, none also under `outputs`; `subdir`: one folder name (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`, not `inbox`, `apps`, `uploads` or a Windows device name), the MCP's name when absent. Set `platform_min_version` to `1.8.0` with it. |
-| `costs` | object | no | Per-tool cost rules — see [Cost reporting](#cost-reporting-contract). |
-| `permissions` | object | no | When each tool asks a person first: `{"default_tier": "…", "rules": [{"tool": "<name or glob>", "tier": "…"}]}`, first match wins, `standard` when `default_tier` is absent; a manifest with no block runs every tool as `sensitive`. `open` never asks (honoured from an exact tool name only: a glob or a `default_tier` of `open` runs as `standard`), `standard` asks in Default, `sensitive` asks in Default and Accept Edits. Never `critical`: that tier (asks in every mode, refused in scheduled tasks) is kept for the platform's own tools that change who sees or does what inside OtoDock. CI fails a manifest that declares it, and the platform runs such a tool as `sensitive`. |
-| `assignment_mode` | enum | no | `"auto"` (default) or `"explicit"` — `explicit` blocks agent assignment until an admin configures an instance (used with `instances`). |
+| `result_files` | object | no | `{"tools": ["<tool>"], "subdir": "<folder>"}` (OtoDock 1.8.0): pictures and files a tool result carries, saved in the workspace and shown in the chat. See below the table. |
+| `costs` | object | no | Per-tool cost rules. See [Cost reporting](#cost-reporting-contract). |
+| `permissions` | object | no | When each tool asks a person first: `{"default_tier": "…", "rules": [{"tool": "<name or glob>", "tier": "…"}]}`. See below the table. |
+| `assignment_mode` | enum | no | `"auto"` (default) or `"explicit"`. `explicit` blocks agent assignment until an admin configures an instance (used with `instances`). |
 | `exclude_from` | array | no | Session contexts that should NOT load this MCP. Valid values: `"phone"`, `"task"`, `"terminal"`. |
-| `tool_filter` | object | no | `{ "arg_name": "--enabled-tools", "env_var_name"?: "...", "regex_env_var_name"?: "..." }` — advertises a runtime tool-restriction the admin drives with a regex. **Docker MCPs only** (no-op on stdio today). The container's `.env` gets `env_var_name` (default `ENABLED_TOOLS_FLAG`) = `--enabled-tools '<regex>'` and, from OtoDock 1.8.0, `regex_env_var_name` (default `ENABLED_TOOLS_REGEX`) = the regex bare, exactly as typed (empty: no filter). Prefer the bare variable in the entrypoint and keep stripping the flag as the fallback for older platforms (see `m365-mcp/docker-compose.yml`); keep `env_file: .env` in its default format. |
-| `network_targets` | array | no | Internal-LAN hosts this MCP dials (homelab MCPs). Each: `{source, host_key, port_key?, port_default?}`. The agent sandbox is network-isolated; egress to these hosts is carved only when the admin enables the MCP's `_network_access` toggle. See [Internal-network MCPs](#internal-network-mcps). |
+| `tool_filter` | object | no | `{ "arg_name": "--enabled-tools", "env_var_name"?: "...", "regex_env_var_name"?: "..." }`: advertises a runtime tool-restriction the admin drives with a regex. **Docker MCPs only** (no-op on stdio today). See below the table. |
+| `network_targets` | array | no | Internal-LAN hosts this MCP dials (homelab MCPs). Each: `{source, host_key, port_key?, port_default?}`. The agent sandbox is network-isolated. Egress to these hosts is carved only when the admin enables the MCP's `_network_access` toggle. See [Internal-network MCPs](#internal-network-mcps). |
 | `network_access_default` | bool | no | Default state of the `_network_access` admin toggle (default `true`). |
-| `sandbox` | object | no | `{ "mounts": [{host, sandbox, mode}] }` — extra bind-mounts into the bwrap sandbox. `host` honours only the `${mcp_dir}` token; both ends are allowlisted. |
+| `sandbox` | object | no | `{ "mounts": [{host, sandbox, mode}] }`: extra bind-mounts into the bwrap sandbox. `host` honours only the `${mcp_dir}` token. Both ends are allowlisted. |
 | `placement` | enum | no | `"any"` (default) or `"satellite_only"`. |
 | `requires_display` | bool | no | If `true`, the MCP is excluded on satellites known to be headless. |
 | `device_capability` | enum | no | `"computer"` / `"browser"` / `"app"` for device-control MCPs (implies remote-only + per-machine grant). See [Device-control & app-connector MCPs](#device-control--app-connector-mcps). |
 | `device_high_risk_tools` | array | no | Tool names that still prompt the user even after the device capability is granted. |
 | `companion_app` | object | no | App-connector block for MCPs that bridge to a desktop app. |
 | `system_requirements` | object | no | OS packages/runtimes the installer **enforces** at preflight. See [System requirements](#system-requirements). |
-| `requires_system_packages` | array | no | OS package names shown to admins as a **display-only** warning (the installer does not act on these — use `system_requirements` for enforcement). |
+| `requires_system_packages` | array | no | OS package names shown to admins as a **display-only** warning. The installer does not act on these: use `system_requirements` for enforcement. |
 | `patched` | bool | no | `true` if you ship patches against the upstream package. |
 | `patch_note` | string | no | One-line summary of what the patch does. |
 | `deprecated` | bool | no | If `true`, the catalog shows a deprecation banner. |
-| `platform_min_version` | semver | no | Minimum OtoDock version that supports this MCP: an older platform refuses the install with a clear message. The registry carries the higher of this value and the floor the entry's fields imply, which the generator reads from the platform's manifest schema (its `x-otodock-since` annotations): `1.7.1` for `audience`, a skill's `audience`, `replaces`, `credentials.api_key_header` and `credentials.oauth.authorization_server`; `1.8.0` for `result_files`, `tool_filter.regex_env_var_name` and a PyPI source with extras. Declare it to match (the release gate warns when it is lower). Do not add a `$schema` key to an entry: it moves the manifest hash and every install converges once. |
+| `platform_min_version` | semver | no | Minimum OtoDock version that supports this MCP: an older platform refuses the install with a clear message. See below the table. |
 | `replaces` | array | no | The sources this entry supersedes, with the credential keys the new source renames: `[{"source": "<previous source>", "credentials": {"OLD_KEY": "NEW_KEY"}}]`. Information for the admin's switch, never an authorization. See [Source changes](#source-changes). |
 
-> Some manifest fields are platform-internal and **not** for community MCPs: `requires_capability` (gates on a platform feature like audio/phone), `hosted` (OtoDock-managed relay config), and `server.proxy_callbacks` (proxy-callback auth — only the bundled file-tools MCP uses it). They're listed here only so you recognise them; a community MCP that integrates an external service never sets them.
+**`version`.** For node/python, leave it empty (`""`). These entries are unpinned and install the latest published version. The platform records the resolved version into each install's local manifest.
+
+For docker/git+, the version is semver, bumped on any user-visible change. A git+ entry's version moves with every ref: the registry generator refuses a moved ref under the same version.
+
+**`config` defaults.** From OtoDock 1.8.0 a row's `default` reaches the MCP until an admin saves another value. On an older platform only a saved value does. So a default that must hold everywhere (a safety setting) also goes in `env`, which a saved value overrides.
+
+**`result_files`.** For the tools it lists, the platform saves each picture (`image` block) or file (`resource` block with a blob) a result carries. Each one goes under `<subdir>/` in the session's workspace. The chat shows it with the result's text as its caption. The first `https://` URL in the text becomes its open link: never a key-bearing URL.
+
+- `tools`: 1 to 64 exact names, no globs, none also under `outputs`.
+- `subdir`: one folder name (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`, not `inbox`, `apps`, `uploads` or a Windows device name). The MCP's name when absent.
+- Set `platform_min_version` to `1.8.0` with it.
+
+**`permissions`.** The first rule that matches wins, and `standard` applies when `default_tier` is absent. A manifest with no such block runs every tool as `sensitive`. The tiers:
+
+- `open` never asks. It is honoured from an exact tool name only: a glob or a `default_tier` of `open` runs as `standard`.
+- `standard` asks in Default.
+- `sensitive` asks in Default and Accept Edits.
+- Never `critical`. That tier asks in every mode and is refused in scheduled tasks. It is kept for the platform's own tools that change who sees or does what inside OtoDock. CI fails a manifest that declares it, and the platform runs such a tool as `sensitive`.
+
+**`tool_filter`.** The container's `.env` gets:
+
+- `env_var_name` (default `ENABLED_TOOLS_FLAG`) = `--enabled-tools '<regex>'`.
+- From OtoDock 1.8.0, `regex_env_var_name` (default `ENABLED_TOOLS_REGEX`) = the regex bare, exactly as typed. Empty means no filter.
+
+Prefer the bare variable in the entrypoint, and keep stripping the flag as the fallback for older platforms (see `m365-mcp/docker-compose.yml`). Keep `env_file: .env` in its default format.
+
+**`platform_min_version`.** The registry carries the higher of this value and the floor the entry's fields imply. The generator reads that floor from the platform's manifest schema (its `x-otodock-since` annotations):
+
+- `1.7.1` for `audience`, a skill's `audience`, `replaces`, `credentials.api_key_header` and `credentials.oauth.authorization_server`.
+- `1.8.0` for `result_files`, `tool_filter.regex_env_var_name` and a PyPI source with extras.
+
+Declare it to match (the release gate warns when it is lower). Do not add a `$schema` key to an entry: it moves the manifest hash and every install converges once.
+
+> Some manifest fields are platform-internal and **not** for community MCPs:
+>
+> - `requires_capability` gates on a platform feature like audio/phone.
+> - `hosted` is OtoDock-managed relay config.
+> - `server.proxy_callbacks` is proxy-callback auth. Only the bundled file-tools MCP uses it.
+>
+> These fields are listed here only so you recognise them. A community MCP that integrates an external service never sets them.
 
 ### `server` object
 
 | Field | Required | Purpose |
 |-------|----------|---------|
-| `runtime` | conditional | `"python"`, `"node"`, or `"docker"`. **Omitted for remote (vendor-hosted) MCPs** — see [Remote MCPs](#remote-vendor-hosted-mcps). |
-| `transport` | yes | `"stdio"` for python/node MCPs; `"http"` for Docker MCPs (dual SSE + **streamable HTTP**, served at `/mcp/`); `"streamable_http"` for remote MCPs. |
+| `runtime` | conditional | `"python"`, `"node"`, or `"docker"`. **Omitted for remote (vendor-hosted) MCPs**. See [Remote MCPs](#remote-vendor-hosted-mcps). |
+| `transport` | yes | `"stdio"` for python/node MCPs. `"http"` for Docker MCPs (dual SSE + **streamable HTTP**, served at `/mcp/`). `"streamable_http"` for remote MCPs. |
 | `command` | conditional | Required for stdio. The binary or script to launch (relative to the MCP folder, or a bare command like `node`). |
 | `args` | conditional | Optional args list (supports the `${mcp_dir}` token). |
-| `source` | yes | Install source. **node/python are UNPINNED** — `npm:<pkg>` / `pypi:<pkg>` (no `@version`; installs the latest published version, and the platform pins the resolved version into the install's local manifest). Pinned forms: `docker:<image>` and `git+<url>@<commit>#subdirectory=<dir>`, where `<commit>` is the full 40-character commit of the release (a tag can be moved upstream; the registry generator refuses anything else). From OtoDock 1.8.0 a `pypi:` source may name extras, `pypi:<pkg>[<extra>,<extra>]` (PEP 508 identifiers, at most 16, no spaces); an entry that does sets `platform_min_version` `1.8.0`, and adding or dropping an extra later is an ordinary update. Remote MCPs use `remote:<host>` (nothing to install — the folder copy IS the install). Only these five prefixes are accepted. |
-| `version_constraint` | no | (node/python only) Optional **auto-update bound** — a PEP 440 specifier set, e.g. `">=2,<3"` (NOT npm `^`/`~`/`x` ranges). Empty/absent ⇒ unbounded (tracks the absolute latest). When set, an upstream **major** can't auto-apply until you widen it. See [Versioning](#versioning). |
-| `port` | conditional | For Docker MCPs — the HTTP port. |
-| `url_template` | conditional | For Docker MCPs — **MUST be `http://${docker_mcp_host}:${port}`** (never hardcode `localhost`, which breaks the containerised deployment). The framework appends `/mcp/`. |
-| `health_endpoint` | no | For Docker MCPs — an HTTP health-check path (e.g. `/health`). |
-| `docker_compose` | conditional | For Docker MCPs — the compose file name. |
-| `service_name` | no | For Docker MCPs — the service-DNS name the containerised proxy dials; defaults to `name`. |
-| `image` | conditional | For Docker MCPs — a pre-built image reference: one OtoDock builds (`ghcr.io/otodock/<name>:<version>`) or the vendor's own image. **Required for the containerised deployment**, which cannot `docker build`; absent ⇒ build-from-context (bare-metal only). |
+| `source` | yes | Install source, in one of five prefixed forms. See below the table. |
+| `version_constraint` | no | (node/python only) Optional **auto-update bound**: a PEP 440 specifier set, e.g. `">=2,<3"` (NOT npm `^`/`~`/`x` ranges). Empty/absent means unbounded (tracks the absolute latest). When set, an upstream **major** can't auto-apply until you widen it. See [Versioning](#versioning). |
+| `port` | conditional | For Docker MCPs: the HTTP port. |
+| `url_template` | conditional | For Docker MCPs: **MUST be `http://${docker_mcp_host}:${port}`** (never hardcode `localhost`, which breaks the containerised deployment). The framework appends `/mcp/`. |
+| `health_endpoint` | no | For Docker MCPs: an HTTP health-check path (e.g. `/health`). |
+| `docker_compose` | conditional | For Docker MCPs: the compose file name. |
+| `service_name` | no | For Docker MCPs: the service-DNS name the containerised proxy dials. Defaults to `name`. |
+| `image` | conditional | For Docker MCPs: a pre-built image reference, either one OtoDock builds (`ghcr.io/otodock/<name>:<version>`) or the vendor's own image. **Required for the containerised deployment**, which cannot `docker build`. Absent means build-from-context (bare-metal only). |
+
+**`source`.** The install source takes one of these forms:
+
+- **node/python are UNPINNED**: `npm:<pkg>` / `pypi:<pkg>`, with no `@version`. These install the latest published version, and the platform pins the resolved version into the install's local manifest.
+- Pinned forms: `docker:<image>` and `git+<url>@<commit>#subdirectory=<dir>`. `<commit>` is the full 40-character commit of the release (a tag can be moved upstream). The registry generator refuses anything else.
+- From OtoDock 1.8.0 a `pypi:` source may name extras, `pypi:<pkg>[<extra>,<extra>]` (PEP 508 identifiers, at most 16, no spaces). An entry that does sets `platform_min_version` `1.8.0`. Adding or dropping an extra later is an ordinary update.
+- Remote MCPs use `remote:<host>`. There is nothing to install: the folder copy IS the install.
+
+Only these five prefixes are accepted.
 
 
 ### Remote (vendor-hosted) MCPs
 
-Some vendors host the MCP server themselves (Linear, Slack, Zoom) — there is
+Some vendors host the MCP server themselves (Linear, Slack, Zoom). There is
 nothing to run locally, so the manifest declares only where to connect:
 
 ```json
@@ -118,7 +166,7 @@ nothing to run locally, so the manifest declares only where to connect:
 ```
 
 `source: remote:<host>` is the marker. The installer then requires
-`url_template` + a non-stdio `transport` INSTEAD of `runtime`/`command`, and
+`url_template` + a non-stdio `transport` INSTEAD of `runtime`/`command`. It
 skips the dependency-install step entirely (the folder copy is the install).
 Authentication rides the platform's OAuth framework (`credentials.oauth`),
 exactly as for local MCPs.
@@ -127,11 +175,13 @@ exactly as for local MCPs.
 
 Pick the `credentials.type` that matches how your MCP authenticates:
 
-- **`"none"`** — no per-user secret. Stateless tools (browser, file converters). If the MCP needs admin-supplied infra config/keys, pair `type: "none"` with an [`instances`](#instances-object-admin-managed-credentialsconfig) block — the dominant pattern for community infra MCPs (Prometheus, Home Assistant, Google Maps).
-- **`"per_user"`** — username/password-style credentials each user enters in their Settings (Nextcloud, email). Add a `fields` array describing the inputs. Stored Fernet-encrypted in `user_credentials`; multi-account per user is automatic. Every field is required unless it says `"required": false` (honoured from OtoDock 1.8.0; an older platform requires every field, so an optional value there belongs in `config`). A field added to a shipped entry should be optional: a new required field takes the MCP away from everyone whose account lacks it.
-- **`"infra"`** — shared admin-level credentials (configured once in Admin → MCP Servers).
+- **`"none"`**: no per-user secret. Stateless tools (browser, file converters). If the MCP needs admin-supplied infra config/keys, pair `type: "none"` with an [`instances`](#instances-object-admin-managed-credentialsconfig) block. That is the dominant pattern for community infra MCPs (Prometheus, Home Assistant, Google Maps).
+- **`"per_user"`**: username/password-style credentials each user enters in their Settings (Nextcloud, email). Add a `fields` array describing the inputs. Stored Fernet-encrypted in `user_credentials`. Multi-account per user is automatic.
 
-**OAuth MCPs** (Slack, Notion, Linear, GitHub, …) declare a `credentials.oauth` block. The framework is manifest-driven — most providers are manifest-only; quirky ones add a small Python provider subclass on the platform side. Core fields:
+  Every field is required unless it says `"required": false` (honoured from OtoDock 1.8.0). An older platform requires every field, so an optional value there belongs in `config`. A field added to a shipped entry should be optional: a new required field takes the MCP away from everyone whose account lacks it.
+- **`"infra"`**: shared admin-level credentials (configured once in Admin → MCP Servers).
+
+**OAuth MCPs** (Slack, Notion, Linear, GitHub, …) declare a `credentials.oauth` block. The framework is manifest-driven. Most providers are manifest-only, and quirky ones add a small Python provider subclass on the platform side. Core fields:
 
 ```jsonc
 "credentials": {
@@ -153,11 +203,16 @@ Pick the `credentials.type` that matches how your MCP authenticates:
 }
 ```
 
-- **stdio OAuth MCPs** also declare a `path_env` entry with `role: "credentials_dir"` (below) — the framework copies the bound account's token file in at session start and writes refreshed tokens back at close.
-- **remote bearer MCPs** (`server.transport: "http"`, hosted by the vendor) set `bearer_required: true` + `proposed_hosts: ["mcp.vendor.com"]`; the platform adds the `Authorization: Bearer <token>` on the way out through its credential gateway — the token is never written into the session's config or a paired machine's disk.
-- **remote API-key-header MCPs** (a vendor server that takes a key in a header of its own, e.g. Google Maps Grounding Lite with `X-Goog-Api-Key`) declare `credentials.api_key_header: {name, value_from, proposed_hosts}` instead of `oauth`: `name` is the header, `value_from` names a `credentials.fields` password field (or an env-delivered `instances` field) the admin or user fills, `proposed_hosts` lists the vendor hosts. Streamable-HTTP transport, a literal `url_template` host among `proposed_hosts`; the gateway adds the header on the way out.
-- **`credentials.service_account: true`** (a sibling of `oauth`, not nested) lets a manager bind one of their own connected accounts as an agent's service identity, so the MCP works in agent-scope sessions (phone/task/trigger). There is no platform service-account tier.
-- **`credentials.webhooks`** declares an inbound webhook receiver (signature scheme, subscription mode, event catalog) wired automatically at install — use when the vendor pushes events you want to drive triggers.
+- **stdio OAuth MCPs** also declare a `path_env` entry with `role: "credentials_dir"` (below). The framework copies the bound account's token file in at session start and writes refreshed tokens back at close.
+- **remote bearer MCPs** (`server.transport: "http"`, hosted by the vendor) set `bearer_required: true` + `proposed_hosts: ["mcp.vendor.com"]`. The platform adds the `Authorization: Bearer <token>` on the way out through its credential gateway. The token is never written into the session's config or a paired machine's disk.
+- **remote API-key-header MCPs** declare `credentials.api_key_header: {name, value_from, proposed_hosts}` instead of `oauth`. Such an MCP is a vendor server that takes a key in a header of its own, e.g. Google Maps Grounding Lite with `X-Goog-Api-Key`. The fields:
+  - `name` is the header.
+  - `value_from` names a `credentials.fields` password field (or an env-delivered `instances` field) the admin or user fills.
+  - `proposed_hosts` lists the vendor hosts.
+
+  The transport is Streamable-HTTP, with a literal `url_template` host among `proposed_hosts`. The gateway adds the header on the way out.
+- **`credentials.service_account: true`** (a sibling of `oauth`, not nested) lets a manager bind one of their own connected accounts as an agent's service identity. The MCP then works in agent-scope sessions (phone/task/trigger). There is no platform service-account tier.
+- **`credentials.webhooks`** declares an inbound webhook receiver (signature scheme, subscription mode, event catalog) wired automatically at install. Use it when the vendor pushes events you want to drive triggers.
 
 The block above is the common case. OAuth also supports the `authorization_code_pkce`, `device_code`, `client_credentials`, and `personal_access_token` flows, plus per-vendor token-shape quirks handled by an optional platform-side provider subclass. If your provider needs a non-standard flow or token shape, describe it in your PR and a maintainer will wire the subclass.
 
@@ -180,15 +235,15 @@ The block above is the common case. OAuth also supports the `authorization_code_
 - `delivery: "env"` injects the first agent-matching instance's fields as env vars on the MCP process.
 - `delivery: "config_file"` writes a JSON config file (all agent-matching instances) the MCP reads via `config_file_arg`.
 - `max_instances: 0` means "unlimited".
-- `instances` is the standard home for community-MCP **secrets** (API keys, server URLs) — they're stored Fernet-encrypted, never on disk, since `.env` files are banned.
+- `instances` is the standard home for community-MCP **secrets** (API keys, server URLs). These secrets are stored Fernet-encrypted, never on disk, since `.env` files are banned.
 
-## Path conventions — shared contract
+## Path conventions: shared contract
 
 These rules keep MCPs working across local-sandboxed (bwrap) and remote-satellite execution targets, and across viewer/editor/manager/admin scopes.
 
 ### Tool-arg paths (`tool_arg_paths`)
 
-Tool arguments that accept an **LLM-supplied file path** (`save_path`, `attachments[].path`, `images[*].source`) MUST be declared in `tool_arg_paths` so the framework translates + **policy-gates** each path before your MCP sees it:
+Tool arguments that accept an **LLM-supplied file path** (`save_path`, `attachments[].path`, `images[*].source`) MUST be declared in `tool_arg_paths`. The framework then translates + **policy-gates** each path before your MCP sees it:
 
 ```json
 "tool_arg_paths": {
@@ -197,19 +252,27 @@ Tool arguments that accept an **LLM-supplied file path** (`save_path`, `attachme
 }
 ```
 
-Per-arg fields: `mode` (`"read"` default; `"write"` triggers push-back for Docker MCPs), `optional` (default `false`), `relative_anchor` (default `OTO_WORKSPACE_DIR`). The JSONPath subset supports `name`, `a.b`, `name[*]`, `a[*].b`.
+Per-arg fields:
 
-**Do NOT re-gate the path locally.** By the time your MCP receives the argument it has already been validated against the session's `allow_full_fs` / home-dir / agent-tree policy. A second local allowlist check (e.g. an `OTO_ALLOWED_ROOTS` `startswith`) is redundant AND breaks cross-platform (Windows flips `/`→`\`; the framework legitimately admits Desktop/home paths your allowlist wouldn't). Just `os.path.isfile(path)` and proceed. (Re-anchoring an out-of-workspace *write* into your own subfolder for UX is fine — that's not a policy check.)
+- `mode`: `"read"` by default. `"write"` triggers push-back for Docker MCPs.
+- `optional`: default `false`.
+- `relative_anchor`: default `OTO_WORKSPACE_DIR`.
+
+The JSONPath subset supports `name`, `a.b`, `name[*]`, `a[*].b`.
+
+**Do NOT re-gate the path locally.** By the time your MCP receives the argument it has already been validated against the session's `allow_full_fs` / home-dir / agent-tree policy. A second local allowlist check (e.g. an `OTO_ALLOWED_ROOTS` `startswith`) is redundant AND breaks cross-platform. Windows flips `/` to `\`, and the framework legitimately admits Desktop/home paths your allowlist wouldn't. Just `os.path.isfile(path)` and proceed.
+
+(Re-anchoring an out-of-workspace *write* into your own subfolder for UX is fine: that's not a policy check.)
 
 ### `OTO_*` env vars (auto-injected, read-only)
 
-Every **stdio** MCP launch receives these with zero manifest declaration. (Docker MCPs don't get them — they resolve paths via the `/v1/hooks/resolve-path` callback instead.)
+Every **stdio** MCP launch receives these with zero manifest declaration. (Docker MCPs don't get them: they resolve paths via the `/v1/hooks/resolve-path` callback instead.)
 
 | Env var | Value |
 |---|---|
 | `OTO_AGENT_NAME` | agent slug |
 | `OTO_USERNAME` | session username (empty for agent-scoped) |
-| `OTO_USER_SUB` | session owner's stable id (empty for agent-scoped) — use this instead of decoding any JWT |
+| `OTO_USER_SUB` | session owner's stable id (empty for agent-scoped). Use this instead of decoding any JWT. |
 | `OTO_SCOPE` | `"user"` / `"agent"` |
 | `OTO_ROLE` | `"viewer"` / `"editor"` / `"manager"` / `"admin"` / `""` |
 | `OTO_SESSION_ID` | session id |
@@ -220,11 +283,13 @@ Every **stdio** MCP launch receives these with zero manifest declaration. (Docke
 | `OTO_KNOWLEDGE_DIR` | sandbox-style knowledge dir (universal) |
 | `OTO_ALLOWED_ROOTS` | `:`-joined accessible mount roots |
 
-(The platform also injects `OTO_DEFAULT_SCOPE`, `OTO_TASK_TYPE`, and the memory toggles — the whole `OTO_` namespace is reserved and auto-injected.) Read these for scope-aware paths instead of inventing your own conventions. Empty values mean "this scope has no value for this concept" — degrade gracefully. **Community MCPs MUST NOT define env vars starting with `OTO_`.**
+The platform also injects `OTO_DEFAULT_SCOPE`, `OTO_TASK_TYPE`, and the memory toggles. The whole `OTO_` namespace is reserved and auto-injected.
+
+Read these for scope-aware paths instead of inventing your own conventions. Empty values mean "this scope has no value for this concept", so degrade gracefully. **Community MCPs MUST NOT define env vars starting with `OTO_`.**
 
 ### Path allowlists (`path_env`)
 
-If your MCP validates filesystem access against an allowlist env var, declare it via `path_env` multi-value so it resolves per-role per-scope to exactly the bwrap mount set:
+If your MCP validates filesystem access against an allowlist env var, declare it via `path_env` multi-value. The variable then resolves per-role per-scope to exactly the bwrap mount set:
 
 ```json
 "path_env": {
@@ -241,18 +306,25 @@ The valid `path_env` roles (the only ones) are:
 |---|---|---|
 | `workspace` | `/users/{u}/workspace` (user) · `/workspace` (agent) | Always present. Optional `subpath`. |
 | `user_root` | `/users/{u}` | Empty (dropped) in agent scope. Optional `subpath`. |
-| `shared_workspace` | `/workspace` | Empty for **viewer**; present for editor/manager/admin. Optional `subpath`. |
-| `config` | `/config` | **manager/admin only**; empty otherwise. (`subpath` ignored.) |
+| `shared_workspace` | `/workspace` | Empty for **viewer**, present for editor/manager/admin. Optional `subpath`. |
+| `config` | `/config` | **manager/admin only**, empty otherwise. (`subpath` ignored.) |
 | `knowledge_dir` | `/knowledge` | Every role. Optional `subpath`. |
 | `credentials_dir` | `/users/{u}/{subpath}` (user) · `/workspace/{subpath}` (agent) | **`subpath` REQUIRED.** For OAuth token dirs. |
 
-So the multi-value example above resolves to: viewer → `/users/{u}`, editor → `/users/{u}:/workspace`, manager/admin → `/users/{u}:/workspace:/config`, agent-scoped → `/workspace`. Empty resolutions are dropped before the join.
+So the multi-value example above resolves to:
 
-DO NOT bake in `Path.home()`-style defaults — the sandbox `HOME` doesn't reflect where the agent's files live, and you'll silently reject every legitimate path.
+- viewer: `/users/{u}`
+- editor: `/users/{u}:/workspace`
+- manager/admin: `/users/{u}:/workspace:/config`
+- agent-scoped: `/workspace`
+
+Empty resolutions are dropped before the join.
+
+DO NOT bake in `Path.home()`-style defaults. The sandbox `HOME` doesn't reflect where the agent's files live, and you'll silently reject every legitimate path.
 
 ### Output dirs (files your MCP creates)
 
-Prefer **reading `OTO_WORKSPACE_DIR` directly** for new MCPs. When wrapping a third-party package that reads a specific env var name internally, **declare `path_env` with `role: "workspace"`** + that env var name (e.g. workspace-mcp's `WORKSPACE_MCP_CREDENTIALS_DIR`). Anchor relative paths against the workspace; re-anchor or reject absolute paths that escape it.
+Prefer **reading `OTO_WORKSPACE_DIR` directly** for new MCPs. When wrapping a third-party package that reads a specific env var name internally, **declare `path_env` with `role: "workspace"`** + that env var name (e.g. workspace-mcp's `WORKSPACE_MCP_CREDENTIALS_DIR`). Anchor relative paths against the workspace. Re-anchor or reject absolute paths that escape it.
 
 ### Credentials dirs (OAuth tokens)
 
@@ -262,11 +334,11 @@ Declare `path_env` with `role: "credentials_dir"` + `subpath` for any MCP that r
 "path_env": { "MY_TOKEN_DIR": {"role": "credentials_dir", "subpath": "my-service-tokens"} }
 ```
 
-The platform copies tokens from the central OAuth store into the per-session dir on session start, and writes back any refreshed tokens on session close. NEVER read OAuth tokens from arbitrary host paths.
+On session start, the platform copies tokens from the central OAuth store into the per-session dir. On session close, it writes back any refreshed tokens. NEVER read OAuth tokens from arbitrary host paths.
 
 ## Output relocation (`outputs`)
 
-For MCPs that write files to a fixed directory they can't configure per-session (screenshots, renders), declare an `outputs` rule. After each matching tool call the platform moves the produced file(s) into a **flat, hidden** `<workspace>/.screenshots/` dir (kept out of platform↔satellite file-sync) and trims to `keep_recent`:
+For MCPs that write files to a fixed directory they can't configure per-session (screenshots, renders), declare an `outputs` rule. After each matching tool call, the platform moves the produced file(s) into a **flat, hidden** `<workspace>/.screenshots/` dir. That dir is kept out of the file-sync between platform and satellite. The platform trims it to `keep_recent`:
 
 ```json
 "outputs": [
@@ -279,16 +351,16 @@ For MCPs that write files to a fixed directory they can't configure per-session 
 ]
 ```
 
-- `source` — where the MCP writes. Template vars: `${mcp_dir}`, `${workspace_dir}`, `${session_id}`.
-- `destination_template` — flat target dir (files written straight in, no per-session subdir). Keep it `.`-prefixed so file-sync ignores it.
-- `after_tools` — tool names that trigger relocation; `["*"]` = every tool from this MCP.
-- `keep_recent` — keep only the N newest files (`0`/absent = keep all).
+- `source`: where the MCP writes. Template vars: `${mcp_dir}`, `${workspace_dir}`, `${session_id}`.
+- `destination_template`: flat target dir (files written straight in, no per-session subdir). Keep it `.`-prefixed so file-sync ignores it.
+- `after_tools`: tool names that trigger relocation. `["*"]` = every tool from this MCP.
+- `keep_recent`: keep only the N newest files (`0`/absent = keep all).
 
-(This is the correct mechanism for per-session output dirs — there is no `screenshots_session` path role.)
+(This is the correct mechanism for per-session output dirs: there is no `screenshots_session` path role.)
 
 ## Skills
 
-Instruction content attached to the agent when your MCP is assigned —
+Instruction content attached to the agent when your MCP is assigned, in
 [Agent Skills](https://agentskills.io) format. Declare each skill in the
 manifest and put its content under `skills/`:
 
@@ -303,36 +375,38 @@ manifest and put its content under `skills/`:
 
 **`loading` decides how the skill reaches the agent:**
 
-- `"on_demand"` (**default**) — the skill is materialized as a standard
-  `SKILL.md` folder into the session's CLI skills directory; Claude Code /
-  Codex index only its name + description and read the body when a task
+- `"on_demand"` (**default**): the skill is materialized as a standard
+  `SKILL.md` folder into the session's CLI skills directory. Claude Code /
+  Codex index only its name + description, and read the body when a task
   matches. Right for task-shaped content with a clear trigger (a production
-  workflow, a big reference). The **`description` is the activation
-  trigger** — write "what it does AND when to use it" with the words a user
-  would actually say, not a UI label. The skill may ship extra reference
-  files next to its `SKILL.md`; keep them inert (markdown/templates — no
-  executable payloads).
-- `"always"` — the full body is inlined into every session's system prompt.
-  Reserve for genuinely behavior-shaping content the agent must know before
-  deciding anything (routing judgment, when-to-use rules), and keep it lean:
-  it costs tokens in every session. Big reference material belongs in an
-  `on_demand` companion skill.
+  workflow, a big reference).
 
-Skill ids are lowercase alphanumerics with single hyphens (≤64 chars) and
-are **permanent once released** — installs key per-agent state off them, so
-never rename an id; add a new skill instead. Legacy flat files
+  The **`description` is the activation trigger**. Write "what it does AND
+  when to use it" with the words a user would actually say, not a UI label.
+  The skill may ship extra reference files next to its `SKILL.md`. Keep them
+  inert (markdown/templates, no executable payloads).
+- `"always"`: the full body is inlined into every session's system prompt.
+  Reserve it for genuinely behavior-shaping content the agent must know
+  before deciding anything (routing judgment, when-to-use rules). Keep it
+  lean: it costs tokens in every session. Big reference material belongs in
+  an `on_demand` companion skill.
+
+Skill ids are lowercase alphanumerics with single hyphens (≤64 chars). Ids
+are **permanent once released**: installs key per-agent state off them, so
+never rename an id. Add a new skill instead. Legacy flat files
 (`"file": "skills/usage.md"`) remain valid: the platform synthesizes the
 standard folder around them at load time.
 
 `default_exclude_from` lists session contexts the skill should not load in
-(`"phone"`, `"task"`, `"terminal"`, `"meeting"`, `"trigger"`) — an authoring
-decision shown to operators, not something they configure per agent.
+(`"phone"`, `"task"`, `"terminal"`, `"meeting"`, `"trigger"`). The list is
+an authoring decision shown to operators, not something they configure per
+agent.
 
 Write skills as agent-facing instructions (when to use each tool, gotchas, examples). Keep them accurate and concise. **Do not mention platform-internal auth** (the proxy session key is service-to-service and never relevant to the agent).
 
 ## Dynamic context (`agent_context`)
 
-Optional per-session prompt blocks injected into the agent's `# MCP Dynamic Context` section. Pure data — no code:
+Optional per-session prompt blocks injected into the agent's `# MCP Dynamic Context` section. Pure data, no code:
 
 ```jsonc
 "agent_context": [
@@ -344,13 +418,17 @@ Optional per-session prompt blocks injected into the agent's `# MCP Dynamic Cont
 ]
 ```
 
-A block may also run a one-shot lookup via a `builder` (calls an HTTP-class MCP tool out-of-band, exposes the result as `${result.*}`) — used e.g. to greet an inbound caller by name. Token namespaces include `${account.*}`, `${agent.*}`, `${user.*}`, `${session.*}`, `${trigger.*}`. Unknown tokens render empty; unknown block keys fail loudly at manifest load.
+A block may also run a one-shot lookup via a `builder`, used e.g. to greet an inbound caller by name. The builder calls an HTTP-class MCP tool out-of-band and exposes the result as `${result.*}`. Token namespaces include `${account.*}`, `${agent.*}`, `${user.*}`, `${session.*}`, `${trigger.*}`. Unknown tokens render empty. Unknown block keys fail loudly at manifest load.
 
 ## Cost reporting contract
 
-MCPs that hit billable APIs (image generation, premium SaaS endpoints) declare per-tool pricing in the manifest. The platform evaluates the rules at `TOOL_RESULT` time and (1) adds the cost to the user-visible total, (2) writes one `usage_records` row per (provider, model), (3) forwards an `mcp_cost` WS event so the dashboard updates live.
+MCPs that hit billable APIs (image generation, premium SaaS endpoints) declare per-tool pricing in the manifest. The platform evaluates the rules at `TOOL_RESULT` time. Then it:
 
-**MCP authors do nothing in code.** No proxy hook to call, no cost computation, no auth — pricing is data, not code.
+1. Adds the cost to the user-visible total.
+2. Writes one `usage_records` row per (provider, model).
+3. Forwards an `mcp_cost` WS event so the dashboard updates live.
+
+**MCP authors do nothing in code.** No proxy hook to call, no cost computation, no auth: pricing is data, not code.
 
 ```json
 "costs": {
@@ -367,19 +445,19 @@ MCPs that hit billable APIs (image generation, premium SaaS endpoints) declare p
 Author rules:
 
 1. **`currency` must be `"USD"`** (others are rejected).
-2. **Order specific rules first, catch-all last.** Matching is against EXPLICIT args the LLM passed — JSON-schema defaults are NOT substituted. The empty-`match` catch-all handles the default-args case.
-3. **`match` values:** a scalar matches by equality; a **list matches by membership** (collapse several arg values into one tier). All keys in `match` must be present in the call's explicit args.
-4. **`provider` is one stable tag per MCP** — something users recognise in the admin breakdown (`"image-gen"`, `"google-maps"`).
+2. **Order specific rules first, catch-all last.** Matching is against EXPLICIT args the LLM passed. JSON-schema defaults are NOT substituted. The empty-`match` catch-all handles the default-args case.
+3. **`match` values:** a scalar matches by equality. A **list matches by membership** (collapse several arg values into one tier). All keys in `match` must be present in the call's explicit args.
+4. **`provider` is one stable tag per MCP**: something users recognise in the admin breakdown (`"image-gen"`, `"google-maps"`).
 5. **Use `multiply_by` for batch tools** that bill per-item (`"multiply_by": "num_images"`). Missing/garbage values default to multiplier 1.
 6. **`amount` is the raw upstream price**, not your markup.
 7. **Don't ship `0` rules just to "report" a free tool.** Omit the `costs` block entirely if the MCP is free.
-8. **When prices change:** bump `version` for docker/git+ MCPs; for unpinned node/python MCPs (empty `version`) the change is picked up as a catalog integration update automatically. Existing `usage_records` rows are immutable; updates apply to future calls only.
+8. **When prices change:** bump `version` for docker/git+ MCPs. For unpinned node/python MCPs (empty `version`), the change is picked up as a catalog integration update automatically. Existing `usage_records` rows are immutable. Updates apply to future calls only.
 
 Malformed `costs` blocks are rejected at install time with a precise error.
 
 ## System requirements
 
-If your MCP needs OS packages or a minimum runtime, declare `system_requirements` — the installer **enforces** this at preflight (before pip/npm) and fails with a clear message if unmet:
+If your MCP needs OS packages or a minimum runtime, declare `system_requirements`. The installer **enforces** this at preflight (before pip/npm) and fails with a clear message if unmet:
 
 ```json
 "system_requirements": {
@@ -388,19 +466,27 @@ If your MCP needs OS packages or a minimum runtime, declare `system_requirements
 }
 ```
 
-There is **no `python_min`** — uv reads the upstream package's `requires-python` and fetches the right interpreter automatically. (`requires_system_packages` is a separate **display-only** field that just warns admins; it is not enforced — use `system_requirements` for anything functional.)
+There is **no `python_min`**: uv reads the upstream package's `requires-python` and fetches the right interpreter automatically. `requires_system_packages` is a separate **display-only** field that just warns admins. It is not enforced, so use `system_requirements` for anything functional.
 
 ## Internal-network MCPs
 
-MCPs that reach a host on the operator's LAN (Prometheus, Home Assistant, a NAS) declare `network_targets`. The agent sandbox is **always network-isolated** (RFC1918 + the host's own subnet are blackholed); when the admin turns on the MCP's `_network_access` toggle, the framework carves egress to **exactly** the resolved targets — nothing else. Each entry is `{source, host_key, port_key?, port_default?}`, where `source` says where the live host/port value comes from (`config` / `instance` / a credential), `host_key` names the field holding the host/IP or URL, and the port falls back to `port_key` then `port_default`.
+MCPs that reach a host on the operator's LAN (Prometheus, Home Assistant, a NAS) declare `network_targets`. The agent sandbox is **always network-isolated** (RFC1918 + the host's own subnet are blackholed). When the admin turns on the MCP's `_network_access` toggle, the framework carves egress to **exactly** the resolved targets, nothing else.
+
+Each entry is `{source, host_key, port_key?, port_default?}`:
+
+- `source` says where the live host/port value comes from (`config` / `instance` / a credential).
+- `host_key` names the field holding the host/IP or URL.
+- The port falls back to `port_key` then `port_default`.
 
 ## Device-control & app-connector MCPs
 
-MCPs that drive a real machine (screen/mouse, a logged-in browser, a desktop app) set `device_capability` (`"computer"` / `"browser"` / `"app"`). These are automatically **remote-only** and gated behind a per-machine grant the owner approves — the capability is the security boundary, so they use `assignment_mode: "auto"`. List any genuinely dangerous tools in `device_high_risk_tools` so they still prompt even after the grant. App-connector MCPs that bridge to a desktop program add a `companion_app` block. Treat all page/app content as untrusted input in your skill guidance.
+MCPs that drive a real machine (screen/mouse, a logged-in browser, a desktop app) set `device_capability` (`"computer"` / `"browser"` / `"app"`). These are automatically **remote-only** and gated behind a per-machine grant the owner approves. The capability is the security boundary, so these MCPs use `assignment_mode: "auto"`.
+
+List any genuinely dangerous tools in `device_high_risk_tools` so they still prompt even after the grant. App-connector MCPs that bridge to a desktop program add a `companion_app` block. Treat all page/app content as untrusted input in your skill guidance.
 
 ## Environment contract
 
-Community MCPs **MUST NOT** ship `.env` files. The install pipeline rejects any archive containing `.env` at any depth (only `.env.example` is permitted; the framework never reads it). The platform delivers environment values through four declared layers:
+Community MCPs **MUST NOT** ship `.env` files. The install pipeline rejects any archive containing `.env` at any depth. Only `.env.example` is permitted, and the framework never reads it. The platform delivers environment values through four declared layers:
 
 | Field | Where it lives | When evaluated | Use for |
 |---|---|---|---|
@@ -410,18 +496,18 @@ Community MCPs **MUST NOT** ship `.env` files. The install pipeline rejects any 
 | `path_env` | `manifest.json` top-level | Session start (resolved per-role per-scope) | Workspace-relative paths. |
 
 **Auto-injected, do NOT declare:**
-- `PROXY_URL` — proxy callback URL.
-- `PROXY_API_KEY` — a **session-scoped JWT** (NOT the master key), auto-injected into every stdio MCP. Use it as-is if your MCP calls the proxy; never declare it.
+- `PROXY_URL`: proxy callback URL.
+- `PROXY_API_KEY`: a **session-scoped JWT** (NOT the master key), auto-injected into every stdio MCP. Use it as-is if your MCP calls the proxy. Never declare it.
 - The `OTO_*` set (see above).
 
-**The master `PROXY_API_KEY` is never given to any MCP, and you cannot template it in.** Both `${platform.api_key}` and `${proxy_api_key}` are **rejected at resolution time** — a manifest can never pull the master key into a config file or container. (A Docker MCP that needs to call the proxy back uses `server.proxy_callbacks`, which injects a per-session JWT bearer — but that's a platform/core concern; community MCPs integrate external services and don't call the proxy.)
+**The master `PROXY_API_KEY` is never given to any MCP, and you cannot template it in.** Both `${platform.api_key}` and `${proxy_api_key}` are **rejected at resolution time**: a manifest can never pull the master key into a config file or container. (A Docker MCP that needs to call the proxy back uses `server.proxy_callbacks`, which injects a per-session JWT bearer. But that's a platform/core concern: community MCPs integrate external services and don't call the proxy.)
 
 **Token namespaces** for `${...}` references inside manifest values:
 
-- `${platform_root}`, `${proxy_url}`, `${agent_name}`, `${mcp_dir}`, `${port}` — manifest-static.
-- `${platform.proxy_url_for_docker}`, `${platform.wopi_base_url}`, `${platform.collabora_frame_ancestors}`, `${platform.collabora_service_root}`, `${platform.host_agents_dir}`, `${platform.mcp_port}`, `${platform.oauth_insecure_transport}` — platform config (mainly for Docker MCP `env` blocks).
-- `${session.task_owner}`, `${session.task_username}`, `${session.task_scope}`, `${session.chat_id}` — per-session context (for stdio `agent_env`; resolves to `""` outside a real session).
-- `${config:mcp_name:key}` — read a config value from another MCP's DB config.
+- `${platform_root}`, `${proxy_url}`, `${agent_name}`, `${mcp_dir}`, `${port}`: manifest-static.
+- `${platform.proxy_url_for_docker}`, `${platform.wopi_base_url}`, `${platform.collabora_frame_ancestors}`, `${platform.collabora_service_root}`, `${platform.host_agents_dir}`, `${platform.mcp_port}`, `${platform.oauth_insecure_transport}`: platform config (mainly for Docker MCP `env` blocks).
+- `${session.task_owner}`, `${session.task_username}`, `${session.task_scope}`, `${session.chat_id}`: per-session context (for stdio `agent_env`). Resolves to `""` outside a real session.
+- `${config:mcp_name:key}`: read a config value from another MCP's DB config.
 - Inside an `outputs[]` block: `${workspace_dir}`, `${session_id}`.
 
 ## PR review checklist
@@ -429,19 +515,21 @@ Community MCPs **MUST NOT** ship `.env` files. The install pipeline rejects any 
 Maintainers reviewing community MCP PRs verify:
 
 - [ ] All path-bearing env vars declared via `path_env` (no hardcoded defaults).
-- [ ] LLM-supplied tool-arg paths declared via `tool_arg_paths`; the MCP does NOT re-gate them locally.
+- [ ] LLM-supplied tool-arg paths declared via `tool_arg_paths`.
+- [ ] The MCP does NOT re-gate those paths locally.
 - [ ] No `OTO_*` env vars defined by the MCP.
 - [ ] No reads from `~/.ssh/`, `~/.aws/`, `~/.config/gcloud`, etc. without an explicit user-supplied path.
 - [ ] If the MCP has an allowlist, it's wired via `path_env` multi-value.
 - [ ] README documents tool-arg path expectations (relative vs absolute).
 - [ ] **No `.env` file in the archive** (rejected at install time).
 - [ ] No manifest reference to the master key (`${platform.api_key}` / `${proxy_api_key}` are rejected).
-- [ ] All env vars the source reads are declared in `manifest.json` (`env` / `agent_env` / `path_env` / `instances`) — none undeclared.
+- [ ] All env vars the source reads are declared in `manifest.json` (`env` / `agent_env` / `path_env` / `instances`), none undeclared.
 - [ ] Source reads `OTO_SESSION_ID`, NOT `CLAUDE_SESSION_ID`.
 - [ ] Docker MCPs use `url_template: http://${docker_mcp_host}:${port}` and ship a pre-built `server.image`.
-- [ ] If the MCP hits a billable upstream API, a `costs` block is declared (pricing in the manifest only — never POST cost from the server).
+- [ ] If the MCP hits a billable upstream API, a `costs` block is declared. Pricing is in the manifest only: never POST cost from the server.
 - [ ] OS deps that must be present are in `system_requirements` (enforced), not just `requires_system_packages` (display-only).
-- [ ] `author` / `author_url` name the upstream project whose server code the entry wraps; an `icon.png`, if present, is that project's official mark, unaltered and permitted for this use, with its source recorded in the README (see [Provenance and icon](#provenance-and-icon)).
+- [ ] `author` / `author_url` name the upstream project whose server code the entry wraps.
+- [ ] An `icon.png`, if present, is the upstream project's official mark, unaltered and permitted for this use. Its source is recorded in the README (see [Provenance and icon](#provenance-and-icon)).
 - [ ] `registry.json` regenerated (`python scripts/generate-registry.py`) and committed.
 
 ## Provenance and icon
@@ -460,15 +548,16 @@ the upstream project.
   page about its MCP server.
 - `icon.png` is optional: a 256×256 PNG, the project's **official** mark
   taken from its brand page or repository, unaltered. Scaling and centring
-  on a transparent canvas with clear space is fine; recolouring, cropping,
+  on a transparent canvas with clear space is fine. Recolouring, cropping,
   adding a background or combining it with anything else is not. The
-  purpose is to identify the integration, nothing more. Before adding one,
-  read the owner's trademark or brand guidelines: many require written
-  permission for third-party use, exclude commercial use, or allow the mark
-  only in specific placements. When the terms do not clearly permit this
-  use, ship no icon (the platform draws a letter tile) and say why in the
-  README. Record the asset's source URL and the permitting guideline in the
-  README's field table under `Icon`.
+  purpose is to identify the integration, nothing more.
+
+  Before adding one, read the owner's trademark or brand guidelines: many
+  require written permission for third-party use, exclude commercial use, or
+  allow the mark only in specific placements. When the terms do not clearly
+  permit this use, ship no icon (the platform draws a letter tile) and say
+  why in the README. Record the asset's source URL and the permitting
+  guideline in the README's field table under `Icon`.
 - `icon.png` is not part of `manifest_hash`: an icon-only change does not
   reach existing installs by itself. Pair it with a manifest change or a
   version bump when installs should pick it up.
@@ -507,21 +596,53 @@ firewall rules to open, common gotchas, links to upstream docs.>
 
 ## Versioning
 
-This repo follows semver tags (`v0.1.0`, `v0.2.0`, …). The platform reads `registry.json` from `main`; pinning a release to a tag is a roadmap item.
+This repo follows semver tags (`v0.1.0`, `v0.2.0`, …). The platform reads `registry.json` from `main`. Pinning a release to a tag is a roadmap item.
 
-**node/python MCPs are unpinned.** Their `source` is a bare package pointer (`npm:<pkg>` / `pypi:<pkg>`) and `version` is `""`. The upstream registry (npm / PyPI) is the version of record: a fresh install pulls the latest, the platform records the resolved concrete version into the install's local manifest, and a weekly auto-update keeps installs current. Do **not** bump these in the catalog when upstream publishes, and do **not** commit `package.json` / `package-lock.json` for node MCPs — the platform generates `package.json` from `source` at install time, and a committed lockfile would pin a stale version and defeat "pull latest".
+**node/python MCPs are unpinned.** Their `source` is a bare package pointer (`npm:<pkg>` / `pypi:<pkg>`) and `version` is `""`. The upstream registry (npm / PyPI) is the version of record:
 
-**The trust tier.** `registry.json` carries a `trust` per entry, shown as a badge in Browse: `first-party` (OtoDock writes or forks the server), `maintained` (the vendor's own server, reviewed by the catalog) or `third-party` (a community package that follows its upstream; the default). It is set in `scripts/generate-registry.py`'s `TRUST` map by the maintainers, never in `manifest.json` (it would move every entry's `manifest_hash`).
+- A fresh install pulls the latest.
+- The platform records the resolved concrete version into the install's local manifest.
+- A weekly auto-update keeps installs current.
 
-**docker and git+ MCPs stay pinned.** A docker entry runs an image OtoDock builds from the folder (`ghcr.io/otodock/<name>`, published by the catalog's image workflow) or, when the vendor publishes a maintained multi-arch image, the vendor's own image by its tag (no Dockerfile in the folder; nothing is built). Either way `version` equals the image tag. A git+ entry pins the commit of a release tag (`@<40-hex sha>`, so a moved tag cannot change what installs get) and `version` is that tag, moving with every ref: an install reads a new version as the release ("x.y.z available"), and from OtoDock 1.8.0 the weekly update builds it. Bump these in the catalog on each new release; the maintainers run a weekly job that proposes the bumps.
+Do **not** bump these in the catalog when upstream publishes. Do **not** commit `package.json` / `package-lock.json` for node MCPs: the platform generates `package.json` from `source` at install time. A committed lockfile would pin a stale version and defeat "pull latest".
 
-**Bounding node/python auto-update (`version_constraint`).** By default node/python track the absolute latest. If an upstream package makes breaking changes across majors, set `server.version_constraint` (e.g. `">=2,<3"`) so auto-update stays within the validated range. To adopt a new major: update the manifest's integration fields (e.g. `args`, `oauth`) for the new version **and** widen the bound in the same change — installs pick up both on the next update. Any catalog manifest edit (args/oauth/skills/constraint) is detected as an "integration update" and re-applied to installs automatically, so you don't need to bump a version to push an integration fix.
+**The trust tier.** `registry.json` carries a `trust` per entry, shown as a badge in Browse:
 
-**An install ahead of the catalog is left alone.** The platform never moves an install back to an older catalog version on its own (an out-of-band deploy, a newer zip): the update check reports a container entry or a skill package that is ahead (an npm/pypi install is never ahead of an unbounded entry), and only an admin's explicit revert from the MCP Servers page applies the catalog's version. A fix therefore ships as a newer version, not as a rollback.
+- `first-party`: OtoDock writes or forks the server.
+- `maintained`: the vendor's own server, reviewed by the catalog.
+- `third-party`: a community package that follows its upstream (the default).
+
+The maintainers set the tier in `scripts/generate-registry.py`'s `TRUST` map, never in `manifest.json` (it would move every entry's `manifest_hash`).
+
+**docker and git+ MCPs stay pinned.** A docker entry runs one of two kinds of image:
+
+- An image OtoDock builds from the folder (`ghcr.io/otodock/<name>`, published by the catalog's image workflow).
+- When the vendor publishes a maintained multi-arch image, the vendor's own image by its tag. The folder has no Dockerfile, and nothing is built.
+
+Either way `version` equals the image tag.
+
+A git+ entry pins the commit of a release tag (`@<40-hex sha>`), so a moved tag cannot change what installs get. Its `version` is that tag, moving with every ref. An install reads a new version as the release ("x.y.z available"), and from OtoDock 1.8.0 the weekly update builds it.
+
+Bump docker and git+ MCPs in the catalog on each new release. The maintainers run a weekly job that proposes the bumps.
+
+**Bounding node/python auto-update (`version_constraint`).** By default node/python track the absolute latest. If an upstream package makes breaking changes across majors, set `server.version_constraint` (e.g. `">=2,<3"`) so auto-update stays within the validated range. To adopt a new major: update the manifest's integration fields (e.g. `args`, `oauth`) for the new version **and** widen the bound in the same change. Installs pick up both on the next update.
+
+Any catalog manifest edit (args/oauth/skills/constraint) is detected as an "integration update" and re-applied to installs automatically. So you don't need to bump a version to push an integration fix.
+
+**An install ahead of the catalog is left alone.** The platform never moves an install back to an older catalog version on its own (an out-of-band deploy, a newer zip). The update check reports a container entry or a skill package that is ahead. An npm/pypi install is never ahead of an unbounded entry.
+
+Only an admin's explicit revert from the MCP Servers page applies the catalog's version. A fix therefore ships as a newer version, not as a rollback.
 
 ## Source changes
 
-The source of an entry is its identity: the registry and package of an `npm:`/`pypi:` source, the image repository of a container (`server.image`, tag aside), the scheme, host, repository and subdirectory of a `git+` source, the host of a remote MCP's `url_template`. Moving an entry to another source (another upstream package, a new image repository, a vendor's new endpoint) is never applied to an install by the automatic update: the platform shows the admin the old and the new source and the admin switches it, keeping the install's name, settings, credentials and agent assignments.
+The source of an entry is its identity:
+
+- The registry and package of an `npm:`/`pypi:` source.
+- The image repository of a container (`server.image`, tag aside).
+- The scheme, host, repository and subdirectory of a `git+` source.
+- The host of a remote MCP's `url_template`.
+
+Moving an entry to another source (another upstream package, a new image repository, a vendor's new endpoint) is never applied to an install by the automatic update. The platform shows the admin the old and the new source, and the admin switches it. The switch keeps the install's name, settings, credentials and agent assignments.
 
 Declare the move so the admin sees it as intended:
 
@@ -536,7 +657,7 @@ Declare the move so the admin sees it as intended:
 ```
 
 - `source` is the previous source as a string: the package pointer, the previous `server.image` for a container, the previous host or URL for a remote MCP. It is matched by identity, so a version, tag or ref difference does not matter.
-- `credentials` maps the old credential, instance-field or config keys to the new ones; the switch renames the stored values where the new key holds nothing yet, within the same block (a key moved between blocks is not renamed). A key is a plain identifier (no leading `_`).
+- `credentials` maps the old credential, instance-field or config keys to the new ones. The switch renames the stored values where the new key holds nothing yet, within the same block. A key moved between blocks is not renamed. A key is a plain identifier (no leading `_`).
 - A source change without a `replaces` entry naming the installed source is shown to admins as unexplained, with a warning to verify the new source before switching. Keep the entry's `name`: a renamed entry is a new MCP, not a move.
 
 The registry carries two fields for this besides `source`: `image` (a container's `server.image`) and `url_host` (a remote MCP's endpoint host), both generated from the manifest.

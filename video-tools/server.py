@@ -377,12 +377,15 @@ TOOLS = [
             "Validate a composition (structure, files, transition feasibility, "
             "parameter ranges) and print the computed timeline — every base "
             "clip's start/end after transition overlaps. Renders run this "
-            "automatically."
+            "automatically. format=json answers the same as data (issues, "
+            "duration, base clips with their places, the other tracks' clips) "
+            "for a page that draws the timeline."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Composition file path"},
+                "format": {"type": "string", "enum": ["text", "json"], "default": "text"},
             },
             "required": ["path"],
         },
@@ -406,6 +409,12 @@ TOOLS = [
             "27) — use ~28 to hit small web/site size budgets.\n"
             "range=[start,end] renders just that timeline slice (preview a "
             "transition without rendering the whole video).\n"
+            "background=true checks the composition and every path, starts the "
+            "render and answers at once with a job_id: ask render_status(job_id) "
+            "how far it is and for its report, cancel_render(job_id) to stop it. "
+            "A render writes beside its output under a hidden name and takes the "
+            "output's name only when it succeeded. A job lives as long as this "
+            "tool runs: after a restart render_status answers lost.\n"
             "Workflow: preview → render_frames to inspect → adjust → final."
         ),
         inputSchema={
@@ -422,6 +431,53 @@ TOOLS = [
                     "type": "integer", "minimum": 0, "maximum": 51,
                     "description": "x264 CRF override (final defaults 18, preview 27); ~28 for ≤20 MB site MP4s",
                 },
+                "background": {
+                    "type": "boolean", "default": False,
+                    "description": "Start the render and answer at once with a job_id (see render_status)",
+                },
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
+        name="render_status",
+        description=(
+            "How far a background render is: state (waiting, running, done, "
+            "failed, cancelled, lost), percent, output, and when done the "
+            "render's report (loudness, true peak, warnings), when failed its "
+            "error. lost: the tool restarted, or the render ended over six "
+            "hours ago."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {"job_id": {"type": "string", "maxLength": 64}},
+            "required": ["job_id"],
+        },
+    ),
+    Tool(
+        name="cancel_render",
+        description="Stop a background render: its encode ends and its partial file is removed.",
+        inputSchema={
+            "type": "object",
+            "properties": {"job_id": {"type": "string", "maxLength": 64}},
+            "required": ["job_id"],
+        },
+    ),
+    Tool(
+        name="render_filmstrip",
+        description=(
+            "One small JPEG of `count` frames spread over a clip, each `height` "
+            "pixels tall, side by side: a timeline's thumbnails from one file. "
+            "Answers its path, the frame width and each frame's time. Written "
+            "beside the clip unless output_path is given."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Video file path"},
+                "count": {"type": "integer", "minimum": 2, "maximum": 60, "default": 10},
+                "height": {"type": "integer", "minimum": 32, "maximum": 240, "default": 90},
+                "output_path": {"type": "string", "description": "Optional output path (.jpg)"},
             },
             "required": ["path"],
         },
@@ -640,9 +696,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handlers = {}
     # Lazy-load handlers to keep startup fast (librosa/cv2 imports are heavy).
     if name in ("probe_media", "analyze_video", "analyze_audio", "sample_frames",
-                "align_audio"):
+                "align_audio", "render_filmstrip"):
         import analysis
         handlers = {
+            "render_filmstrip": analysis.handle_render_filmstrip,
             "probe_media": analysis.handle_probe_media,
             "analyze_video": analysis.handle_analyze_video,
             "analyze_audio": analysis.handle_analyze_audio,
@@ -650,9 +707,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "align_audio": analysis.handle_align_audio,
         }
     elif name in ("create_composition", "edit_composition",
-                  "validate_composition", "render_composition", "render_frames"):
+                  "validate_composition", "render_composition", "render_frames",
+                  "render_status", "cancel_render"):
         import project
         handlers = {
+            "render_status": project.handle_render_status,
+            "cancel_render": project.handle_cancel_render,
             "create_composition": project.handle_create_composition,
             "edit_composition": project.handle_edit_composition,
             "validate_composition": project.handle_validate_composition,
@@ -719,6 +779,13 @@ async def handle_health(request):
     return JSONResponse({"status": "ok"})
 
 
+async def handle_busy(request):
+    """Whether a background render waits or runs: the platform keeps the
+    tool awake while it says so (the manifest's ``busy_endpoint``)."""
+    import jobs
+    return JSONResponse({"busy": jobs.busy()})
+
+
 @asynccontextmanager
 async def lifespan(app):
     async with session_manager.run():
@@ -731,6 +798,7 @@ starlette_app = Starlette(
         Mount("/messages/", app=sse.handle_post_message),
         Mount("/mcp", app=mcp_asgi_app),
         Route("/health", endpoint=handle_health),
+        Route("/busy", endpoint=handle_busy),
     ],
     lifespan=lifespan,
 )

@@ -36,7 +36,7 @@ def _run(coro):
 
 
 def test_still_png_dimensions_and_scale(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     from PIL import Image
 
     out1 = str(tmp_path / "card.png")
@@ -53,7 +53,7 @@ def test_still_png_dimensions_and_scale(tmp_path, monkeypatch):
 
 
 def test_still_transparent_has_alpha(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     import numpy as np
     from PIL import Image
 
@@ -72,7 +72,7 @@ def test_still_transparent_has_alpha(tmp_path, monkeypatch):
 
 
 def test_still_jpeg_and_bad_args(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     from PIL import Image
 
     out = str(tmp_path / "card.jpg")

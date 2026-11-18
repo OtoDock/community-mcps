@@ -1,8 +1,9 @@
 {
   "name": "video-tools",
   "label": "Video Tools",
-  "description": "Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and analysis — rendered with FFmpeg",
-  "version": "0.4.6",
+  "description": "Agent-driven video editing, rendered with FFmpeg: composition timelines, transitions, captions, color grading, music sync, and analysis",
+  "version": "0.4.8",
+  "platform_min_version": "1.7.0",
   "category": "community",
   "author": "OtoDock",
   "author_url": "https://github.com/OtoDock/community-mcps/tree/main/video-tools",
@@ -12,8 +13,10 @@
     "docker_compose": "docker-compose.yml",
     "port": 8933,
     "health_endpoint": "/health",
+    "busy_endpoint": "/busy",
+    "tool_timeout_sec": 3600,
     "url_template": "http://${docker_mcp_host}:${port}",
-    "image": "ghcr.io/otodock/video-tools:0.4.6",
+    "image": "ghcr.io/otodock/video-tools:0.4.8",
     "source": "docker:video-tools-mcp (ffmpeg + libass)",
     "proxy_callbacks": true
   },
@@ -66,6 +69,10 @@
       },
       {
         "tool": "align_audio",
+        "tier": "open"
+      },
+      {
+        "tool": "render_status",
         "tier": "open"
       }
     ]

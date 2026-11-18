@@ -120,6 +120,7 @@ def test_render_budget_env_override(monkeypatch):
 
 def test_render_budget_honors_cgroup_limit(monkeypatch):
     monkeypatch.delenv("VIDEO_TOOLS_RENDER_BUDGET_MB", raising=False)
+    monkeypatch.setattr(renderer, "MAX_RENDERS", 1)
     monkeypatch.setattr(renderer, "_cgroup_memory_limit_bytes", lambda: 4e9)
     assert renderer._render_budget_bytes() == 4e9 * 0.4
     monkeypatch.setattr(renderer, "_cgroup_memory_limit_bytes", lambda: 2e9)
@@ -133,3 +134,14 @@ def test_video_encode_args_strip_audio():
     assert renderer._video_encode_args(args) == [
         "-c:v", "libx264", "-preset", "slow", "-crf", "18",
         "-profile:v", "high", "-movflags", "+faststart"]
+
+
+def test_the_manifest_lets_a_call_run_as_long_as_a_final_render():
+    """An engine ends a tool call at its own limit (Codex's is 60 s with none
+    declared): the manifest declares one at least as long as the longest
+    render, within the platform's bound of an hour."""
+    import json
+    manifest = json.loads((Path(__file__).parent.parent / "manifest.json").read_text())
+    limit = manifest["server"].get("tool_timeout_sec")
+    assert isinstance(limit, int) and renderer.FINAL_TIMEOUT_S <= limit <= 3600
+    assert renderer.PREVIEW_TIMEOUT_S < renderer.FINAL_TIMEOUT_S

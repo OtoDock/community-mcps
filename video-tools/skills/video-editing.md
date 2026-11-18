@@ -456,3 +456,9 @@ convert it in a composition.
   hand-offs to an editor.
 - Renders are CPU-bound and serialized (two at a time) — batch your
   iteration into preview+frames rounds rather than many tiny final renders.
+- **A long render in the background.** `render_composition` with
+  `background=true` checks the composition, starts the render and answers
+  at once with a `job_id`. Ask `render_status(job_id)` for its percent and,
+  when it is done, its report; `cancel_render(job_id)` stops it. An app's
+  Export button works this way, since a button's call waits a minute at
+  most. The output takes its name only when the render succeeded.

@@ -635,10 +635,16 @@ def _validate_clip(clip: dict, kind: str, where: str, issues: list,
     if not isinstance(clip, dict):
         _issue(issues, "error", where, "clip must be an object")
         return
+    if "fill" in clip and not color_mod.is_colour(clip["fill"]):
+        _issue(issues, "error", where, "fill must be a colour, such as #0a0a12 or black")
     unknown = set(clip) - _CLIP_KEYS
-    if unknown:
+    own = sorted(k for k in unknown if isinstance(k, str) and k.startswith("_"))
+    if own:
+        # The renderer's own keys name files it staged: never from a file.
+        _issue(issues, "error", where, f"keys that start with an underscore are not allowed: {own}")
+    if unknown - set(own):
         _issue(issues, "warning", where,
-               f"unknown clip keys ignored: {sorted(unknown)}")
+               f"unknown clip keys ignored: {sorted(unknown - set(own))}")
     try:
         skind = clip_source_kind(clip)
     except CompositionError as exc:
@@ -819,10 +825,14 @@ def _validate_clip(clip: dict, kind: str, where: str, issues: list,
                            f"effect type must be one of {EFFECT_TYPES}")
                     continue
                 if eff["type"] in ("chromakey", "colorkey"):
+                    if "color" in eff and not color_mod.is_colour(eff["color"]):
+                        _issue(issues, "error", ew, "color must be a colour, such as #00ff00 or green")
                     if "similarity" in eff and not _num(eff["similarity"], 0.01, 1.0):
                         _issue(issues, "error", ew, "similarity must be 0.01–1")
                     if "blend" in eff and not _num(eff["blend"], 0.0, 1.0):
                         _issue(issues, "error", ew, "blend must be 0–1")
+                elif eff.get("channel", "green") not in ("green", "blue"):
+                    _issue(issues, "error", ew, "despill channel must be green or blue")
 
     mask = clip.get("mask")
     if mask is not None:
@@ -1046,6 +1056,8 @@ def validate(comp: dict, exists=None, media_info: dict | None = None) -> list[di
                '{"width": 1920, "height": 1080, "fps": 30, '
                '"background": "#000000"} (1080x1920 for vertical)')
         return issues
+    if "background" in proj and not color_mod.is_colour(proj["background"]):
+        _issue(issues, "error", "project", "background must be a colour, such as #000000 or black")
     w, h, fps = proj.get("width"), proj.get("height"), proj.get("fps", 30)
     if not _num(w, 16, 4096) or not _num(h, 16, 4096):
         _issue(issues, "error", "project", "width/height must be 16–4096")
@@ -1386,8 +1398,12 @@ def apply_operations(comp: dict, operations: list[dict]) -> tuple[dict, list[str
                         f"update_clip: no clip at index {idx} "
                         f"(track has {len(clips)})")
                 patch = op.get("patch")
-                if not isinstance(patch, dict):
-                    raise CompositionError("update_clip needs a patch object")
+                if patch is None:
+                    # A flat op: the clip's own fields beside track and index
+                    # (an app's button sends plain fields, never an object).
+                    patch = {k: v for k, v in op.items() if k in _CLIP_KEYS}
+                if not isinstance(patch, dict) or not patch:
+                    raise CompositionError("update_clip needs a patch object or the clip's fields")
                 _merge_patch(clips[idx], patch)
                 results.append(f"ok: updated {track['kind']}[{idx}] "
                                f"({', '.join(patch)})")

@@ -88,9 +88,16 @@ async def ensure_trf(src: str, span: tuple[float, float] | None,
     best-effort. Returns ``(cache_hit, sidecar_path_or_None)``.
     """
     cache = sidecar_path(src, span, shakiness)
-    if cache.exists():
-        shutil.copyfile(cache, staged)
-        return True, str(cache)
+    # The cache beside the source is read only as the platform judges it for
+    # the session, like any file the session names; a refusal is a miss.
+    from shared import _read_beside, _write_beside
+    cached = _read_beside(str(cache))
+    if cached and Path(cached).exists():
+        shutil.copyfile(cached, staged)
+        return True, cached
+    # The cache is written beside the source only where the session may
+    # write (judged by the proxy); else the transform stays in this render.
+    judged = _write_beside(str(cache))
 
     pre = ""
     if span is not None:
@@ -99,9 +106,11 @@ async def ensure_trf(src: str, span: tuple[float, float] | None,
           f"vidstabdetect=shakiness={int(shakiness)}:result={staged}")
     await run_ffmpeg(["-i", src, "-vf", vf, "-f", "null", "-"],
                      timeout=1800, heavy=True)
+    if judged is None:
+        return False, None
     try:
-        shutil.copyfile(staged, cache)
-        return False, str(cache)
+        shutil.copyfile(staged, judged)
+        return False, judged
     except OSError as exc:
         logger.warning("stab cache write failed (non-fatal): %s", exc)
         return False, None

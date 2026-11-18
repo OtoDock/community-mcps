@@ -27,6 +27,10 @@ MATCH_KEYS = ("ref", "ramp_from", "ramp_to", "strength", "target_time")
 
 _QUANTILES = (0.0, 0.02, 0.1, 0.25, 0.5, 0.75, 0.9, 0.98, 1.0)
 _STATS_MAX_WIDTH = 480
+# A probe and one frame's decode end within these: a stuck read never
+# holds a render, and with it the tool's busy answer, for good.
+_PROBE_TIMEOUT_S = 30
+_FRAME_TIMEOUT_S = 60
 
 
 def parse_ref(ref: str) -> tuple[str, float]:
@@ -49,13 +53,13 @@ def _frame_size(path: str) -> tuple[int, int]:
 
     from fftools import FFPROBE
 
-    out = subprocess.run(
-        [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=width,height", "-of", "csv=p=0", path],
-        capture_output=True, text=True)
     try:
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S)
         w, h = [int(x) for x in out.stdout.strip().split(",")[:2]]
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired):
         raise ValueError(f"could not read the frame size of '{path}'")
     return w, h
 
@@ -79,11 +83,14 @@ def _grab_frames(path: str, times: list[float], head: str = ""):
     vf = ",".join(f for f in (head, f"scale={ow}:{oh}:flags=area", "format=bgr24") if f)
     frames = []
     for t in times:
-        proc = subprocess.run(
-            [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
-             "-ss", f"{max(0.0, t):.3f}", "-i", path, "-vf", vf,
-             "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
-            capture_output=True)
+        try:
+            proc = subprocess.run(
+                [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
+                 "-ss", f"{max(0.0, t):.3f}", "-i", path, "-vf", vf,
+                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+                capture_output=True, timeout=_FRAME_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            continue   # a frame that never decodes reads like an unreadable one
         buf = proc.stdout
         if proc.returncode != 0 or len(buf) != ow * oh * 3:
             continue   # past the end / unreadable — like a failed cv2 read

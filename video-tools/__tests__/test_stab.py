@@ -94,3 +94,36 @@ def test_ensure_trf_full_file_has_no_trim(tmp_path, monkeypatch):
     staged = tmp_path / "s.trf"
     asyncio.run(stab.ensure_trf(str(src), None, 9, str(staged)))
     assert captured["vf"].startswith("setpts=PTS-STARTPTS,vidstabdetect=shakiness=9")
+
+
+def test_a_cache_the_session_may_not_read_is_a_miss(tmp_path, monkeypatch):
+    """The cache beside a source is read only as the platform judges it: a
+    refused name is never copied, the detect pass runs instead."""
+    import shared
+    from conftest import REAL_READ_BESIDE
+    monkeypatch.setattr(shared, "_read_beside", REAL_READ_BESIDE)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"x")
+    cache = stab.sidecar_path(str(src), None, 6)
+    cache.write_text("NOT JUDGED\n")
+    asked: list = []
+
+    def refuse(path, writing=False):
+        asked.append((path, writing))
+        raise ValueError("denied")
+    ran: list = []
+
+    async def fake_run(args, timeout=0, heavy=True):
+        ran.append(args)
+        vf = args[args.index("-vf") + 1]
+        with open(vf.split("result=")[1], "w") as fh:
+            fh.write("VID.STAB 1\n")
+        return b"", ""
+    monkeypatch.setattr(shared, "_resolve_path", refuse)
+    monkeypatch.setattr(stab, "run_ffmpeg", fake_run)
+    staged = tmp_path / "work" / "stab0.trf"
+    staged.parent.mkdir()
+    hit, _ = asyncio.run(stab.ensure_trf(str(src), None, 6, str(staged)))
+    assert hit is False and len(ran) == 1
+    assert staged.read_text().startswith("VID.STAB")
+    assert (str(cache), False) in asked

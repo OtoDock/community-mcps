@@ -25,7 +25,14 @@ import color as color_mod
 import slowmo as slowmo_mod
 import stab as stab_mod
 from fftools import FFmpegError, atempo_chain, audio_stream, media_duration, probe, run_ffmpeg, stream_color, stream_fps, stream_rotation, video_stream
-from shared import _normalize_operations, _notify_file_written, _op_type, _resolve_path, _to_agents_relative
+from shared import (
+    _normalize_operations,
+    _notify_file_written,
+    _on_a_computer,
+    _op_type,
+    _resolve_path,
+    _to_agents_relative,
+)
 
 _ENCODE = ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
@@ -69,6 +76,9 @@ async def handle_edit_video(args: dict):
     src = _resolve_path(args["path"])
     if not Path(src).exists():
         return f"Error: file not found: {args['path']}"
+    if not args.get("output_path") and _on_a_computer(src):
+        return ("Error: this video is on a computer, so its folder is not a place to write. "
+                "Pass output_path, such as a path in the workspace.")
     operations = _normalize_operations(args.get("operations"))
     if not operations:
         return ("Error: no operations given. Supported: "
@@ -93,9 +103,10 @@ async def handle_edit_video(args: dict):
         out_ext = Path(current).suffix
         default_name = Path(src).stem + "_edited" + out_ext
         out_arg = args.get("output_path")
-        out = _resolve_path(out_arg) if out_arg else str(Path(src).parent / default_name)
+        out = _resolve_path(out_arg or str(Path(src).parent / default_name), writing=True)
         if Path(out).suffix.lower() != out_ext.lower():
-            out = str(Path(out).with_suffix(out_ext))
+            # Another name is another place: judged again.
+            out = _resolve_path(str(Path(out).with_suffix(out_ext)), writing=True)
             notes.append(f"note: output extension adjusted to {out_ext}")
         if current == src:
             return _fail(notes, "pipeline", "nothing was produced")

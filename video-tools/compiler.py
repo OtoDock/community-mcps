@@ -174,8 +174,17 @@ _EFFECT_FILTERS = {
         f"colorkey=color={ff_color(e.get('color', '#000000'))}"
         f":similarity={_f(float(e.get('similarity', 0.1)))}"
         f":blend={_f(float(e.get('blend', 0.05)))}"),
-    "despill": lambda e: f"despill=type={e.get('channel', 'green')}",
+    "despill": lambda e: f"despill=type={_despill_channel(e)}",
 }
+
+DESPILL_CHANNELS = ("green", "blue")
+
+
+def _despill_channel(e: dict) -> str:
+    channel = e.get("channel", "green")
+    if channel not in DESPILL_CHANNELS:
+        raise ValueError(f"despill channel must be one of {DESPILL_CHANNELS}")
+    return channel
 
 
 def _effect_filters(effects: list | None) -> list[str]:
@@ -1333,7 +1342,21 @@ def _synthetic_points(comp: dict, media_info: dict, a: float, b: float,
                 p = before if before >= cur + MIN_WINDOW \
                     else math.ceil(ze * fps) / fps
                 break
-        if p <= cur + MIN_WINDOW - 1e-6 or p >= b - MIN_WINDOW:
+        if p >= b - MIN_WINDOW:
+            # The furthest end in budget leaves a tail shorter than a
+            # window: split at the last grid point that still leaves one, so
+            # the head stays in budget (it ends before p) and the tail is the
+            # smallest a window may be. Giving up here warned on timelines
+            # that fit in two windows.
+            q = math.floor((b - MIN_WINDOW) * fps + 1e-6) / fps
+            for zs, ze in zones:
+                if zs < q < ze:
+                    q = math.floor(zs * fps) / fps
+                    break
+            if q >= cur + MIN_WINDOW - 1e-6:
+                pts.append(q)
+            break
+        if p <= cur + MIN_WINDOW - 1e-6:
             break
         pts.append(p)
         cur = p

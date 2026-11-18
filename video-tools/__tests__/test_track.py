@@ -183,7 +183,7 @@ def test_track_span_full_covers_before_the_box_time(moving_box):
 
 @pytestmark_exec
 def test_track_object_handler_emits_pastable_keyframes(moving_box, monkeypatch):
-    monkeypatch.setattr(track, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(track, "_resolve_path", lambda p, writing=False: p)
     text = _run(track.handle_track_object({
         "path": str(moving_box), "box": [40, 140, 60, 60], "end": 3.0}))
     assert "transform.keyframes" in text
@@ -198,7 +198,7 @@ def test_track_object_handler_emits_pastable_keyframes(moving_box, monkeypatch):
 def test_blur_region_blurs_the_moving_target(moving_box, monkeypatch, tmp_path):
     import numpy as np
 
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "blurred.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(moving_box),
@@ -230,7 +230,7 @@ def test_blur_region_blurs_the_moving_target(moving_box, monkeypatch, tmp_path):
 def test_smart_reframe_follow_keeps_subject_in_crop(moving_box, monkeypatch, tmp_path):
     import numpy as np
 
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "follow.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(moving_box),
@@ -262,7 +262,7 @@ def test_blur_faces_uses_detections_with_smoothing(moving_box, monkeypatch, tmp_
 
     monkeypatch.setattr(reframe, "detect_face_boxes_bgr", fake_detect)
     monkeypatch.setattr(reframe, "_detector", lambda w, h: None)
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "faces.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(moving_box),

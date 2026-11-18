@@ -44,7 +44,7 @@ def _run(coro):
 
 
 def test_motion_mp4_render(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "clip.mp4")
     html = _HTML.replace("<body>", "<body style=\"background:#101014\">")
     text = _run(motion.handle_render_motion_clip({
@@ -60,7 +60,7 @@ def test_motion_mp4_render(tmp_path, monkeypatch):
 
 
 def test_motion_transparent_webm(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "sting.webm")
     text = _run(motion.handle_render_motion_clip({
         "html": _HTML, "width": 320, "height": 240,
@@ -76,7 +76,7 @@ def test_motion_transparent_webm(tmp_path, monkeypatch):
 def test_motion_determinism(tmp_path, monkeypatch):
     """Two renders of the same animation are byte-comparable at the frame
     level: compare a mid-animation frame across renders."""
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     outs = []
     for i in range(2):
         out = str(tmp_path / f"det{i}.mp4")
@@ -99,7 +99,7 @@ def test_motion_determinism(tmp_path, monkeypatch):
 
 
 def test_motion_rejects_bad_args(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     both = _run(motion.handle_render_motion_clip({
         "html": "<html/>", "html_path": "x.html",
         "duration": 1, "output_path": str(tmp_path / "x.mp4")}))
@@ -115,7 +115,7 @@ def test_motion_vt_t0_anchor(tmp_path, monkeypatch):
     scripts run, equals the settle offset (1000 ms), Date.now() at capture
     start equals it, and the vt:capture-start event fires with the same t0.
     The page turns red only when every condition holds."""
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "anchor.mp4")
     html = """<!doctype html><html><head><style>
       body { margin: 0; background: #000; }
@@ -149,7 +149,7 @@ def test_motion_reports_failed_subresources(tmp_path, monkeypatch):
     """A file:// ref that RESOLVES but points at a missing file renders,
     but the result must carry the sub-resource warning (silent breakage
     was the original bug's cost)."""
-    monkeypatch.setattr(motion, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
     out = str(tmp_path / "warn.mp4")
     missing = tmp_path / "missing-asset.png"
     html = (f'<!doctype html><html><body style="background:#101014">'

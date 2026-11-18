@@ -124,17 +124,45 @@ _CHROMIUM_ARGS = [
 ]
 
 
-async def _route_block_network(route):
-    url = route.request.url
-    if url.startswith(("file://", "data:", "about:", "blob:")):
-        await route.continue_()
-    else:
-        await route.abort()
+def _page_guard(tmp: Path):
+    """The route every request of a page takes: data, blob and about load;
+    a local file loads when it sits in this call's own scratch folder or
+    when the proxy admits it for the session (asked off the loop, once per
+    file per call); everything else, the network included, is refused. A
+    page's relative and root-absolute references, its CSS, fonts, frames and
+    fetches all come through here."""
+    import asyncio
+    import os
+    root = os.path.realpath(str(tmp))
+    verdicts: dict[str, bool] = {}
+
+    async def judged(local: str) -> bool:
+        real = os.path.realpath(local)
+        if real == root or real.startswith(root + "/"):
+            return True
+        if real not in verdicts:
+            try:
+                answer = await asyncio.to_thread(_resolve_path, real)
+                verdicts[real] = os.path.realpath(answer) == real
+            except ValueError:
+                verdicts[real] = False
+        return verdicts[real]
+
+    async def guard(route):
+        url = route.request.url
+        if url.startswith(("data:", "about:", "blob:")):
+            await route.continue_()
+        elif url.startswith("file://") and await judged(
+                urllib.parse.unquote(urllib.parse.urlparse(url).path)):
+            await route.continue_()
+        else:
+            await route.abort()
+    return guard
 
 
 async def _capture_frames(html_file: str, out_dir: Path, width: int,
                           height: int, fps: float, duration: float,
-                          transparent: bool) -> tuple[int, list[str]]:
+                          transparent: bool, *, tmp: Path) -> tuple[int, list[str]]:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -154,7 +182,7 @@ async def _capture_frames(html_file: str, out_dir: Path, width: int,
                 viewport={"width": width, "height": height},
                 device_scale_factor=1,
             )
-            await context.route("**/*", _route_block_network)
+            await context.route("**/*", _page_guard(tmp))
             page = await context.new_page()
             page.on("requestfailed",
                     lambda r: failed.append(r.url) if len(failed) < 32 else None)
@@ -250,7 +278,7 @@ async def _encode(frames_dir: Path, fps: float, fmt: str, transparent: bool,
 
 
 async def _capture_still(html_file: str, width: int, height: int, at: float,
-                         transparent: bool, scale_factor: float) -> bytes:
+                         transparent: bool, scale_factor: float, *, tmp: Path) -> bytes:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -266,7 +294,7 @@ async def _capture_still(html_file: str, width: int, height: int, at: float,
                 viewport={"width": width, "height": height},
                 device_scale_factor=scale_factor,
             )
-            await context.route("**/*", _route_block_network)
+            await context.route("**/*", _page_guard(tmp))
             page = await context.new_page()
             try:
                 await page.clock.install(time=0)
@@ -314,16 +342,17 @@ async def handle_render_still(args: dict):
     if transparent and fmt == "jpeg":
         return "Error: jpeg cannot carry transparency — use png"
 
-    out = _resolve_path(out_arg)
+    out = _resolve_path(out_arg, writing=True)
     ext = ".png" if fmt == "png" else ".jpg"
     if Path(out).suffix.lower() not in (ext, ".jpeg" if fmt == "jpeg" else ext):
-        out = str(Path(out).with_suffix(ext))
+        # Another name is another place: judged again.
+        out = _resolve_path(str(Path(out).with_suffix(ext)), writing=True)
 
     tmp = Path(tempfile.mkdtemp(prefix="vt-still-"))
     try:
         html_file = _prepare_page_doc(html, html_path, tmp, "still.html")
         png = await _capture_still(html_file, width, height, at,
-                                   transparent, scale_factor)
+                                   transparent, scale_factor, tmp=tmp)
     except (RuntimeError, ValueError) as exc:
         return f"Error: {exc}"
     finally:
@@ -366,6 +395,10 @@ async def handle_render_motion_clip(args: dict):
     duration = float(args.get("duration", 0))
     transparent = bool(args.get("transparent", False))
     background = args.get("background", "#000000")
+    try:
+        ff_color(background)
+    except ValueError:
+        return "Error: background must be a colour, such as #000000 or black"
     out_arg = args.get("output_path")
     if not out_arg:
         return "Error: output_path is required"
@@ -382,10 +415,11 @@ async def handle_render_motion_clip(args: dict):
     if width % 2 or height % 2:
         return "Error: width/height must be even"
 
-    out = _resolve_path(out_arg)
+    out = _resolve_path(out_arg, writing=True)
     ext = {"mp4": ".mp4", "webm": ".webm", "gif": ".gif", "webp": ".webp"}[fmt]
     if Path(out).suffix.lower() != ext:
-        out = str(Path(out).with_suffix(ext))
+        # Another name is another place: judged again.
+        out = _resolve_path(str(Path(out).with_suffix(ext)), writing=True)
 
     tmp = Path(tempfile.mkdtemp(prefix="vt-motion-"))
     try:
@@ -395,7 +429,7 @@ async def handle_render_motion_clip(args: dict):
         frames_dir.mkdir()
         total, failed = await _capture_frames(html_file, frames_dir, width,
                                               height, fps, duration,
-                                              transparent)
+                                              transparent, tmp=tmp)
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         await _encode(frames_dir, fps, fmt, transparent, background,
                       width, height, out)

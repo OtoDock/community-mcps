@@ -20,9 +20,8 @@ FFPROBE = os.environ.get("FFPROBE_PATH", "") or shutil.which("ffprobe") or "ffpr
 # Renders buffer frames at every xfade/overlay junction; two concurrent heavy
 # renders on a 4g container is the safe ceiling. Analysis/probe calls are
 # cheap and skip the semaphore.
-_render_semaphore = asyncio.Semaphore(
-    max(1, int(os.environ.get("VIDEO_TOOLS_MAX_RENDERS", "2")))
-)
+MAX_RENDERS = max(1, int(os.environ.get("VIDEO_TOOLS_MAX_RENDERS", "2")))
+_render_semaphore = asyncio.Semaphore(MAX_RENDERS)
 
 
 class FFmpegError(RuntimeError):
@@ -44,25 +43,50 @@ async def run_ffmpeg(
     timeout: float = 600.0,
     heavy: bool = True,
     capture_stdout: bool = False,
+    progress=None,
 ) -> tuple[bytes, str]:
     """Run ffmpeg with the given args (after the binary). Returns
     ``(stdout, stderr_text)``; raises FFmpegError on non-zero exit or timeout.
+    ``progress(seconds)`` is called with the output time ffmpeg reports. A
+    cancelled caller kills the process before the cancel goes on: a
+    cancelled render never keeps encoding.
     """
     cmd = [FFMPEG, "-hide_banner", "-y", *args]
+    if progress is not None and not capture_stdout:
+        cmd = [FFMPEG, "-hide_banner", "-y", "-progress", "pipe:1", "-nostats", *args]
     logger.info("ffmpeg: %s", " ".join(cmd[:24]) + (" …" if len(cmd) > 24 else ""))
 
+    async def _read_progress(stream) -> bytes:
+        async for line in stream:
+            key, _, value = line.decode(errors="replace").strip().partition("=")
+            if key == "out_time_us" and value.isdigit():
+                progress(int(value) / 1e6)
+        return b""
+
     async def _run() -> tuple[bytes, str]:
+        piped = capture_stdout or progress is not None
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE if capture_stdout else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE if piped else asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            if progress is not None and not capture_stdout:
+                async def _both():
+                    _, err = await asyncio.gather(_read_progress(proc.stdout), proc.stderr.read())
+                    await proc.wait()
+                    return b"", err
+                stdout, stderr = await asyncio.wait_for(_both(), timeout=timeout)
+            else:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
             raise FFmpegError(f"ffmpeg timed out after {int(timeout)}s")
+        except asyncio.CancelledError:
+            proc.kill()
+            await proc.wait()
+            raise
         if proc.returncode != 0:
             tail = _stderr_tail(stderr)
             raise FFmpegError(
@@ -76,8 +100,30 @@ async def run_ffmpeg(
     return await _run()
 
 
+# Inputs that are lists of other inputs: ffmpeg opens each name they hold by
+# itself, past every check this tool made on the input's own name. The image's
+# ffprobe picks concat and hls by their content. Refused before ffprobe opens
+# anything (by the first bytes) and after it (by the format it names). An XML
+# file is a list only when it is a DASH manifest: an SVG picture is XML too.
+LIST_FORMATS = frozenset({"concat", "hls", "dash", "sdp", "rtp", "rtsp"})
+_LIST_HEADS = (b"#EXTM3U", b"ffconcat", b"v=0")
+LIST_REFUSED = "this file lists other files, which the tool does not open"
+
+
+def _lists_other_files(path: str) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(512).lstrip(b"\xef\xbb\xbf \t\r\n")
+    except OSError:
+        return False
+    return head.startswith(_LIST_HEADS) or b"<MPD" in head
+
+
 async def probe(path: str) -> dict:
-    """ffprobe → parsed JSON with format + streams."""
+    """ffprobe → parsed JSON with format + streams. A list of other files is
+    refused (``LIST_FORMATS``)."""
+    if await asyncio.to_thread(_lists_other_files, path):
+        raise FFmpegError(f"{path}: {LIST_REFUSED}")
     proc = await asyncio.create_subprocess_exec(
         FFPROBE, "-hide_banner", "-loglevel", "error",
         "-print_format", "json", "-show_format", "-show_streams", path,
@@ -92,9 +138,13 @@ async def probe(path: str) -> dict:
     if proc.returncode != 0:
         raise FFmpegError(f"ffprobe failed: {_stderr_tail(stderr, 400)}")
     try:
-        return json.loads(stdout.decode())
+        info = json.loads(stdout.decode())
     except json.JSONDecodeError as exc:
         raise FFmpegError(f"ffprobe returned unparseable output: {exc}")
+    names = str((info.get("format") or {}).get("format_name") or "").split(",")
+    if LIST_FORMATS.intersection(names):
+        raise FFmpegError(f"{path}: {LIST_REFUSED}")
+    return info
 
 
 def video_stream(info: dict) -> dict | None:
@@ -335,16 +385,15 @@ def esc_filter_value(value: str) -> str:
 
 
 def ff_color(hex_or_name: str) -> str:
-    """Normalize a color to ffmpeg syntax.
+    """A colour in ffmpeg syntax, or ValueError for anything that is not one.
 
     '#RRGGBB' → '0xRRGGBB' ('#' starts a comment inside a
-    -filter_complex_script file, so it must never reach the graph).
-    Named colors pass through.
+    -filter_complex_script file, so it must never reach the graph). Named
+    colors pass through. The graph carries the value as written, so only a
+    colour may reach it (``color.graph_colour``).
     """
-    c = (hex_or_name or "").strip()
-    if c.startswith("#"):
-        return "0x" + c[1:]
-    return c or "black"
+    import color as color_mod
+    return color_mod.graph_colour((hex_or_name or "").strip() or "black")
 
 
 def atempo_chain(speed: float) -> list[str]:

@@ -109,13 +109,13 @@ def demo_comp(assets):
 
 def test_validate_demo_composition(demo_comp):
     comp = comp_mod.load_composition(str(demo_comp))
-    _, _, issues = _run(renderer.prepare(comp, lambda p: p))
+    _, _, issues = _run(renderer.prepare(comp, lambda p, writing=False: p))
     assert [i for i in issues if i["level"] == "error"] == []
 
 
 def test_preview_render_and_frames(demo_comp):
     result = _run(renderer.render_composition(
-        str(demo_comp), lambda p: p, mode="preview"))
+        str(demo_comp), lambda p, writing=False: p, mode="preview"))
     out = Path(result["output"])
     assert out.exists() and out.name == "demo.preview.mp4"
     assert abs(result["duration"] - 5.5) < 0.2  # 3 + 3 − 0.5 xfade
@@ -125,14 +125,14 @@ def test_preview_render_and_frames(demo_comp):
     assert audio_stream(info)["codec_name"] == "aac"
 
     png, note = _run(renderer.render_frames(
-        str(demo_comp), lambda p: p, [1.2, 2.75, 4.5]))
+        str(demo_comp), lambda p, writing=False: p, [1.2, 2.75, 4.5]))
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     (demo_comp.parent / "frames.png").write_bytes(png)
 
 
 def test_final_render_hits_loudness_target(demo_comp):
     result = _run(renderer.render_composition(
-        str(demo_comp), lambda p: p, mode="final"))
+        str(demo_comp), lambda p, writing=False: p, mode="final"))
     out = Path(result["output"])
     assert out.exists() and out.name == "demo.mp4"
 
@@ -153,7 +153,7 @@ def test_final_render_hits_loudness_target(demo_comp):
 
 def test_range_render(demo_comp):
     result = _run(renderer.render_composition(
-        str(demo_comp), lambda p: p, mode="preview",
+        str(demo_comp), lambda p, writing=False: p, mode="preview",
         output_path=str(demo_comp.parent / "slice.mp4"),
         time_range=(2.0, 3.5)))
     assert abs(result["duration"] - 1.5) < 0.15
@@ -212,14 +212,14 @@ def test_segmented_render_bounds_memory_and_matches_single_pass(
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "100000")
     single = _run(renderer.render_composition(
-        str(path), lambda p: p, mode="preview",
+        str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(fold_assets["root"] / "single.mp4")))
     single_peak = peak_rss_kb()
     assert not any("windows" in w["message"] for w in single["warnings"])
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "40")
     seg = _run(renderer.render_composition(
-        str(path), lambda p: p, mode="preview",
+        str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(fold_assets["root"] / "seg.mp4")))
     seg_peak = peak_rss_kb()
     assert any("windows" in w["message"] and "memory budget" in w["message"]
@@ -262,7 +262,7 @@ def test_segmented_final_render_keeps_loudness_and_streams(
     comp_mod.save_composition(str(path), comp)
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "20")
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="final"))
     assert any("windows" in w["message"] and "memory budget" in w["message"]
                for w in result["warnings"]), result["warnings"]
@@ -307,7 +307,7 @@ def test_image_clip_with_transition_renders(assets):
     ]
     path = assets["root"] / "image-transition.vproj.json"
     comp_mod.save_composition(str(path), comp)
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     out = Path(result["output"])
     assert out.exists() and out.stat().st_size > 0
@@ -330,7 +330,7 @@ def test_transition_after_concat_renders(assets):
     ]
     path = assets["root"] / "trailing-transition.vproj.json"
     comp_mod.save_composition(str(path), comp)
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     out = Path(result["output"])
     assert out.exists() and out.stat().st_size > 0
@@ -340,7 +340,7 @@ def test_transition_after_concat_renders(assets):
 
 
 def test_analyze_audio_finds_the_click_tempo(assets, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     result = _run(analysis.handle_analyze_audio({"path": str(assets["music"])}))
     text = next(c.text for c in result if getattr(c, "type", "") == "text")
     assert "BPM" in text
@@ -354,7 +354,7 @@ def test_analyze_audio_finds_the_click_tempo(assets, monkeypatch):
 
 
 def test_analyze_video_detects_the_cut(assets, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     result = _run(analysis.handle_analyze_video({"path": str(assets["cutcat"])}))
     assert any(getattr(c, "type", "") == "image" for c in result)
     sidecar = json.loads((assets["root"] / "cutcat.analysis.json").read_text())
@@ -365,7 +365,7 @@ def test_analyze_video_detects_the_cut(assets, monkeypatch):
 
 
 def test_sample_frames_grid(assets, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     result = _run(analysis.handle_sample_frames(
         {"path": str(assets["clip1"]), "timestamps": [0.5, 2.0, 4.0]}))
     img = next(c for c in result if getattr(c, "type", "") == "image")
@@ -373,7 +373,7 @@ def test_sample_frames_grid(assets, monkeypatch):
 
 
 def test_quickops_trim_speed_gif(assets, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(assets["root"] / "quick.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(assets["clip1"]),
@@ -395,7 +395,7 @@ def test_quickops_trim_speed_gif(assets, monkeypatch):
 
 
 def test_quickops_stops_on_bad_op(assets, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     text = _run(quickops.handle_edit_video({
         "path": str(assets["clip1"]),
         "operations": [{"type": "trim", "start": 5, "end": 1}],
@@ -430,7 +430,7 @@ def test_duck_dips_music_under_voiceover_clip(tmp_path):
     comp_mod.save_composition(str(path), comp)
 
     result = _run(renderer.render_composition(
-        str(path), lambda p: p, mode="final"))
+        str(path), lambda p, writing=False: p, mode="final"))
     out = result["output"]
 
     def band200_mean_volume(t0, t1):
@@ -493,7 +493,7 @@ def test_stabilize_in_composition_reduces_shake_and_caches(shaky_clip):
     path = shaky_clip.parent / "stab.vproj.json"
     comp_mod.save_composition(str(path), comp)
 
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     out = Path(result["output"])
     assert out.exists() and out.stat().st_size > 0
@@ -517,7 +517,7 @@ def test_stabilize_in_composition_reduces_shake_and_caches(shaky_clip):
 
     stab.run_ffmpeg = counting_run
     try:
-        _run(renderer.render_composition(str(path), lambda p: p,
+        _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                          mode="preview"))
     finally:
         stab.run_ffmpeg = real_run
@@ -525,7 +525,7 @@ def test_stabilize_in_composition_reduces_shake_and_caches(shaky_clip):
 
 
 def test_quickops_stabilize(shaky_clip, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(shaky_clip.parent / "quick_stab.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(shaky_clip),
@@ -560,10 +560,10 @@ def test_flow_slowmo_synthesizes_frames_and_caches(assets, monkeypatch, tmp_path
         return path
 
     dup = _run(renderer.render_composition(
-        str(_slow_comp(None)), lambda p: p, mode="preview"))
+        str(_slow_comp(None)), lambda p, writing=False: p, mode="preview"))
     flow_path = _slow_comp("flow")
     flow = _run(renderer.render_composition(
-        str(flow_path), lambda p: p, mode="preview"))
+        str(flow_path), lambda p, writing=False: p, mode="preview"))
 
     # 1.5s span at 0.25× → 6s timeline, both modes.
     assert abs(dup["duration"] - 6.0) < 0.2
@@ -587,7 +587,7 @@ def test_flow_slowmo_synthesizes_frames_and_caches(assets, monkeypatch, tmp_path
 
     monkeypatch.setattr(renderer.slowmo_mod, "run_ffmpeg", counting_run)
     flow2 = _run(renderer.render_composition(
-        str(flow_path), lambda p: p, mode="preview"))
+        str(flow_path), lambda p, writing=False: p, mode="preview"))
     assert calls == []
     assert any("1 reused" in w["message"] for w in flow2["warnings"])
 
@@ -609,7 +609,7 @@ def test_native_high_fps_slowmo_skips_interpolation(assets, monkeypatch, tmp_pat
     path = assets["root"] / "native60.vproj.json"
     comp_mod.save_composition(str(path), comp)
 
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     assert abs(result["duration"] - 4.0) < 0.2
     assert not list((tmp_path / "mezz").glob("mezz-*.mp4"))
@@ -619,7 +619,7 @@ def test_native_high_fps_slowmo_skips_interpolation(assets, monkeypatch, tmp_pat
 
 
 def test_quickops_speed_blend_interpolates(assets, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(assets["root"] / "quick_slomo.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(assets["clip1"]),
@@ -673,7 +673,7 @@ def test_denoise_drops_the_noise_floor(noisy_vo):
         path = noisy_vo.parent / name
         comp_mod.save_composition(str(path), comp)
         return _run(renderer.render_composition(
-            str(path), lambda p: p, mode="final"))["output"]
+            str(path), lambda p, writing=False: p, mode="final"))["output"]
 
     raw = render(False)
     cleaned = render(True)
@@ -700,7 +700,7 @@ def test_master_limiter_caps_true_peak(assets):
         path = assets["root"] / name
         comp_mod.save_composition(str(path), comp)
         return _run(renderer.render_composition(
-            str(path), lambda p: p, mode="final"))["output"]
+            str(path), lambda p, writing=False: p, mode="final"))["output"]
 
     # The click track peaks near 0.9 FS, so +6 dB slams 0 dBFS unlimited.
     unlimited = _window_volume(render(False), 0, 3, stat="max_volume")
@@ -712,7 +712,7 @@ def test_master_limiter_caps_true_peak(assets):
 
 
 def test_quickops_enhance_audio_voice(noisy_vo, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(noisy_vo.parent / "enhanced.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(noisy_vo),
@@ -774,7 +774,7 @@ def test_match_color_closes_the_gap_at_a_hard_cut(tinted_clips):
         path = tinted_clips["root"] / name
         comp_mod.save_composition(str(path), comp)
         return _run(renderer.render_composition(
-            str(path), lambda p: p, mode="preview"))["output"]
+            str(path), lambda p, writing=False: p, mode="preview"))["output"]
 
     unmatched = _cut_delta(render(False), 2.0)
     matched = _cut_delta(render(True), 2.0)
@@ -799,7 +799,7 @@ def test_match_ramp_grades_bridge_toward_both_neighbors(tinted_clips):
         path = tinted_clips["root"] / name
         comp_mod.save_composition(str(path), comp)
         return _run(renderer.render_composition(
-            str(path), lambda p: p, mode="preview"))["output"]
+            str(path), lambda p, writing=False: p, mode="preview"))["output"]
 
     raw = render(False)
     fixed = render(True)
@@ -810,7 +810,7 @@ def test_match_ramp_grades_bridge_toward_both_neighbors(tinted_clips):
 
 
 def test_quickops_match_color(tinted_clips, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(tinted_clips["root"] / "quick_match.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(tinted_clips["cold"]),
@@ -838,7 +838,7 @@ def test_render_composition_handler_notifies_file_written(demo_comp, monkeypatch
         notified.append(path)
         return True
 
-    monkeypatch.setattr(project, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(project, "_resolve_path", lambda p, writing=False: p)
     monkeypatch.setattr(project, "_notify_file_written", fake_notify)
     text = _run(project.handle_render_composition(
         {"path": str(demo_comp), "mode": "preview"}))
@@ -866,7 +866,7 @@ def test_wow_preset_reel_renders_all_presets(assets):
     path = assets["root"] / "wow-reel.vproj.json"
     comp_mod.save_composition(str(path), comp)
 
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     out = Path(result["output"])
     assert out.exists() and out.stat().st_size > 0
@@ -899,7 +899,7 @@ def test_whip_and_luma_wipe_render(assets):
     comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
     path = assets["root"] / "premium-transitions.vproj.json"
     comp_mod.save_composition(str(path), comp)
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     out = Path(result["output"])
     assert out.exists() and out.stat().st_size > 0
@@ -942,7 +942,7 @@ def test_final_render_on_silent_timeline_skips_loudnorm(assets):
     comp_mod.save_composition(str(path), comp)
 
     result = _run(renderer.render_composition(
-        str(path), lambda p: p, mode="final"))
+        str(path), lambda p, writing=False: p, mode="final"))
     out = Path(result["output"])
     assert out.exists() and out.stat().st_size > 0
     assert any("loudness normalization skipped" in w["message"]
@@ -970,7 +970,7 @@ def test_speed_ramp_slows_progressively(assets):
     path = assets["root"] / "ramp.vproj.json"
     comp_mod.save_composition(str(path), comp)
 
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     out = Path(result["output"])
     expected = speedramp.output_duration(4.0, ramp)
@@ -1013,7 +1013,7 @@ def test_vfr_source_duration_pinned(tmp_path):
 
     expected = comp_mod.compute_timeline(comp, None)["duration"]
     assert expected == pytest.approx(8.5)
-    result = _run(renderer.render_composition(str(path), lambda p: p,
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="preview"))
     vs = video_stream(_run(probe(result["output"])))
     vdur = float(vs.get("duration") or 0)
@@ -1099,7 +1099,7 @@ def _render_clip(assets, name, clip, project_color=None):
     path = assets["root"] / f"{name}.vproj.json"
     comp_mod.save_composition(str(path), comp)
     return Path(_run(renderer.render_composition(
-        str(path), lambda p: p, mode="preview"))["output"])
+        str(path), lambda p, writing=False: p, mode="preview"))["output"])
 
 
 def test_output_is_tagged_rec709_with_colr(assets):
@@ -1195,7 +1195,7 @@ def test_lut_chain_strength_lands_between(assets):
 
 
 def test_probe_media_reports_color_colr_and_timecode(assets, color_assets, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     tc = _run(analysis.handle_probe_media({"path": str(color_assets["tc"])}))
     assert "transfer=arib-std-b67 (HLG)" in tc and "matrix=bt2020nc" in tc, tc
     assert "colr box: present (nclx: primaries=bt2020" in tc, tc
@@ -1233,7 +1233,7 @@ def sync_pair(tmp_path_factory):
 
 
 def test_align_audio_recovers_known_offsets(sync_pair, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     text = _run(analysis.handle_align_audio({
         "ref": str(sync_pair["ref"]), "target": str(sync_pair["late"])}))
     m = re.search(r"offset: ([+-]\d+\.\d+) s", text)
@@ -1254,7 +1254,7 @@ def test_align_audio_on_stationary_ambience(sync_pair, tmp_path, monkeypatch):
     envelope-based estimator live (drone clip: −0.019 s for a true
     +1.750 s). Pink noise band-limited into a slowly breathing wash, re-
     recorded 1.75 s late at −6 dB under independent noise."""
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     ref = tmp_path / "amb_ref.wav"
     _ff("-f", "lavfi", "-i",
         "anoisesrc=color=pink:seed=21:amplitude=0.4:duration=12:sample_rate=22050",
@@ -1275,7 +1275,7 @@ def test_align_audio_on_stationary_ambience(sync_pair, tmp_path, monkeypatch):
 def test_quickops_speed_ramp(assets, monkeypatch):
     import speedramp
 
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(assets["root"] / "quick_ramp.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(assets["clip1"]),
@@ -1351,7 +1351,7 @@ def edit_assets(tmp_path_factory, color_assets):
 
 
 def _edit(src, ops, out, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     text = _run(quickops.handle_edit_video({
         "path": str(src), "operations": ops, "output_path": str(out)}))
     assert "error:" not in text, text
@@ -1498,14 +1498,14 @@ def test_pq_convert_round_trip(assets, color_assets, edit_assets):
 
 
 def test_probe_media_names_the_pq_preset(edit_assets, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     text = _run(analysis.handle_probe_media({"path": str(edit_assets["pq"][203])}))
     assert "transfer=smpte2084 (PQ)" in text, text
     assert 'color.convert "pq->rec709"' in text and "edit_video ops keep" in text, text
 
 
 def test_quickops_loudness_normalize_lands_on_48k(noisy_vo, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(noisy_vo.parent / "normalized.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(noisy_vo),
@@ -1573,7 +1573,7 @@ def impulse_vo(tmp_path_factory):
 
 
 def test_enhance_audio_is_latency_neutral(impulse_vo, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     src, _ = _decode_mono(str(impulse_vo))
     for preset in ("voice", "music"):
         out = str(impulse_vo.parent / f"enh-{preset}.mp4")
@@ -1592,7 +1592,7 @@ def test_enhance_audio_is_latency_neutral(impulse_vo, monkeypatch):
 
 
 def test_denoise_mix_blends_between_dry_and_wet(noisy_vo, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     floors = {}
     for mix in (0.0, 0.5, 1.0):
         out = str(noisy_vo.parent / f"mix-{mix}.mp4")
@@ -1641,7 +1641,7 @@ def _final_with_loudnorm(bed, spec, name):
     comp["audio_master"] = {"gain_db": 0, "loudnorm": spec}
     path = bed.parent / f"{name}.vproj.json"
     comp_mod.save_composition(str(path), comp)
-    return _run(renderer.render_composition(str(path), lambda p: p, mode="final"))
+    return _run(renderer.render_composition(str(path), lambda p, writing=False: p, mode="final"))
 
 
 def test_loudnorm_modes_report_and_linear_keeps_dynamics(wide_lra_bed):
@@ -1673,7 +1673,7 @@ def test_loudnorm_modes_report_and_linear_keeps_dynamics(wide_lra_bed):
 
 
 def test_quickops_loudness_normalize_modes(wide_lra_bed, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(wide_lra_bed.parent / "ln-linear.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(wide_lra_bed),
@@ -1698,7 +1698,7 @@ def test_gain_keyframes_and_base_audio_fades_render(assets):
         comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
         path = assets["root"] / f"{name}.vproj.json"
         comp_mod.save_composition(str(path), comp)
-        return _run(renderer.render_composition(str(path), lambda p: p, mode="final"))["output"]
+        return _run(renderer.render_composition(str(path), lambda p, writing=False: p, mode="final"))["output"]
 
     # The steady 440 Hz tone reads the fades: quiet at the very start and
     # the very end, full in the middle.
@@ -1756,7 +1756,7 @@ def test_level_narrows_a_phrase_swing(phrase_swing):
         comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
         path = phrase_swing.parent / f"{name}.vproj.json"
         comp_mod.save_composition(str(path), comp)
-        return _run(renderer.render_composition(str(path), lambda p: p, mode="final"))["output"]
+        return _run(renderer.render_composition(str(path), lambda p, writing=False: p, mode="final"))["output"]
 
     raw = _phrase_spread(render(None, "raw"))
     # A 2 s window follows 3 s phrases; the 4.2 s default is for slower
@@ -1767,7 +1767,7 @@ def test_level_narrows_a_phrase_swing(phrase_swing):
 
 
 def test_quickops_rotate_bakes_pixels_and_drops_the_tag(assets, monkeypatch):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(assets["root"] / "rot90.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(assets["clip1"]),
@@ -1783,7 +1783,7 @@ def test_quickops_rotate_bakes_pixels_and_drops_the_tag(assets, monkeypatch):
     # so +90 on a file that already shows portrait lands on landscape.
     tagged = assets["root"] / "tagged.mp4"
     _ff("-display_rotation", "90", "-i", str(assets["clip1"]), "-c", "copy", str(tagged))
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
     report = _run(analysis.handle_probe_media({"path": str(tagged)}))
     assert "rotation: +90° display-matrix tag" in report and "360x640" in report, report
     out2 = str(assets["root"] / "rot-tagged.mp4")
@@ -1811,7 +1811,7 @@ def test_burn_subtitles_with_font_file(assets, monkeypatch):
     font = _dejavu()
     if not font:
         pytest.skip("no DejaVuSans.ttf on this machine")
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     out = str(assets["root"] / "subs-font.mp4")
     text = _run(quickops.handle_edit_video({
         "path": str(assets["clip1"]),
@@ -1842,7 +1842,7 @@ def test_composition_captions_take_a_font_file(demo_comp, monkeypatch):
         return ass, fonts
 
     monkeypatch.setattr(renderer, "_stage_captions", spy)
-    result = _run(renderer.render_composition(str(path), lambda p: p, mode="preview"))
+    result = _run(renderer.render_composition(str(path), lambda p, writing=False: p, mode="preview"))
     assert "Style: Cap,DejaVu Sans," in staged["ass"]
     assert ",-1,-1,0,0,100,100," in staged["ass"]          # bold + italic
     assert staged["fonts"] == ["caption.ttf"]

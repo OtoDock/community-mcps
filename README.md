@@ -1,8 +1,8 @@
 # OtoDock Community MCPs
 
-The catalog of [Model Context Protocol](https://modelcontextprotocol.io/) servers (MCPs) that an [OtoDock](https://github.com/OtoDock) instance can install with one click. Each MCP gives agents a new capability — drive a browser, work in Notion, manage GitHub, read and send Gmail, and so on.
+The catalog of [Model Context Protocol](https://modelcontextprotocol.io/) servers (MCPs) that an [OtoDock](https://github.com/OtoDock) instance can install with one click. Each MCP gives agents a new capability: drive a browser, work in Notion, manage GitHub, read and send Gmail, and so on.
 
-This repo is the **source of truth** for what the OtoDock platform offers under the "Community" category. Operators don't clone it directly — the platform pulls `registry.json` from this repo's `main` branch and downloads individual MCP folders on demand.
+This repo is the **source of truth** for what the OtoDock platform offers under the "Community" category. Operators don't clone it directly. The platform pulls `registry.json` from this repo's `main` branch and downloads individual MCP folders on demand.
 
 ## What's in here
 
@@ -42,7 +42,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [prometheus](./prometheus/) | python | [pab1it0](https://github.com/pab1it0/prometheus-mcp-server) | `prometheus-mcp-server` | Metrics and monitoring queries |
 | [unifi-network](./unifi-network/) | python | [sirkirby](https://github.com/sirkirby/unifi-mcp) | `unifi-network-mcp` | Network management, firewall, monitoring, DPI, VPN, client tracking (UDM/UDR) |
 | [uptime-kuma](./uptime-kuma/) | node | [DavidFuchs](https://github.com/DavidFuchs/mcp-uptime-kuma) | `@davidfuchs/mcp-uptime-kuma` | Uptime monitoring dashboard (requires v2) |
-| [video-tools](./video-tools/) | docker | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/video-tools) | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing: composition timelines, transitions, captions, color grading, music sync, and… |
+| [video-tools](./video-tools/) | docker | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/video-tools) | `video-tools-mcp (ffmpeg + libass)` | Agent-driven video editing, rendered with FFmpeg: composition timelines, transitions, captions, color… |
 <!-- catalog:end -->
 
 For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
@@ -51,8 +51,8 @@ For the schema of `registry.json` and every `manifest.json` field, see [`CONTRIB
 
 1. The platform UI's **Browse Community MCPs** page fetches `registry.json` from `https://raw.githubusercontent.com/OtoDock/community-mcps/main/registry.json`.
 2. Each card shows the MCP's label, description, runtime, version, tags, and an Install / Request button.
-3. When an admin clicks **Install**, the platform downloads the MCP's folder, runs the appropriate installer (npm / pip / docker-compose), and lights the MCP up under `Admin → MCPs`.
-4. Managers can request an MCP install for one of their agents; the request goes to admins for approval.
+3. When an admin clicks **Install**, the platform downloads the MCP's folder and runs the appropriate installer (npm / pip / docker-compose). Then it lights the MCP up under `Admin → MCPs`.
+4. Managers can request an MCP install for one of their agents. The request goes to admins for approval.
 
 ## Contributing
 
@@ -62,8 +62,8 @@ We welcome new MCPs and bug fixes. The bar:
 - A short `README.md` explaining what the MCP does, what credentials it needs, and any operator gotchas.
 - No bundled secrets, no committed `node_modules/`, no committed `venv/`, no committed keys.
 
-Open a PR; CI runs `scripts/generate-registry.py --check` plus a manifest JSON-schema validator. Maintainers merge after a review pass.
+Open a PR. CI runs `scripts/generate-registry.py --check` plus a manifest JSON-schema validator. Maintainers merge after a review pass.
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](./LICENSE). Individual MCPs may carry their own upstream license; each MCP entry in `registry.json` declares it.
+Apache 2.0, see [`LICENSE`](./LICENSE). Individual MCPs may carry their own upstream license. Each MCP entry in `registry.json` declares its license.

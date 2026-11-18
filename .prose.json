@@ -1,0 +1,22 @@
+{
+  "_comment": "The files of this catalog written for people, read by the writing check of the OtoDock repository (scripts/prose/prose_check.py there, whose WRITING.md is the rules page). A markdown file no group claims and no entry excludes fails the check.",
+  "groups": [
+    {"name": "reader", "use": "reader", "release_floor": true, "files": ["README.md", "SECURITY.md", "*/README.md"]},
+    {"name": "developer", "use": "developer", "files": [".github/PULL_REQUEST_TEMPLATE.md"]},
+    {"name": "design records", "use": "developer", "files": ["*/DESIGN.md"],
+     "skip": {"version": "a design record: it names the release each part of the MCP shipped in, and the tool versions it was measured on"}},
+    {"name": "bundled models", "use": "developer", "files": ["*/models/README.md"],
+     "skip": {"version": "it names the bundled models' and their libraries' own versions"}},
+    {"name": "contributing", "use": "developer", "files": ["CONTRIBUTING.md"],
+     "skip": {"version": "it names the release that reads each manifest field"}},
+    {"name": "manifest texts", "use": "reader", "release_floor": true, "read": "json-fields",
+     "files": ["*/manifest.json"], "fields": ["description", "system_requirements.notes"]}
+  ],
+  "between": [
+    {"file": "README.md", "from": "<!-- catalog:start -->", "to": "<!-- catalog:end -->", "skip": "all"}
+  ],
+  "excluded": {
+    "*/skills/**": "an agent loads these skills",
+    "CODE_OF_CONDUCT.md": "the Contributor Covenant, as its authors wrote it"
+  }
+}

@@ -7,10 +7,12 @@ two-pass loudnorm, and frame extraction for visual QC.
 """
 
 import asyncio
+import contextlib
 import io
 import os
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import audiofx as audiofx_mod
@@ -22,11 +24,26 @@ import speedramp as speedramp_mod
 import stab as stab_mod
 from compiler import (compile_render, estimate_window_bytes, plan_segments,
                       window_pruned)
-from fftools import FFmpegError, media_duration, probe, run_ffmpeg, stream_color, stream_fps, video_stream, audio_stream
+from fftools import (
+    MAX_RENDERS,
+    FFmpegError,
+    audio_stream,
+    media_duration,
+    probe,
+    run_ffmpeg,
+    stream_color,
+    stream_fps,
+    video_stream,
+)
 from shared import _notify_file_written, logger
 
 PREVIEW_SHORT_SIDE = 540
 FRAMES_SHORT_SIDE = 480
+# How long one render's encode may run: a preview, a final render. The
+# manifest's limit for one call (``server.tool_timeout_sec``) is at least the
+# final's, so an engine never ends a call the renderer still runs.
+PREVIEW_TIMEOUT_S = 1200
+FINAL_TIMEOUT_S = 3600
 
 # Pruning slack around a rendered window: must cover the longest transition
 # overlap plus preset edge styling so a clip that only contributes via a
@@ -64,7 +81,9 @@ def _render_budget_bytes() -> float:
     VIDEO_TOOLS_RENDER_BUDGET_MB; default 40% of physical RAM, bounded by
     the container's cgroup limit when one is set — the filtergraph pile is
     only part of the process (decoders, x264 and the canvas-side chains ride
-    on top), and other services share the host."""
+    on top), and other services share the host. The default is shared by
+    the heavy runs allowed at once (``fftools.MAX_RENDERS``): a background
+    render and a call's own render may run together."""
     env = os.environ.get("VIDEO_TOOLS_RENDER_BUDGET_MB")
     if env:
         try:
@@ -79,7 +98,7 @@ def _render_budget_bytes() -> float:
     limit = _cgroup_memory_limit_bytes()
     if limit is not None:
         total = min(total, limit)
-    return max(min(1.5e9, total * 0.6), total * 0.4)
+    return max(min(1.5e9, total * 0.6), total * 0.4) / MAX_RENDERS
 
 
 def default_output_path(comp_path: str, mode: str) -> str:
@@ -146,11 +165,33 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
     resolved = copy.deepcopy(comp)
     mapping: dict[str, str] = {}
     problems: list[dict] = []
+    # The renderer's own keys (``_slomo``, ``_stab``, ``_match``, set below
+    # for the files it staged) never come from a stored composition: each
+    # names a file no session judged. Dropped from the copy and refused.
+    for ti, track in enumerate(resolved.get("tracks", [])):
+        for ci, clip in enumerate(track.get("clips", []) if isinstance(track, dict) else []):
+            own = sorted(k for k in clip if isinstance(k, str) and k.startswith("_")) \
+                if isinstance(clip, dict) else []
+            for key in own:
+                del clip[key]
+            if own:
+                problems.append({"level": "error", "where": f"tracks[{ti}].clips[{ci}]",
+                                 "message": f"keys that start with an underscore are not allowed: {own}"})
     for original in comp_mod.media_paths(comp):
         try:
             mapping[original] = resolve(original)
         except ValueError as exc:
             problems.append({"level": "error", "where": "paths", "message": str(exc)})
+    # A caption font is a file the session names too: judged like the media,
+    # and asked to exist only once resolved.
+    caps_in = comp.get("captions")
+    font_file = caps_in.get("font_file") if isinstance(caps_in, dict) else None
+    font_resolved = None
+    if isinstance(font_file, str) and font_file:
+        try:
+            font_resolved = resolve(font_file)
+        except ValueError as exc:
+            problems.append({"level": "error", "where": "captions", "message": str(exc)})
 
     def rewrite(clip: dict):
         for key in ("src", "image"):
@@ -180,6 +221,8 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
     caps = resolved.get("captions")
     if isinstance(caps, dict) and caps.get("source") in mapping:
         caps["source"] = mapping[caps["source"]]
+    if isinstance(caps, dict) and font_resolved:
+        caps["font_file"] = font_resolved
 
     media_info = await probe_media_paths(sorted(set(mapping.values())))
     for path, entry in media_info.items():
@@ -187,9 +230,12 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
             problems.append({"level": "error", "where": "media",
                              "message": f"unreadable media '{path}': {entry['error']}"})
 
+    # A path the platform refused keeps its raw text, and the container sees
+    # every agent's folder: only a judged place is asked whether it exists.
+    judged = set(mapping.values()) | ({font_resolved} if font_resolved else set())
     issues = problems + comp_mod.validate(
         resolved,
-        exists=lambda p: Path(p).exists(),
+        exists=lambda p: p in judged and Path(p).exists(),
         media_info=media_info,
     )
     return resolved, media_info, issues
@@ -516,7 +562,8 @@ async def _render_segmented(resolved: dict, media_info: dict,
                             captions_ass: str | None, luts: dict[str, str],
                             crf: int | None,
                             segments: list[tuple[float, float]],
-                            captions_fontsdir: str | None = None):
+                            captions_fontsdir: str | None = None,
+                            at=None, checkpoint=None):
     """Low-RAM render: the timeline renders in windows split at bare cuts,
     each window compiled from a window-pruned sub-composition (far clips →
     fills, far overlays dropped) so only that window's media is opened and
@@ -551,7 +598,7 @@ async def _render_segmented(resolved: dict, media_info: dict,
 
     plan = None
     seg_files: list[Path] = []
-    timeout = 1200 if mode == "preview" else 3600
+    timeout = PREVIEW_TIMEOUT_S if mode == "preview" else FINAL_TIMEOUT_S
     for n, (t0, t1) in enumerate(segments):
         logger.info("segmented render: window %d/%d (%.2f–%.2fs)",
                     n + 1, len(segments), t0, t1)
@@ -567,8 +614,10 @@ async def _render_segmented(resolved: dict, media_info: dict,
             "-filter_complex_script", str(graph_file),
             "-map", f"[{plan.video_label}]",
             *_video_encode_args(plan.encode_args), str(seg_out)],
-            timeout=timeout)
+            timeout=timeout, progress=at(t0) if at else None)
         seg_files.append(seg_out)
+        if checkpoint:
+            checkpoint()
 
     concat_list = tmp / "segments.txt"
     concat_list.write_text("".join(f"file '{p}'\n" for p in seg_files),
@@ -581,16 +630,57 @@ async def _render_segmented(resolved: dict, media_info: dict,
     return plan, ln_report
 
 
-async def render_composition(
+@dataclass
+class RenderPlan:
+    """A render's fast half, done in the call: the composition loaded and
+    judged, every path it names resolved for the session, the output judged
+    as a write, captions and looks staged. ``run_render`` does the rest."""
+    mode: str
+    out: str
+    resolved: dict
+    media_info: dict
+    issues: list
+    tmp: Path
+    scale: float
+    time_range: tuple[float, float] | None
+    crf: int | None
+    captions_ass: str | None
+    captions_fontsdir: str | None
+    luts: dict
+    duration: float
+
+
+# The partial files of the renders that run now, never removed as stale.
+_writing: set[str] = set()
+
+
+def partial_path(out: str, token: str) -> str:
+    """Where a render writes before its rename: a hidden name beside the
+    output, with its extension (ffmpeg picks the format by it)."""
+    p = Path(out)
+    return str(p.parent / f".{p.stem}.partial-{token}{p.suffix}")
+
+
+def _remove_stale_partials(out: str) -> None:
+    """Partial files of this output that no render writes now (a tool that
+    stopped mid-render left them)."""
+    p = Path(out)
+    for stale in p.parent.glob(f".{p.stem}.partial-*{p.suffix}"):
+        if str(stale) not in _writing:
+            with contextlib.suppress(OSError):
+                stale.unlink()
+
+
+async def plan_render(
     comp_path: str,
     resolve,
     mode: str = "preview",
     output_path: str | None = None,
     time_range: tuple[float, float] | None = None,
     crf: int | None = None,
-) -> dict:
-    """Full render pipeline for a composition file. Returns a result summary
-    dict; raises ValueError (validation) or FFmpegError (render)."""
+) -> RenderPlan:
+    """The fast half: raises ValueError (validation, a path the session may
+    not use) before anything heavy starts."""
     comp = comp_mod.load_composition(resolve(comp_path))
     resolved, media_info, issues = await prepare(comp, resolve)
     errors = [i for i in issues if i["level"] == "error"]
@@ -606,7 +696,7 @@ async def render_composition(
                        "message": note})
     resolved = speedramp_mod.expand_composition(resolved, media_info)
 
-    out = resolve(output_path) if output_path else resolve(default_output_path(comp_path, mode))
+    out = resolve(output_path or default_output_path(comp_path, mode), writing=True)
 
     proj = resolved["project"]
     scale = 1.0
@@ -622,14 +712,51 @@ async def render_composition(
         captions_ass, captions_fontsdir = _stage_captions(
             resolved, tmp, (w, h), resolve, issues)
         luts = _stage_luts(resolved, tmp, resolve)
+        total = comp_mod.compute_timeline(resolved, media_info)["duration"]
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    duration = (time_range[1] - time_range[0]) if time_range else total
+    return RenderPlan(mode=mode, out=out, resolved=resolved, media_info=media_info,
+                      issues=issues, tmp=tmp, scale=scale, time_range=time_range, crf=crf,
+                      captions_ass=captions_ass, captions_fontsdir=captions_fontsdir,
+                      luts=luts, duration=max(duration, 0.001))
+
+
+async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
+                     cancelled=None) -> dict:
+    """The heavy half: the pre-passes, the encode into a partial file beside
+    the output, its probe, and the rename. ``progress(percent)`` follows the
+    encode; ``cancelled()`` is read between steps (a step in a thread runs
+    to its end). Removes the partial file and the scratch folder whatever
+    happens."""
+    resolved, media_info, issues, tmp = plan.resolved, plan.media_info, plan.issues, plan.tmp
+    mode, scale, time_range, crf = plan.mode, plan.scale, plan.time_range, plan.crf
+    part = partial_path(plan.out, token or os.urandom(6).hex())
+    _remove_stale_partials(plan.out)
+    _writing.add(part)
+
+    def checkpoint():
+        if cancelled is not None and cancelled():
+            raise asyncio.CancelledError()
+
+    def at(offset: float):
+        if progress is None:
+            return None
+        return lambda seconds: progress(min(99.0, 100.0 * (offset + seconds) / plan.duration))
+
+    try:
         await _prepare_stabilization(resolved, media_info, tmp)
+        checkpoint()
         await _prepare_slowmo(resolved, media_info, issues)
+        checkpoint()
         await _prepare_match(resolved, media_info, tmp)
+        checkpoint()
 
         ln_report = None
         segments = []
+        budget = _render_budget_bytes()
         if time_range is None:
-            budget = _render_budget_bytes()
             segments = plan_segments(resolved, media_info, budget)
             if not segments:
                 total = comp_mod.compute_timeline(resolved,
@@ -646,13 +773,23 @@ async def render_composition(
                                     "RAM and can be killed by the "
                                     "container's memory cap"),
                     })
+            else:
+                over = [s for s in segments
+                        if estimate_window_bytes(resolved, media_info, s[0], s[1]) > budget]
+                if over:
+                    issues.append({
+                        "level": "warning", "where": "render",
+                        "message": (f"{len(over)} of {len(segments)} windows still exceed "
+                                    f"the {budget / 1e6:.0f} MB memory budget — the render "
+                                    "may need substantial RAM"),
+                    })
 
         if segments:
-            plan, ln_report = await _render_segmented(
-                resolved, media_info, issues, mode=mode, out=out,
-                scale=scale, tmp=tmp, captions_ass=captions_ass,
-                luts=luts, crf=crf, segments=segments,
-                captions_fontsdir=captions_fontsdir)
+            render_plan, ln_report = await _render_segmented(
+                resolved, media_info, issues, mode=mode, out=part,
+                scale=scale, tmp=tmp, captions_ass=plan.captions_ass,
+                luts=plan.luts, crf=crf, segments=segments,
+                captions_fontsdir=plan.captions_fontsdir, at=at, checkpoint=checkpoint)
             issues.append({
                 "level": "warning", "where": "render",
                 "message": (f"rendered in {len(segments)} windows (split at "
@@ -670,48 +807,75 @@ async def render_composition(
                 comp_graph = window_pruned(resolved, media_info,
                                            time_range[0], time_range[1],
                                            pad=WINDOW_PAD)
-            plan = compile_render(
-                comp_graph, media_info, mode=mode, output_path=out,
+            render_plan = compile_render(
+                comp_graph, media_info, mode=mode, output_path=part,
                 canvas_scale=scale, time_range=time_range,
-                captions_ass=captions_ass, luts=luts, crf=crf,
-                captions_fontsdir=captions_fontsdir,
+                captions_ass=plan.captions_ass, luts=plan.luts, crf=crf,
+                captions_fontsdir=plan.captions_fontsdir,
             )
 
-            graph = plan.graph
-            if plan.loudnorm:
+            graph = render_plan.graph
+            if render_plan.loudnorm:
                 ln_filter, ln_report = await _measure_loudnorm(
-                    resolved, media_info, plan.loudnorm, tmp)
+                    resolved, media_info, render_plan.loudnorm, tmp)
                 graph = _apply_loudnorm(graph, ln_filter, ln_report, issues)
+            checkpoint()
 
             graph_file = tmp / "graph.txt"
             graph_file.write_text(graph, encoding="utf-8")
-            args = _input_args(plan.inputs) + [
+            args = _input_args(render_plan.inputs) + [
                 "-filter_complex_script", str(graph_file),
-                "-map", f"[{plan.video_label}]", "-map", f"[{plan.audio_label}]",
-                *plan.encode_args, out,
+                "-map", f"[{render_plan.video_label}]", "-map", f"[{render_plan.audio_label}]",
+                *render_plan.encode_args, part,
             ]
-            timeout = 1200 if mode == "preview" else 3600
-            await run_ffmpeg(args, timeout=timeout)
+            timeout = PREVIEW_TIMEOUT_S if mode == "preview" else FINAL_TIMEOUT_S
+            await run_ffmpeg(args, timeout=timeout, progress=at(0.0))
 
-        out_info = await probe(out)
-        size_mb = Path(out).stat().st_size / 1e6
+        checkpoint()
+        out_info = await probe(part)
+        size_mb = Path(part).stat().st_size / 1e6
         result = {
-            "output": out,
+            "output": plan.out,
             "mode": mode,
             "duration": round(media_duration(out_info), 2),
-            "canvas": f"{plan.canvas[0]}x{plan.canvas[1]}",
-            "fps": plan.fps,
+            "canvas": f"{render_plan.canvas[0]}x{render_plan.canvas[1]}",
+            "fps": render_plan.fps,
             "size_mb": round(size_mb, 2),
             "warnings": [i for i in issues if i["level"] == "warning"],
         }
         if mode == "final" and audio_stream(out_info) is not None:
             result["audio"] = {
                 "loudnorm": ln_report,
-                "delivered": await _measure_delivered(out),
+                "delivered": await _measure_delivered(part),
             }
+        os.replace(part, plan.out)
         return result
     finally:
+        _writing.discard(part)
+        with contextlib.suppress(OSError):
+            os.unlink(part)
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def discard(plan: RenderPlan) -> None:
+    """A planned render that will not run: its scratch folder goes."""
+    shutil.rmtree(plan.tmp, ignore_errors=True)
+
+
+async def render_composition(
+    comp_path: str,
+    resolve,
+    mode: str = "preview",
+    output_path: str | None = None,
+    time_range: tuple[float, float] | None = None,
+    crf: int | None = None,
+) -> dict:
+    """Full render pipeline for a composition file, in the call. Returns a
+    result summary dict; raises ValueError (validation) or FFmpegError
+    (render)."""
+    plan = await plan_render(comp_path, resolve, mode=mode, output_path=output_path,
+                             time_range=time_range, crf=crf)
+    return await run_render(plan)
 
 
 async def render_frames(

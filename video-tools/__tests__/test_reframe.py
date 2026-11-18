@@ -86,7 +86,7 @@ def test_plan_segments_center_fallback(two_shot, monkeypatch):
 
 
 def test_smart_reframe_end_to_end(two_shot, monkeypatch, tmp_path):
-    monkeypatch.setattr(quickops, "_resolve_path", lambda p: p)
+    monkeypatch.setattr(quickops, "_resolve_path", lambda p, writing=False: p)
     monkeypatch.setattr(reframe, "detect_faces_bgr", _fake_detect)
     out = str(tmp_path / "vertical.mp4")
     text = _run(quickops.handle_edit_video({

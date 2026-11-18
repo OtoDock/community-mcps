@@ -20,6 +20,7 @@ from mcp.types import ImageContent, TextContent
 
 import color as color_mod
 from fftools import audio_stream, colr_box, media_duration, probe, run_ffmpeg, stream_color, stream_fps, stream_rotation, timecode, video_stream
+import shared
 from shared import _notify_file_written, _resolve_path, _to_agents_relative
 
 _MAX_SHOT_THUMBS = 60
@@ -30,8 +31,13 @@ def _sidecar_path(media_path: str, suffix: str) -> Path:
     return p.parent / (p.stem + suffix)
 
 
-def _merge_sidecar(media_path: str, key: str, payload: dict) -> Path:
-    path = _sidecar_path(media_path, ".analysis.json")
+def _merge_sidecar(media_path: str, key: str, payload: dict) -> Path | None:
+    """The analysis kept beside the media, when the session may write there
+    (judged by the proxy); None when it may not: the answer still carries it."""
+    judged = shared._write_beside(str(_sidecar_path(media_path, ".analysis.json")))
+    if judged is None:
+        return None
+    path = Path(judged)
     data = {}
     if path.exists():
         try:
@@ -218,19 +224,22 @@ async def handle_analyze_video(args: dict):
                   for i, (s, e) in enumerate(shots)],
     }
     sidecar = _merge_sidecar(path, "video", payload)
-    await _notify_file_written(str(sidecar))
+    if sidecar is not None:
+        await _notify_file_written(str(sidecar))
 
-    result = [TextContent(type="text", text=_format_video_report(path, payload, len(listed)))]
+    result = [TextContent(type="text", text=_format_video_report(path, payload, len(listed),
+                                                                 kept=sidecar is not None))]
     if cells:
         sheet = _grid(cells, columns=int(args.get("columns", 4)))
-        sheet_path = _sidecar_path(path, ".shots.png")
-        sheet_path.write_bytes(sheet)
-        await _notify_file_written(str(sheet_path))
+        sheet_path = shared._write_beside(str(_sidecar_path(path, ".shots.png")))
+        if sheet_path is not None:
+            Path(sheet_path).write_bytes(sheet)
+            await _notify_file_written(sheet_path)
         result.insert(0, _png_content(sheet))
     return result
 
 
-def _format_video_report(path: str, payload: dict, listed: int) -> str:
+def _format_video_report(path: str, payload: dict, listed: int, kept: bool = True) -> str:
     shots = payload["shots"]
     lines = [
         f"# Shot analysis — {_to_agents_relative(path)}",
@@ -243,8 +252,11 @@ def _format_video_report(path: str, payload: dict, listed: int) -> str:
                      f"  ({s['duration']:.2f}s)")
     if len(shots) > listed:
         lines.append(f"  … {len(shots) - listed} more shots — full list in the sidecar")
-    lines.append(f"sidecar: {_to_agents_relative(str(_sidecar_path(path, '.analysis.json')))} · "
-                 f"contact sheet: {_to_agents_relative(str(_sidecar_path(path, '.shots.png')))}")
+    if kept:
+        lines.append(f"sidecar: {_to_agents_relative(str(_sidecar_path(path, '.analysis.json')))} · "
+                     f"contact sheet: {_to_agents_relative(str(_sidecar_path(path, '.shots.png')))}")
+    else:
+        lines.append("not kept beside the file: this session may not write there")
     return "\n".join(lines)
 
 
@@ -352,12 +364,14 @@ async def handle_analyze_audio(args: dict):
     samples = lib.pop("samples")
     payload = {**lib, "silences": silences, "loudness": loudness}
     sidecar = _merge_sidecar(path, "audio", payload)
-    await _notify_file_written(str(sidecar))
+    if sidecar is not None:
+        await _notify_file_written(str(sidecar))
 
     wave_png = _draw_waveform(samples, lib["duration"], lib["beats"])
-    wave_path = _sidecar_path(path, ".waveform.png")
-    wave_path.write_bytes(wave_png)
-    await _notify_file_written(str(wave_path))
+    wave_path = shared._write_beside(str(_sidecar_path(path, ".waveform.png")))
+    if wave_path is not None:
+        Path(wave_path).write_bytes(wave_png)
+        await _notify_file_written(wave_path)
 
     beats = payload["beats"]
     beat_preview = ", ".join(f"{b:.2f}" for b in beats[:24])
@@ -377,9 +391,12 @@ async def handle_analyze_audio(args: dict):
                      f"{' …' if len(silences) > 15 else ''}")
     else:
         lines.append("silences: none detected")
-    lines.append(
-        "full beat grid + energy curve in sidecar: "
-        f"{_to_agents_relative(str(sidecar))} — cut on these timestamps to beat-sync")
+    if sidecar is not None:
+        lines.append(
+            "full beat grid + energy curve in sidecar: "
+            f"{_to_agents_relative(str(sidecar))} — cut on these timestamps to beat-sync")
+    else:
+        lines.append("beat grid not kept beside the file: this session may not write there")
     return [_png_content(wave_png), TextContent(type="text", text="\n".join(lines))]
 
 
@@ -634,3 +651,55 @@ async def handle_sample_frames(args: dict):
     return [_png_content(png),
             TextContent(type="text",
                         text=f"{len(cells)} frame(s) from {_to_agents_relative(path)}")]
+
+
+# ---------------------------------------------------------------------------
+# render_filmstrip — one small sprite of a clip's frames for a timeline
+# ---------------------------------------------------------------------------
+
+FILMSTRIP_MAX_FRAMES = 60
+# Above 1080p each open input decodes a large frame: fewer of them.
+FILMSTRIP_MAX_FRAMES_BIG = 20
+
+
+async def handle_render_filmstrip(args: dict):
+    """``count`` frames spread over the clip, each ``height`` pixels tall, side
+    by side in one JPEG: a page draws its timeline thumbnails from one file.
+    One ffmpeg run with a fast seek per frame, so a long clip is never decoded
+    whole."""
+    path = _resolve_path(args["path"])
+    try:
+        count = int(args.get("count", 10))
+        height = int(args.get("height", 90))
+    except (TypeError, ValueError):
+        return "Error: count and height must be whole numbers"
+    if not 2 <= count <= FILMSTRIP_MAX_FRAMES:
+        return f"Error: count must be 2-{FILMSTRIP_MAX_FRAMES}"
+    if not 32 <= height <= 240:
+        return "Error: height must be 32-240"
+    info = await probe(path)
+    vs = video_stream(info)
+    duration = media_duration(info)
+    if vs is None or duration <= 0:
+        return "Error: no video to take frames from"
+    # Every frame is an input of its own (each decoder keeps one thread
+    # below), so a source above 1080p takes fewer frames.
+    if int(vs.get("height") or 0) > 1080:
+        count = min(count, FILMSTRIP_MAX_FRAMES_BIG)
+    out_arg = args.get("output_path")
+    out = (_resolve_path(out_arg, writing=True) if out_arg
+           else shared._write_beside(str(_sidecar_path(path, f".filmstrip-{count}x{height}.jpg"))))
+    if out is None:
+        return "Error: this session may not write beside the file: pass an output_path it may write"
+    times = [round(duration * (i + 0.5) / count, 3) for i in range(count)]
+    inputs: list[str] = []
+    for t in times:
+        inputs += ["-threads", "1", "-ss", f"{t:.3f}", "-i", path]
+    chains = ";".join(f"[{i}:v:0]scale=-2:{height},setsar=1[f{i}]" for i in range(count))
+    graph = chains + ";" + "".join(f"[f{i}]" for i in range(count)) + f"hstack=inputs={count}[strip]"
+    await run_ffmpeg(inputs + ["-filter_complex", graph, "-map", "[strip]", "-frames:v", "1",
+                               "-q:v", "4", out], timeout=120, heavy=True)
+    await _notify_file_written(out)
+    frame_w = int(round(int(vs.get("width") or 16) * height / max(int(vs.get("height") or 9), 1) / 2) * 2)
+    return json.dumps({"output": _to_agents_relative(out), "count": count, "height": height,
+                       "frame_width": frame_w, "times": times})
