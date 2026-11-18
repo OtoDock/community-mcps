@@ -71,6 +71,18 @@ def test_crf_override_reaches_encode_args():
     assert plan.encode_args[i + 1] == "18"
 
 
+def test_a_preview_has_a_keyframe_every_two_seconds_and_a_final_keeps_its_own():
+    """A player jumps from the keyframe before the target: the preview every
+    player shows keeps that short. The final keeps the encoder's own."""
+    clips = [{"src": "a.mp4", "in": 0, "out": 2}]
+    for fps, gop in ((30, "60"), (24, "48"), (25, "50"), (59.94, "120")):
+        comp = _comp(clips)
+        comp["project"]["fps"] = fps
+        args = compile_render(comp, MEDIA, mode="preview").encode_args
+        assert args[args.index("-g") + 1] == gop
+        assert "-g" not in compile_render(comp, MEDIA, mode="final").encode_args
+
+
 def test_timebase_normalized_for_joins():
     """Every join input must sit on tb=AVTB: per-clip chains end with
     settb/asettb and each concat re-asserts it. A concat-produced accumulator

@@ -25,11 +25,11 @@ import stab as stab_mod
 from compiler import (compile_render, estimate_window_bytes, plan_segments,
                       window_pruned)
 from fftools import (
-    MAX_RENDERS,
     FFmpegError,
     audio_stream,
     media_duration,
     probe,
+    render_budget_bytes,
     run_ffmpeg,
     stream_color,
     stream_fps,
@@ -49,56 +49,6 @@ FINAL_TIMEOUT_S = 3600
 # overlap plus preset edge styling so a clip that only contributes via a
 # join at the window edge is never replaced by a fill.
 WINDOW_PAD = 3.0
-
-
-def _cgroup_memory_limit_bytes() -> float | None:
-    """Container memory limit when one applies (cgroup v2, then v1); None when
-    unlimited or unreadable. sysconf reports the HOST's RAM even inside a
-    mem_limit'ed container, so the budget must honor the cgroup cap or
-    windowed planning sizes windows the container cannot hold."""
-    for path, unlimited in (
-        ("/sys/fs/cgroup/memory.max", "max"),
-        ("/sys/fs/cgroup/memory/memory.limit_in_bytes", None),
-    ):
-        try:
-            raw = Path(path).read_text().strip()
-        except OSError:
-            continue
-        if raw == unlimited:
-            return None
-        try:
-            val = int(raw)
-        except ValueError:
-            continue
-        if val >= 1 << 60:  # v1 reports a huge sentinel when unlimited
-            return None
-        return float(val)
-    return None
-
-
-def _render_budget_bytes() -> float:
-    """Per-render decoded-frame budget for plan_segments. Override with
-    VIDEO_TOOLS_RENDER_BUDGET_MB; default 40% of physical RAM, bounded by
-    the container's cgroup limit when one is set — the filtergraph pile is
-    only part of the process (decoders, x264 and the canvas-side chains ride
-    on top), and other services share the host. The default is shared by
-    the heavy runs allowed at once (``fftools.MAX_RENDERS``): a background
-    render and a call's own render may run together."""
-    env = os.environ.get("VIDEO_TOOLS_RENDER_BUDGET_MB")
-    if env:
-        try:
-            return max(1, int(env)) * 1e6
-        except ValueError:
-            logger.warning(
-                "ignoring non-integer VIDEO_TOOLS_RENDER_BUDGET_MB=%r", env)
-    try:
-        total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    except (AttributeError, ValueError, OSError):
-        return 4e9
-    limit = _cgroup_memory_limit_bytes()
-    if limit is not None:
-        total = min(total, limit)
-    return max(min(1.5e9, total * 0.6), total * 0.4) / MAX_RENDERS
 
 
 def default_output_path(comp_path: str, mode: str) -> str:
@@ -614,7 +564,8 @@ async def _render_segmented(resolved: dict, media_info: dict,
             "-filter_complex_script", str(graph_file),
             "-map", f"[{plan.video_label}]",
             *_video_encode_args(plan.encode_args), str(seg_out)],
-            timeout=timeout, progress=at(t0) if at else None)
+            timeout=timeout, progress=at(t0) if at else None,
+            claim=estimate_window_bytes(resolved, media_info, t0, t1))
         seg_files.append(seg_out)
         if checkpoint:
             checkpoint()
@@ -754,35 +705,12 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
         checkpoint()
 
         ln_report = None
-        segments = []
-        budget = _render_budget_bytes()
-        if time_range is None:
-            segments = plan_segments(resolved, media_info, budget)
-            if not segments:
-                total = comp_mod.compute_timeline(resolved,
-                                                  media_info)["duration"]
-                est = estimate_window_bytes(resolved, media_info, 0.0, total)
-                if est > budget:
-                    issues.append({
-                        "level": "warning", "where": "render",
-                        "message": (f"estimated decode footprint "
-                                    f"{est / 1e6:.0f} MB exceeds the "
-                                    f"{budget / 1e6:.0f} MB memory budget and "
-                                    "the timeline cannot be windowed any "
-                                    "finer — the render may need substantial "
-                                    "RAM and can be killed by the "
-                                    "container's memory cap"),
-                    })
-            else:
-                over = [s for s in segments
-                        if estimate_window_bytes(resolved, media_info, s[0], s[1]) > budget]
-                if over:
-                    issues.append({
-                        "level": "warning", "where": "render",
-                        "message": (f"{len(over)} of {len(segments)} windows still exceed "
-                                    f"the {budget / 1e6:.0f} MB memory budget — the render "
-                                    "may need substantial RAM"),
-                    })
+        # Planned against the whole budget: a render shares it only while
+        # another heavy run goes beside it (fftools.heavy_run). No memory
+        # warning: after a render that succeeded nothing is left to do, and
+        # one the container's limit ends fails with fftools.OUT_OF_MEMORY.
+        segments = (plan_segments(resolved, media_info, render_budget_bytes())
+                    if time_range is None else [])
 
         if segments:
             render_plan, ln_report = await _render_segmented(
@@ -790,19 +718,12 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
                 scale=scale, tmp=tmp, captions_ass=plan.captions_ass,
                 luts=plan.luts, crf=crf, segments=segments,
                 captions_fontsdir=plan.captions_fontsdir, at=at, checkpoint=checkpoint)
-            issues.append({
-                "level": "warning", "where": "render",
-                "message": (f"rendered in {len(segments)} windows (split at "
-                            f"cuts, plus synthetic in-clip points where "
-                            f"needed) to stay inside the "
-                            f"{budget / 1e6:.0f} MB memory budget "
-                            "(VIDEO_TOOLS_RENDER_BUDGET_MB overrides)"),
-            })
         else:
             # An explicit time_range compiles from a window-pruned comp:
             # far clips become fills, so their inputs are never opened —
             # a slice render must not cost the whole timeline's memory.
             comp_graph = resolved
+            span = time_range or (0.0, plan.duration)
             if time_range is not None:
                 comp_graph = window_pruned(resolved, media_info,
                                            time_range[0], time_range[1],
@@ -829,7 +750,8 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
                 *render_plan.encode_args, part,
             ]
             timeout = PREVIEW_TIMEOUT_S if mode == "preview" else FINAL_TIMEOUT_S
-            await run_ffmpeg(args, timeout=timeout, progress=at(0.0))
+            await run_ffmpeg(args, timeout=timeout, progress=at(0.0),
+                             claim=estimate_window_bytes(resolved, media_info, *span))
 
         checkpoint()
         out_info = await probe(part)

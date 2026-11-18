@@ -6,10 +6,10 @@ services:
     # Renders are memory-heavy (ffmpeg filtergraphs buffer frames at every
     # xfade/overlay junction) — bound explicitly so the platform's injected
     # 2g default never applies and a runaway render OOM-kills ffmpeg inside
-    # the container instead of starving the host. Overridable per install
-    # (set the var in this folder's .env — the platform's env writer preserves
-    # undeclared keys); memswap tracks mem_limit so an override never opens
-    # swap headroom.
+    # the container instead of starving the host. The limit reads
+    # OTODOCK_VIDEOTOOLS_MEM_LIMIT, 4g by default. An update of the tool
+    # rewrites this folder's .env, so a value set there does not last.
+    # memswap tracks mem_limit so a raised limit never opens swap headroom.
     mem_limit: ${OTODOCK_VIDEOTOOLS_MEM_LIMIT:-4g}
     memswap_limit: ${OTODOCK_VIDEOTOOLS_MEM_LIMIT:-4g}
     ports:

@@ -447,6 +447,9 @@ convert it in a composition.
 - preview ≈ well under a minute for short videos; final is several times
   slower (crf 18, preset slow, loudness measurement pass) — say so before
   long final renders.
+- A preview has a keyframe every 2 seconds, so a player jumps inside it
+  fast: give a player that must scrub the preview. A final keeps the
+  encoder's own spacing (about 8 s), which makes it smaller.
 - **File size is a CRF question, not a quality bug.** Final's CRF 18 is a
   master setting: constant visual quality, whatever bitrate that takes —
   and sharpening (`clarity`, `sharpness`, `sharpen`) or `grain` can double
@@ -454,11 +457,19 @@ convert it in a composition.
   deliverable pass `crf` on `render_composition`: 23 is the balanced
   choice, 28 for platforms that re-encode anyway. Keep 18 for archives and
   hand-offs to an editor.
-- Renders are CPU-bound and serialized (two at a time) — batch your
-  iteration into preview+frames rounds rather than many tiny final renders.
+- Renders are CPU-bound and share the tool's memory. A render alone gets
+  all of it. Two run at once only when they fit together, otherwise the
+  second waits for the first. Batch your iteration into preview+frames
+  rounds rather than many tiny final renders. A render that ran out of
+  memory says so: render a shorter part, or ask an admin for more memory.
 - **A long render in the background.** `render_composition` with
   `background=true` checks the composition, starts the render and answers
   at once with a `job_id`. Ask `render_status(job_id)` for its percent and,
   when it is done, its report; `cancel_render(job_id)` stops it. An app's
   Export button works this way, since a button's call waits a minute at
   most. The output takes its name only when the render succeeded.
+- **Thumbnails for a timeline.** `render_filmstrip(path, count, height)`
+  writes one small picture of `count` frames side by side and answers each
+  frame's time. For one clip of a timeline pass its `start` and `end`
+  (seconds in the source file, the clip's in and out): the frames then come
+  from that span only, under a file name of their own.

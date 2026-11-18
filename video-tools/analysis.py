@@ -662,10 +662,16 @@ FILMSTRIP_MAX_FRAMES = 60
 FILMSTRIP_MAX_FRAMES_BIG = 20
 
 
+def _millis(seconds: float) -> str:
+    """Seconds with their three decimals, trailing zeros trimmed: 1234.5, 3."""
+    return f"{seconds:.3f}".rstrip("0").rstrip(".")
+
+
 async def handle_render_filmstrip(args: dict):
-    """``count`` frames spread over the clip, each ``height`` pixels tall, side
-    by side in one JPEG: a page draws its timeline thumbnails from one file.
-    One ffmpeg run with a fast seek per frame, so a long clip is never decoded
+    """``count`` frames spread over the clip, or over its ``start``..``end``
+    span (a timeline clip's in and out), each ``height`` pixels tall, side by
+    side in one JPEG: a page draws its timeline thumbnails from one file. One
+    ffmpeg run with a fast seek per frame, so a long clip is never decoded
     whole."""
     path = _resolve_path(args["path"])
     try:
@@ -677,21 +683,36 @@ async def handle_render_filmstrip(args: dict):
         return f"Error: count must be 2-{FILMSTRIP_MAX_FRAMES}"
     if not 32 <= height <= 240:
         return "Error: height must be 32-240"
+    try:
+        start = round(float(args.get("start") or 0), 3)
+        end = None if args.get("end") is None else round(float(args["end"]), 3)
+    except (TypeError, ValueError):
+        return "Error: start and end must be seconds in the file"
     info = await probe(path)
     vs = video_stream(info)
     duration = media_duration(info)
     if vs is None or duration <= 0:
         return "Error: no video to take frames from"
+    length = round(duration, 3)
+    end = length if end is None else min(end, length)
+    if start < 0 or end <= start:
+        return (f"Error: the span must lie in the file, which is {duration:.2f} s long, "
+                "with end after start")
     # Every frame is an input of its own (each decoder keeps one thread
     # below), so a source above 1080p takes fewer frames.
     if int(vs.get("height") or 0) > 1080:
         count = min(count, FILMSTRIP_MAX_FRAMES_BIG)
+    # A span names its own file, so the clips of one source never share one:
+    # each end in milliseconds, as the span itself is rounded.
+    whole = start == 0 and end == length
+    span = "" if whole else f"-{_millis(start)}-{_millis(end)}"
+    name = f".filmstrip-{count}x{height}{span}.jpg"
     out_arg = args.get("output_path")
     out = (_resolve_path(out_arg, writing=True) if out_arg
-           else shared._write_beside(str(_sidecar_path(path, f".filmstrip-{count}x{height}.jpg"))))
+           else shared._write_beside(str(_sidecar_path(path, name))))
     if out is None:
         return "Error: this session may not write beside the file: pass an output_path it may write"
-    times = [round(duration * (i + 0.5) / count, 3) for i in range(count)]
+    times = [round(start + (end - start) * (i + 0.5) / count, 3) for i in range(count)]
     inputs: list[str] = []
     for t in times:
         inputs += ["-threads", "1", "-ss", f"{t:.3f}", "-i", path]
@@ -702,4 +723,4 @@ async def handle_render_filmstrip(args: dict):
     await _notify_file_written(out)
     frame_w = int(round(int(vs.get("width") or 16) * height / max(int(vs.get("height") or 9), 1) / 2) * 2)
     return json.dumps({"output": _to_agents_relative(out), "count": count, "height": height,
-                       "frame_width": frame_w, "times": times})
+                       "frame_width": frame_w, "start": start, "end": end, "times": times})

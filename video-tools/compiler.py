@@ -841,6 +841,13 @@ def _audio_track_chain(g: _GraphBuilder, clip: dict, media_info: dict) -> tuple[
     return out, duck_opts
 
 
+# A player's jump decodes from the keyframe before its target. The preview,
+# which every player shows, keeps that within two seconds: about a sixth more
+# bytes than the encoder's own 250 frames, and no slower to render. The final
+# keeps the encoder's own spacing.
+PREVIEW_KEYFRAME_S = 2.0
+
+
 def compile_render(
     comp: dict,
     media_info: dict,
@@ -1066,6 +1073,7 @@ def compile_render(
          "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
         if mode == "final" else
         ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf or 27),
+         "-g", str(max(1, round(PREVIEW_KEYFRAME_S * fps))),
          "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
     )
 

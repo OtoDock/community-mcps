@@ -468,8 +468,10 @@ TOOLS = [
         description=(
             "One small JPEG of `count` frames spread over a clip, each `height` "
             "pixels tall, side by side: a timeline's thumbnails from one file. "
-            "Answers its path, the frame width and each frame's time. Written "
-            "beside the clip unless output_path is given."
+            "`start` and `end` (seconds in the file) take the frames from that "
+            "span only, a timeline clip's in and out; the whole file by default. "
+            "Answers its path, the frame width, the span and each frame's time. "
+            "Written beside the clip unless output_path is given."
         ),
         inputSchema={
             "type": "object",
@@ -477,6 +479,10 @@ TOOLS = [
                 "path": {"type": "string", "description": "Video file path"},
                 "count": {"type": "integer", "minimum": 2, "maximum": 60, "default": 10},
                 "height": {"type": "integer", "minimum": 32, "maximum": 240, "default": 90},
+                "start": {"type": "number", "minimum": 0, "default": 0,
+                          "description": "Span start, seconds in the file"},
+                "end": {"type": "number",
+                        "description": "Span end, seconds in the file (default: the file's end)"},
                 "output_path": {"type": "string", "description": "Optional output path (.jpg)"},
             },
             "required": ["path"],

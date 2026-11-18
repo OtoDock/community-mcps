@@ -742,6 +742,42 @@ Authoring contract (0.3.2, 2026-08):
     Validation warns on a family fontconfig does not know when no
     font_file is given: libass substitutes silently otherwise.
 
+- **0.4.9 (2026-11-19): a render alone takes the whole memory budget.**
+  From the Studio app's speed check: background renders of a 17 s edit took
+  18.6 s (preview) and about 48 s (final) against 12.7 s and 28.4 s on
+  0.4.6. Measured on the dev box with the same edit: 0.4.8 divided the
+  budget by the runs allowed at once (`MAX_RENDERS`, 2). So 1,718 MB became
+  859 MB for every render, alone or not. The edit then rendered in two
+  windows instead of one pass: +47 % for the preview, +43 % for the final.
+  The job runner costs nothing measurable: a job and a call took the same
+  time.
+
+  One gate now holds every heavy ffmpeg run (`fftools.heavy_run`): at most
+  `MAX_RENDERS` at once, and the bytes they claim within the whole budget.
+  A render window claims its own estimate. Any other heavy run claims an
+  equal share, so two of them still go at once. A run alone always goes,
+  and waiters are served in order. Windows are planned against the whole
+  budget again. `VIDEO_TOOLS_RENDER_BUDGET_MB` is now the total the runs
+  share.
+
+  The memory warnings are gone: they were read only after the render
+  succeeded, when nothing was left to do. A run the container's limit ends
+  (SIGKILL) fails with a plain sentence that says what to do.
+
+  `render_filmstrip` takes `start` and `end` (a timeline clip's in and out).
+  A span writes a file name of its own.
+
+  A preview has a keyframe every 2 s (`-g` = 2 × fps,
+  `compiler.PREVIEW_KEYFRAME_S`). x264's own 250 frames gave one every 4 to
+  8 s. Measured on the 134 s film's 540p preview, the file grew from
+  3.49 MB to 4.22 MB (+21 %, the 17 s edit +14 %). The render time did not
+  change. A jump decodes at most 58 frames instead of 238. With one thread
+  and ffmpeg's own seek, the worst jump went from 163 ms to 68 ms and the
+  median from 86 ms to 52 ms. One second costs +36 to +49 % for 8 ms more.
+  The final keeps the encoder's spacing. It is the deliverable, every
+  platform it goes to encodes it again, and bytes at CRF 18 matter more
+  there.
+
 ## Low-RAM windowed rendering
 
 A composition renders as ONE ffmpeg filtergraph. ffmpeg's scheduler lets
@@ -768,7 +804,8 @@ The fix (renderer + compiler, `plan_segments`/`window_pruned`/
 - **Windowed final render.** When the whole-timeline decode estimate
   exceeds the memory budget, the timeline renders in windows. The budget
   defaults to 40% of physical RAM (cgroup-aware), and
-  `VIDEO_TOOLS_RENDER_BUDGET_MB` overrides it. The windows concat
+  `VIDEO_TOOLS_RENDER_BUDGET_MB` overrides it. It is shared by the heavy
+  runs that go at once (`fftools.heavy_run`), never split in advance. The windows concat
   losslessly (`-c copy`) and mux with the audio.
 
   Bare cuts are the preferred (free) split points. A span between adjacent
@@ -832,8 +869,9 @@ The fix (renderer + compiler, `plan_segments`/`window_pruned`/
   re-pins `fps=`: trim clears the CFR metadata, and the sink silently
   resampled slices to 25 fps.
 - **Limits.** Only a span whose MIN_WINDOW-sized pieces still bust the
-  budget renders as one window (pathological resolutions). The render
-  warns that the container's memory cap may kill it. Project-level `grain`
+  budget renders as one window (pathological resolutions), alone at the
+  gate. If the container's memory cap kills it, the render fails with a
+  sentence that says what to do. Project-level `grain`
   is temporally random, so its pattern reseeds at window edges (invisible
   in practice). Stateful clips keep whole-clip decode (see above): their
   decode CPU is unpruned, never their RAM.

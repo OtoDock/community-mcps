@@ -1,16 +1,21 @@
 """FFmpeg/ffprobe process layer.
 
-All ffmpeg execution funnels through here: binary discovery, a render
-semaphore (renders are CPU/RAM-heavy — never run unbounded), probe helpers,
-and filter-argument escaping. Binaries come from PATH inside the container;
-FFMPEG_PATH/FFPROBE_PATH env overrides exist for local test runs.
+All ffmpeg execution funnels through here: binary discovery, the gate heavy
+runs pass (renders are CPU/RAM-heavy — never run unbounded: a count, and the
+memory budget they share), probe helpers, and filter-argument escaping.
+Binaries come from PATH inside the container; FFMPEG_PATH/FFPROBE_PATH env
+overrides exist for local test runs.
 """
 
 import asyncio
+import collections
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
+from pathlib import Path
 
 from shared import logger
 
@@ -18,10 +23,143 @@ FFMPEG = os.environ.get("FFMPEG_PATH", "") or shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = os.environ.get("FFPROBE_PATH", "") or shutil.which("ffprobe") or "ffprobe"
 
 # Renders buffer frames at every xfade/overlay junction; two concurrent heavy
-# renders on a 4g container is the safe ceiling. Analysis/probe calls are
-# cheap and skip the semaphore.
+# renders on a 4g container is the safe ceiling, and then only when their
+# memory fits the budget together. Analysis/probe calls are cheap and skip
+# the gate.
 MAX_RENDERS = max(1, int(os.environ.get("VIDEO_TOOLS_MAX_RENDERS", "2")))
-_render_semaphore = asyncio.Semaphore(MAX_RENDERS)
+
+OUT_OF_MEMORY = ("This step ran out of memory and was stopped. Work on a shorter part, "
+                 "or ask an admin to give Video Tools more memory.")
+
+
+def _cgroup_memory_limit_bytes() -> float | None:
+    """Container memory limit when one applies (cgroup v2, then v1); None when
+    unlimited or unreadable. sysconf reports the HOST's RAM even inside a
+    mem_limit'ed container, so the budget must honor the cgroup cap or
+    windowed planning sizes windows the container cannot hold."""
+    for path, unlimited in (
+        ("/sys/fs/cgroup/memory.max", "max"),
+        ("/sys/fs/cgroup/memory/memory.limit_in_bytes", None),
+    ):
+        try:
+            raw = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if raw == unlimited:
+            return None
+        try:
+            val = int(raw)
+        except ValueError:
+            continue
+        if val >= 1 << 60:  # v1 reports a huge sentinel when unlimited
+            return None
+        return float(val)
+    return None
+
+
+def render_budget_bytes() -> float:
+    """The decoded-frame memory the heavy runs share: a render alone plans its
+    windows against all of it, and ``heavy_run`` keeps the claims of the runs
+    that go at once within it. Override with VIDEO_TOOLS_RENDER_BUDGET_MB;
+    default 40% of physical RAM, bounded by the container's cgroup limit when
+    one is set — the filtergraph pile is only part of the process (decoders,
+    x264 and the canvas-side chains ride on top), and other services share
+    the host."""
+    env = os.environ.get("VIDEO_TOOLS_RENDER_BUDGET_MB")
+    if env:
+        try:
+            return max(1, int(env)) * 1e6
+        except ValueError:
+            logger.warning(
+                "ignoring non-integer VIDEO_TOOLS_RENDER_BUDGET_MB=%r", env)
+    try:
+        total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, ValueError, OSError):
+        return 4e9
+    limit = _cgroup_memory_limit_bytes()
+    if limit is not None:
+        total = min(total, limit)
+    return max(min(1.5e9, total * 0.6), total * 0.4)
+
+
+# Equal shares of a budget can sum a few millionths of a byte past it in
+# floating point (three thirds of about one budget in twenty): one byte of
+# slack lets the last share in.
+_SLACK = 1.0
+
+
+class _Gate:
+    """At most ``MAX_RENDERS`` heavy runs at once, and the bytes they claim
+    within ``render_budget_bytes()``. A run alone is always let in, whatever
+    it claims: a window over the budget still renders, by itself. First come,
+    first served: a run waits behind every earlier waiter, so a big claim is
+    never passed over by smaller ones."""
+
+    def __init__(self) -> None:
+        self.held = 0
+        self.claimed = 0.0
+        self.line: collections.deque[tuple[float, asyncio.Future]] = collections.deque()
+
+    def _fits(self, claim: float, budget: float) -> bool:
+        return self.held < MAX_RENDERS and (
+            self.held == 0 or self.claimed + claim <= budget + _SLACK)
+
+    def _take(self, claim: float) -> None:
+        self.held += 1
+        self.claimed += claim
+
+    def _wake(self) -> None:
+        budget = render_budget_bytes()
+        while self.line:
+            claim, fut = self.line[0]
+            if fut.done():
+                # A cancelled waiter: its task leaves the line on its next step.
+                self.line.popleft()
+                continue
+            if not self._fits(claim, budget):
+                break
+            self.line.popleft()
+            self._take(claim)
+            fut.set_result(None)
+
+    async def acquire(self, claim: float) -> None:
+        if not self.line and self._fits(claim, render_budget_bytes()):
+            self._take(claim)
+            return
+        entry = (claim, asyncio.get_running_loop().create_future())
+        self.line.append(entry)
+        try:
+            await entry[1]
+        except asyncio.CancelledError:
+            if entry[1].cancelled():
+                with contextlib.suppress(ValueError):
+                    self.line.remove(entry)
+                self._wake()
+            else:
+                # Let in just before the cancel arrived.
+                self.release(claim)
+            raise
+
+    def release(self, claim: float) -> None:
+        self.held -= 1
+        self.claimed = self.claimed - claim if self.held else 0.0
+        self._wake()
+
+
+_gate = _Gate()
+
+
+@contextlib.asynccontextmanager
+async def heavy_run(claim: float | None = None):
+    """Hold the gate for one heavy ffmpeg run claiming ``claim`` bytes of the
+    shared budget. Without a claim a run takes an equal share of it, so two
+    such runs go at once."""
+    bytes_ = render_budget_bytes() / MAX_RENDERS if claim is None else max(0.0, claim)
+    await _gate.acquire(bytes_)
+    try:
+        yield
+    finally:
+        _gate.release(bytes_)
 
 
 class FFmpegError(RuntimeError):
@@ -44,12 +182,14 @@ async def run_ffmpeg(
     heavy: bool = True,
     capture_stdout: bool = False,
     progress=None,
+    claim: float | None = None,
 ) -> tuple[bytes, str]:
     """Run ffmpeg with the given args (after the binary). Returns
     ``(stdout, stderr_text)``; raises FFmpegError on non-zero exit or timeout.
     ``progress(seconds)`` is called with the output time ffmpeg reports. A
     cancelled caller kills the process before the cancel goes on: a
-    cancelled render never keeps encoding.
+    cancelled render never keeps encoding. A heavy run passes the gate first,
+    claiming ``claim`` bytes of the shared budget (``heavy_run``).
     """
     cmd = [FFMPEG, "-hide_banner", "-y", *args]
     if progress is not None and not capture_stdout:
@@ -87,6 +227,10 @@ async def run_ffmpeg(
             proc.kill()
             await proc.wait()
             raise
+        if proc.returncode == -signal.SIGKILL:
+            # Neither the timeout nor a cancel gets here: the kernel ended it,
+            # which in the tool's container is its memory limit.
+            raise FFmpegError(OUT_OF_MEMORY, _stderr_tail(stderr))
         if proc.returncode != 0:
             tail = _stderr_tail(stderr)
             raise FFmpegError(
@@ -95,7 +239,7 @@ async def run_ffmpeg(
         return stdout or b"", _stderr_tail(stderr, 4000)
 
     if heavy:
-        async with _render_semaphore:
+        async with heavy_run(claim):
             return await _run()
     return await _run()
 

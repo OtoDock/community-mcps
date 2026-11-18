@@ -434,6 +434,65 @@ def test_the_filmstrip_is_one_small_picture(tmp_path, monkeypatch):
     from PIL import Image
     assert Image.open(strip).size == (4 * 80, 45)
     assert "Error" in asyncio.run(analysis.handle_render_filmstrip({"path": str(clip), "count": 99}))
+    assert answer["start"] == 0 and answer["end"] == 4.0
+
+    part = json.loads(asyncio.run(analysis.handle_render_filmstrip(
+        {"path": str(clip), "count": 2, "height": 45, "start": 1, "end": 3})))
+    assert part["times"] == [1.5, 2.5] and (part["start"], part["end"]) == (1, 3)
+    assert part["output"].endswith("clip.filmstrip-2x45-1-3.jpg")
+    assert Image.open(tmp_path / "clip.filmstrip-2x45-1-3.jpg").size == (2 * 80, 45)
+
+
+def _strip_answer(monkeypatch, tmp_path, args, duration="60"):
+    """The filmstrip's answer for a 1080p file of ``duration`` seconds, with
+    ffmpeg faked."""
+    import analysis
+    ran: list = []
+
+    async def probe(path):
+        return {"streams": [{"codec_type": "video", "width": 1920, "height": 1080}],
+                "format": {"duration": duration}}
+
+    async def run(a, **kw):
+        ran.append(a)
+    monkeypatch.setattr(analysis, "_resolve_path", lambda path, writing=False: str(tmp_path / Path(path).name))
+    monkeypatch.setattr(analysis, "probe", probe)
+    monkeypatch.setattr(analysis, "run_ffmpeg", run)
+    answer = asyncio.run(analysis.handle_render_filmstrip({"path": "/workspace/v.mp4", **args}))
+    return answer, ran
+
+
+def test_a_filmstrip_of_one_span_takes_its_frames_inside_it(monkeypatch, tmp_path):
+    answer, ran = _strip_answer(monkeypatch, tmp_path, {"count": 4, "start": 10, "end": 18})
+    answer = json.loads(answer)
+    assert answer["times"] == [11.0, 13.0, 15.0, 17.0]
+    seeks = [float(ran[0][i + 1]) for i, a in enumerate(ran[0]) if a == "-ss"]
+    assert seeks == answer["times"]
+    assert answer["output"].endswith("v.filmstrip-4x90-10-18.jpg")
+
+
+def test_two_spans_a_few_milliseconds_apart_never_share_a_file(monkeypatch, tmp_path):
+    names = {json.loads(_strip_answer(monkeypatch, tmp_path, span, duration="3600")[0])["output"]
+             for span in ({"start": 1234.567, "end": 1300}, {"start": 1234.571, "end": 1300})}
+    assert len(names) == 2
+    assert any(n.endswith("v.filmstrip-10x90-1234.567-1300.jpg") for n in names)
+    head = json.loads(_strip_answer(monkeypatch, tmp_path, {"end": 2.5})[0])["output"]
+    assert head.endswith("v.filmstrip-10x90-0-2.5.jpg")
+
+
+def test_a_span_past_the_end_stops_at_the_end(monkeypatch, tmp_path):
+    answer, _ = _strip_answer(monkeypatch, tmp_path, {"count": 2, "start": 50, "end": 75})
+    answer = json.loads(answer)
+    assert answer["end"] == 60 and answer["times"] == [52.5, 57.5]
+
+
+@pytest.mark.parametrize("span", [
+    {"start": 60}, {"start": 70, "end": 80}, {"start": 5, "end": 5}, {"start": 8, "end": 2},
+    {"start": -1}, {"start": "soon"}, {"end": 0},
+])
+def test_a_span_that_holds_no_part_of_the_file_is_refused(monkeypatch, tmp_path, span):
+    answer, ran = _strip_answer(monkeypatch, tmp_path, span)
+    assert answer.startswith("Error: ") and not ran
 
 
 def test_the_request_to_the_proxy_names_a_write(monkeypatch):
@@ -598,12 +657,122 @@ def test_a_filmstrip_keeps_one_thread_per_frame_and_fewer_frames_above_1080p(mon
     assert kw["heavy"] is True
 
 
-def test_the_default_budget_is_shared_by_the_renders_allowed_at_once(monkeypatch):
-    monkeypatch.delenv("VIDEO_TOOLS_RENDER_BUDGET_MB", raising=False)
-    monkeypatch.setattr(renderer, "MAX_RENDERS", 1)
-    one = renderer._render_budget_bytes()
-    monkeypatch.setattr(renderer, "MAX_RENDERS", 2)
-    assert renderer._render_budget_bytes() == pytest.approx(one / 2)
+# ── Heavy runs share the memory ─────────────────────────────────────────
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    """A fresh gate over a 1,000 MB budget and two runs at once."""
+    import fftools
+    monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "1000")
+    monkeypatch.setattr(fftools, "MAX_RENDERS", 2)
+    monkeypatch.setattr(fftools, "_gate", fftools._Gate())
+    yield fftools
+    assert fftools._gate.held == 0 and fftools._gate.claimed == 0 and not fftools._gate.line
+
+
+def _runs(fftools, claims, *, hold=0.05):
+    """Run one heavy step per claim, each started a moment after the one
+    before; answers each step's (start, end) and the order they started in."""
+    loop_t = []
+    order = []
+
+    async def step(i, claim):
+        await asyncio.sleep(0.005 * i)
+        async with fftools.heavy_run(claim):
+            order.append(i)
+            t0 = asyncio.get_running_loop().time()
+            await asyncio.sleep(hold)
+            loop_t.append((i, t0, asyncio.get_running_loop().time()))
+
+    async def main():
+        await asyncio.gather(*(step(i, c) for i, c in enumerate(claims)))
+    asyncio.run(main())
+    spans = {i: (a, b) for i, a, b in loop_t}
+    return [spans[i] for i in range(len(claims))], order
+
+
+def _overlap(a, b):
+    return a[0] < b[1] and b[0] < a[1]
+
+
+def test_two_claims_over_the_budget_never_run_together(gate):
+    (a, b), _ = _runs(gate, [800e6, 800e6])
+    assert not _overlap(a, b)
+
+
+def test_two_claims_within_the_budget_run_together(gate):
+    (a, b), _ = _runs(gate, [400e6, 500e6])
+    assert _overlap(a, b)
+
+
+def test_a_claim_over_the_budget_runs_alone(gate):
+    (big, small), _ = _runs(gate, [5000e6, 1e6])
+    assert not _overlap(big, small)
+
+
+def test_a_waiter_is_never_passed_by_a_later_one(gate):
+    """A small claim that would fit beside the running one still waits behind
+    the big one that asked first: a big render is never starved."""
+    _, order = _runs(gate, [800e6, 800e6, 100e6])
+    assert order == [0, 1, 2]
+
+
+def test_plain_runs_keep_two_at_once(gate):
+    (a, b, c), _ = _runs(gate, [None, None, None])
+    assert _overlap(a, b)
+    assert c[0] >= min(a[1], b[1])
+
+
+@pytest.mark.parametrize("budget", [1000e6, 8047452611.379834])
+def test_three_plain_runs_go_together_when_three_are_allowed(monkeypatch, budget):
+    """Three equal shares sum a few millionths of a byte past some budgets in
+    floating point (the second one here): the third share still fits."""
+    import fftools
+    monkeypatch.setattr(fftools, "MAX_RENDERS", 3)
+    monkeypatch.setattr(fftools, "render_budget_bytes", lambda: budget)
+    monkeypatch.setattr(fftools, "_gate", fftools._Gate())
+    (a, b, c), _ = _runs(fftools, [None, None, None])
+    assert _overlap(a, c) and _overlap(b, c)
+
+
+def test_a_cancelled_waiter_and_a_failed_run_leave_the_gate_empty(gate):
+    async def main():
+        hold = asyncio.Event()
+
+        async def first():
+            async with gate.heavy_run(900e6):
+                await hold.wait()
+
+        async def failing():
+            async with gate.heavy_run(900e6):
+                raise RuntimeError("ffmpeg failed")
+
+        a = asyncio.create_task(first())
+        await asyncio.sleep(0.01)
+        waiter = asyncio.create_task(gate.heavy_run(900e6).__aenter__())
+        await asyncio.sleep(0.01)
+        assert len(gate._gate.line) == 1
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not gate._gate.line
+        hold.set()
+        await a
+        with pytest.raises(RuntimeError):
+            await failing()
+    asyncio.run(main())
+
+
+def test_a_run_the_system_ends_for_memory_says_what_to_do(monkeypatch, tmp_path):
+    import fftools
+    killed = tmp_path / "ffmpeg"
+    killed.write_text("#!/bin/sh\nkill -9 $$\n")
+    killed.chmod(0o755)
+    monkeypatch.setattr(fftools, "FFMPEG", str(killed))
+    with pytest.raises(fftools.FFmpegError) as err:
+        asyncio.run(fftools.run_ffmpeg(["-version"]))
+    assert str(err.value) == fftools.OUT_OF_MEMORY
 
 
 def test_a_stuck_read_in_colour_matching_ends(monkeypatch):

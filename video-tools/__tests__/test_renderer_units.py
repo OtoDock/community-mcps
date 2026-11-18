@@ -12,6 +12,7 @@ import asyncio
 from pathlib import Path
 
 import composition as comp_mod
+import fftools
 import renderer
 
 
@@ -110,21 +111,20 @@ def test_unparseable_measurement_falls_back_to_single_pass(monkeypatch, tmp_path
 
 def test_render_budget_env_override(monkeypatch):
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "2000")
-    assert renderer._render_budget_bytes() == 2000 * 1e6
-    monkeypatch.setattr(renderer, "_cgroup_memory_limit_bytes", lambda: None)
+    assert fftools.render_budget_bytes() == 2000 * 1e6
+    monkeypatch.setattr(fftools, "_cgroup_memory_limit_bytes", lambda: None)
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "not-a-number")
-    assert renderer._render_budget_bytes() >= 1.5e9
+    assert fftools.render_budget_bytes() >= 1.5e9
     monkeypatch.delenv("VIDEO_TOOLS_RENDER_BUDGET_MB")
-    assert renderer._render_budget_bytes() >= 1.5e9
+    assert fftools.render_budget_bytes() >= 1.5e9
 
 
 def test_render_budget_honors_cgroup_limit(monkeypatch):
     monkeypatch.delenv("VIDEO_TOOLS_RENDER_BUDGET_MB", raising=False)
-    monkeypatch.setattr(renderer, "MAX_RENDERS", 1)
-    monkeypatch.setattr(renderer, "_cgroup_memory_limit_bytes", lambda: 4e9)
-    assert renderer._render_budget_bytes() == 4e9 * 0.4
-    monkeypatch.setattr(renderer, "_cgroup_memory_limit_bytes", lambda: 2e9)
-    assert renderer._render_budget_bytes() == 2e9 * 0.6
+    monkeypatch.setattr(fftools, "_cgroup_memory_limit_bytes", lambda: 4e9)
+    assert fftools.render_budget_bytes() == 4e9 * 0.4
+    monkeypatch.setattr(fftools, "_cgroup_memory_limit_bytes", lambda: 2e9)
+    assert fftools.render_budget_bytes() == 2e9 * 0.6
 
 
 def test_video_encode_args_strip_audio():
@@ -145,3 +145,10 @@ def test_the_manifest_lets_a_call_run_as_long_as_a_final_render():
     limit = manifest["server"].get("tool_timeout_sec")
     assert isinstance(limit, int) and renderer.FINAL_TIMEOUT_S <= limit <= 3600
     assert renderer.PREVIEW_TIMEOUT_S < renderer.FINAL_TIMEOUT_S
+
+
+def test_a_lone_render_plans_against_the_whole_budget(monkeypatch):
+    monkeypatch.delenv("VIDEO_TOOLS_RENDER_BUDGET_MB", raising=False)
+    monkeypatch.setattr(fftools, "MAX_RENDERS", 2)
+    monkeypatch.setattr(fftools, "_cgroup_memory_limit_bytes", lambda: 4 * 1024 ** 3)
+    assert round(fftools.render_budget_bytes() / 1e6) == 1718

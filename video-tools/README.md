@@ -22,7 +22,7 @@ This MCP compiles it to an FFmpeg filtergraph and renders web-safe MP4.
 | `create_composition` / `edit_composition` / `validate_composition` | Author the timeline. `format=json` gives the computed timeline as data |
 | `render_composition` | preview (fast) / final (crf 18 + two-pass R128 loudnorm). `background=true` answers at once with a job |
 | `render_status` / `cancel_render` | How far a background render is and its report when done, or stop it |
-| `render_filmstrip` | One small picture of a clip's frames, for a timeline's thumbnails |
+| `render_filmstrip` | One small picture of a clip's frames, for a timeline's thumbnails, from the whole file or one span |
 | `render_frames` | Frames from the composition: the visual QC loop |
 | `edit_video` | One-shot ops: trim/remove/crop/rotate/resize/speed/concat/audio/subtitles/GIF |
 
@@ -34,7 +34,8 @@ With `background=true` the call checks the composition and starts the
 render, and `render_status` gives its progress and its report. A
 background render lives as long as the tool runs: after a restart its
 status is `lost`. While a render runs, OtoDock keeps the tool awake for up
-to an hour.
+to an hour. A render alone uses the tool's whole memory budget. Two renders
+run at once only when they fit in it together, otherwise the second waits.
 
 **`edit_video`** tags its re-encoded outputs Rec.709. HLG/PQ sources pass
 through untouched.

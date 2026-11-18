@@ -143,18 +143,25 @@ def test_windowed_render_matches_single_on_offgrid_durations(
 
     import renderer
 
+    windowed = []
+    real_segmented = renderer._render_segmented
+
+    async def segmented(*a, segments, **kw):
+        windowed.append(len(segments))
+        return await real_segmented(*a, segments=segments, **kw)
+    monkeypatch.setattr(renderer, "_render_segmented", segmented)
+
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "100000")
     single = _run(renderer.render_composition(
         str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(offgrid_assets["root"] / "single.mp4")))
-    assert not any("windows" in w["message"] for w in single["warnings"])
+    assert not windowed
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "8")
     seg = _run(renderer.render_composition(
         str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(offgrid_assets["root"] / "seg.mp4")))
-    assert any("windows" in w["message"] for w in seg["warnings"]), \
-        seg["warnings"]
+    assert windowed and windowed[0] > 1
 
     # 84 + 98 + 113 + 113 + 98 frames — media rounding, fills pinned to it.
     expected = 506

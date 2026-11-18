@@ -24,7 +24,7 @@ import composition as comp_mod  # noqa: E402
 import quickops  # noqa: E402
 import renderer  # noqa: E402
 import stab  # noqa: E402
-from fftools import FFMPEG, audio_stream, colr_box, media_duration, probe, stream_color, video_stream  # noqa: E402
+from fftools import FFMPEG, FFPROBE, audio_stream, colr_box, media_duration, probe, stream_color, video_stream  # noqa: E402
 
 
 def _run(coro):
@@ -218,15 +218,39 @@ def test_segmented_render_bounds_memory_and_matches_single_pass(
     assert not any("windows" in w["message"] for w in single["warnings"])
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "40")
+    claims = []
+    real_run = fftools.heavy_run
+
+    def recording_run(weight=None):
+        claims.append(weight)
+        return real_run(weight)
+    monkeypatch.setattr(fftools, "heavy_run", recording_run)
     seg = _run(renderer.render_composition(
         str(path), lambda p, writing=False: p, mode="preview",
         output_path=str(fold_assets["root"] / "seg.mp4")))
     seg_peak = peak_rss_kb()
-    assert any("windows" in w["message"] and "memory budget" in w["message"]
-               for w in seg["warnings"]), seg["warnings"]
+    # A render that succeeded leaves nothing to do about memory: no warning.
+    assert not any("memory" in w["message"] for w in seg["warnings"]), seg["warnings"]
+    # Each window claims its own estimate from the shared budget.
+    from compiler import estimate_window_bytes, plan_segments
+    resolved, media_info, _ = _run(renderer.prepare(
+        comp_mod.load_composition(str(path)), lambda p, writing=False: p))
+    windows = plan_segments(resolved, media_info, 40e6)
+    assert len(windows) > 1
+    assert claims == [estimate_window_bytes(resolved, media_info, a, b) for a, b in windows]
 
     assert abs(seg["duration"] - single["duration"]) < 0.1
     assert abs(seg["duration"] - 48.0) < 0.2
+
+    # A keyframe at least every two seconds, across the window joins too.
+    for out in ("single.mp4", "seg.mp4"):
+        frames = subprocess.run(
+            [FFPROBE, "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
+             "-show_entries", "frame=pts_time", "-of", "csv=p=0",
+             str(fold_assets["root"] / out)],
+            capture_output=True, text=True, check=True).stdout.split()
+        keys = [float(t.strip(",")) for t in frames] + [seg["duration"]]
+        assert max(b - a for a, b in zip(keys, keys[1:])) <= 2.0 + 1e-3, (out, keys)
 
     # The A/B that matters: single-graph buffers ~48 s x 30 fps x 86 KB
     # ≈ 190 MB over a ~70 MB floor; per-window buffering caps at a quarter
@@ -264,8 +288,7 @@ def test_segmented_final_render_keeps_loudness_and_streams(
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "20")
     result = _run(renderer.render_composition(str(path), lambda p, writing=False: p,
                                               mode="final"))
-    assert any("windows" in w["message"] and "memory budget" in w["message"]
-               for w in result["warnings"]), result["warnings"]
+    assert not any("memory" in w["message"] for w in result["warnings"]), result["warnings"]
 
     out = result["output"]
     info = _run(probe(out))
