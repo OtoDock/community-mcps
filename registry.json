@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-11-21T11:47:05Z",
+  "updated_at": "2026-11-21T11:53:18Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -303,7 +303,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "b6dc8108a4e0f441",
+      "manifest_hash": "ae8209f30a5fdf5f",
       "manifest_url": "./notion-mcp/manifest.json",
       "readme_url": "./notion-mcp/README.md",
       "icon_url": null,
@@ -316,10 +316,10 @@
       "license": "MIT",
       "requires_credentials": true,
       "requires_system_packages": [],
-      "platform_min_version": "1.0.0",
+      "platform_min_version": "2.0.0",
       "trust": "maintained",
       "assignment_mode": "auto",
-      "size_bytes": 10931,
+      "size_bytes": 11146,
       "deprecated": false,
       "patched": false,
       "patch_note": null

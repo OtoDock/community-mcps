@@ -226,7 +226,17 @@
           }
         ]
       }
-    }
+    },
+    "exit": [
+      {
+        "key": "NOTION_TOKEN",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "hosts": [
+          "api.notion.com"
+        ]
+      }
+    ]
   },
   "config": [],
   "env": {},
@@ -249,5 +259,6 @@
     }
   },
   "patched": false,
-  "patch_note": null
+  "patch_note": null,
+  "platform_min_version": "2.0.0"
 }
