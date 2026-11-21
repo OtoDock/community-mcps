@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-11-18T23:53:07Z",
+  "updated_at": "2026-11-21T11:47:05Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -72,13 +72,13 @@
       "label": "Browser (Camoufox)",
       "description": "Anti-detect browser automation: Camoufox, a fingerprint-resistant Firefox, driven through Microsoft's Playwright MCP",
       "category": "community",
-      "version": "0.0.77",
+      "version": "0.0.78",
       "runtime": "docker",
       "source": "docker:camoufox + @playwright/mcp@0.0.78",
-      "image": "ghcr.io/otodock/camoufox:0.0.77",
+      "image": "ghcr.io/otodock/camoufox:0.0.78",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "5618aafdbb461b63",
+      "manifest_hash": "d04d617e15b7c4bf",
       "manifest_url": "./camoufox/manifest.json",
       "readme_url": "./camoufox/README.md",
       "icon_url": "./camoufox/icon.png",
@@ -94,7 +94,7 @@
       "platform_min_version": "1.0.0",
       "trust": "first-party",
       "assignment_mode": "auto",
-      "size_bytes": 81496,
+      "size_bytes": 85702,
       "deprecated": false,
       "patched": false,
       "patch_note": null

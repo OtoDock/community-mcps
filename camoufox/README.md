@@ -20,18 +20,27 @@ Provides a browser the agent can drive: navigate, click, fill, screenshot, scrap
 
 Screenshots are written into the user's hidden `.screenshots/` workspace folder, kept to the most recent 15.
 
+## The local network
+
+The browser opens no address on your local network unless an admin turns it on. The switch is "Let the browser open pages on your local network", under Local network on its row in Admin, MCP Servers. Turned on, the browser reaches what the server reaches, and outside people's conversations stop getting the browser, since one browser serves the whole install. A hosted OtoDock has no switch.
+
+The container closes its own exit (`close_exit.sh`, run before the browser starts, with a capability it then gives up), so no page can reach a private address. On a platform that does not ask, the network stays open. Before the browser starts, the container checks every rule and that a new connection to its gateway is refused. It does not start when IPv6 is up and cannot be closed.
+
+Two limits stay. A local network with global IPv6 addresses is outside the ranges it closes, so on a Docker network with IPv6 those hosts stay reachable. And port 53 stays open to every address for DNS, so the browser's own server can reach a private host on that port, though a page cannot.
+
 ## Install layout
 
 This folder contains:
 
-- `manifest.json` — the MCP descriptor consumed by the platform.
-- `Dockerfile` — builds Python 3.13 + Node + Camoufox + `@playwright/mcp`.
-- `docker-compose.yml` — runs the container with shared memory tuned for Firefox.
-- `entrypoint.sh` + `launch_server.py` — start an Xvfb display and run Camoufox via its Playwright `launchServer` integration.
-- `healthprobe.py` — the health checker the container runs, and the reads of its result for the healthcheck and the watchdog.
-- `stream_sidecar.py` — the session sidecar in front of the MCP server (the same text as the platform's shared copy).
-- `camoufox-mcp-config.json` — the Playwright MCP config template.
-- `skills/web-browsing.md` — best-practice skill loaded into agent prompts when this MCP is enabled.
+- `manifest.json`: the MCP descriptor consumed by the platform.
+- `Dockerfile`: builds Python 3.13 + Node + Camoufox + `@playwright/mcp`.
+- `docker-compose.yml`: runs the container with shared memory tuned for Firefox.
+- `entrypoint.sh` + `launch_server.py`: start an Xvfb display and run Camoufox via its Playwright `launchServer` integration.
+- `close_exit.sh`: closes the container's own local network when the platform asks.
+- `healthprobe.py`: the health checker the container runs, and the reads of its result for the healthcheck and the watchdog.
+- `stream_sidecar.py`: the session sidecar in front of the MCP server (the same text as the platform's shared copy).
+- `camoufox-mcp-config.json`: the Playwright MCP config template.
+- `skills/web-browsing.md`: best-practice skill loaded into agent prompts when this MCP is enabled.
 
 ## Operator notes
 

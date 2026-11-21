@@ -11,7 +11,7 @@ ARG PLAYWRIGHT_MCP_VERSION=0.0.78
 # System deps for the patched Firefox + Xvfb. curl/gnupg/ca-certificates are
 # for the NodeSource setup below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg ca-certificates gosu \
+    curl gnupg ca-certificates gosu iptables util-linux \
     xvfb x11-utils \
     libgtk-3-0 libx11-xcb1 libasound2 libgbm1 libnss3 \
     libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 \
@@ -81,7 +81,8 @@ COPY healthprobe.py /app/healthprobe.py
 # It is kept in sync with the platform's shared sidecar source.
 COPY stream_sidecar.py /app/stream_sidecar.py
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY close_exit.sh /app/close_exit.sh
+RUN chmod +x /entrypoint.sh /app/close_exit.sh
 
 # The container starts as ROOT so the entrypoint can chown the root-owned
 # /screenshots mount; it immediately drops to the `camoufox` user via gosu before

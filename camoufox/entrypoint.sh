@@ -17,6 +17,14 @@ if [ "$(id -u)" = "0" ]; then
   # reads it.
   mkdir -p /run/probe && chown camoufox:camoufox /run/probe
   rm -f /run/probe/status.json /run/probe/status.json.* /run/probe/healthprobe.mcp-session-id
+  # The platform asks for the local network closed (its switch off): the
+  # container's own exit is closed here, then the capability it took leaves
+  # the bounding set before the browser's user starts. Open, or an older
+  # platform that sets nothing: the network stays as it was.
+  if [ "${OTODOCK_LOCAL_NETWORK:-}" = "closed" ]; then
+    /app/close_exit.sh || { echo "camoufox: the local network could not be closed; not starting" >&2; exit 1; }
+    exec setpriv --bounding-set -net_admin -- gosu camoufox "$0" "$@"
+  fi
   exec gosu camoufox "$0" "$@"
 fi
 
