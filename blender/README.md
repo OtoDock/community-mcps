@@ -6,7 +6,7 @@ Drive a running Blender on this machine via the official [Blender Lab MCP server
 |-------|-------|
 | Manifest name | `blender` |
 | Runtime | Python (stdio), device-local |
-| Upstream | `git+https://projects.blender.org/lab/blender_mcp.git` at v1.0.3 (pinned to its commit) |
+| Upstream | `git+https://projects.blender.org/lab/blender_mcp.git` at Git tag v1.0.3 (pinned to its commit) |
 | Credentials | None (talks to the local Blender instance) |
 | Assignment mode | per-agent (device capability: `app`) |
 | Upstream project | [Blender](https://projects.blender.org/lab/blender_mcp) |
@@ -18,8 +18,12 @@ Connects to a running Blender instance on the same machine through the official 
 
 ## Requirements
 
-Blender **5.1 or newer** with the official **MCP add-on** installed and enabled (one-time, by the user). The add-on comes from the Blender Lab extension repository: in Blender, Preferences > Get Extensions > Repositories > add `https://lab.blender.org/`, then install and enable "MCP". Dropping the zip from [blender.org/lab/mcp-server](https://www.blender.org/lab/mcp-server/) onto Blender twice does the same (the first drop adds the repository, the second installs the add-on) and keeps update notifications. The platform installs the MCP **server** from git; the add-on is the in-Blender bridge it talks to (default `127.0.0.1:9876`).
+Blender **5.1 or newer** with the official **MCP add-on** installed and enabled (one-time, by the user). The add-on comes from the Blender Lab extension repository. In Blender, open Preferences > Get Extensions > Repositories, add `https://lab.blender.org/`, then install and enable "MCP".
 
-The background tools (`*_for_cli`) start their own Blender process: set **Blender executable** (`BLENDER_PATH`, default `blender`) when Blender is not on the machine's `PATH`. Each user can override it for their own machine.
+Dropping the zip from [blender.org/lab/mcp-server](https://www.blender.org/lab/mcp-server/) onto Blender twice does the same, and keeps update notifications. The first drop adds the repository, the second installs the add-on.
 
-`execute_blender_code` / `execute_blender_code_for_cli` run arbitrary Python inside Blender and prompt for confirmation before use (declared `device_high_risk_tools`).
+The platform installs the MCP **server** from git. The add-on is the in-Blender bridge the server talks to (default `127.0.0.1:9876`).
+
+The background tools (`*_for_cli`) start their own Blender process. Set **Blender executable** (`BLENDER_PATH`, default `blender`) when Blender is not on the machine's `PATH`. Each user can override it for their own machine.
+
+`execute_blender_code` and `execute_blender_code_for_cli` run any Python inside Blender. They follow the chat's permission mode like the other tools. The machine's App connectors grant is the consent: where it is on, a chat in Ask or Auto runs them without asking.

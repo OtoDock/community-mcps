@@ -74,7 +74,6 @@ Build artifacts and **anything that could carry a secret**: `*/node_modules/`, `
 | `placement` | enum | no | `"any"` (default) or `"satellite_only"`. |
 | `requires_display` | bool | no | If `true`, the MCP is excluded on satellites known to be headless. |
 | `device_capability` | enum | no | `"computer"` / `"browser"` / `"app"` for device-control MCPs (implies remote-only + per-machine grant). See [Device-control & app-connector MCPs](#device-control--app-connector-mcps). |
-| `device_high_risk_tools` | array | no | Tool names that still prompt the user even after the device capability is granted. |
 | `companion_app` | object | no | App-connector block for MCPs that bridge to a desktop app. |
 | `system_requirements` | object | no | OS packages/runtimes the installer **enforces** at preflight. See [System requirements](#system-requirements). |
 | `requires_system_packages` | array | no | OS package names shown to admins as a **display-only** warning. The installer does not act on these: use `system_requirements` for enforcement. |
@@ -482,7 +481,7 @@ Each entry is `{source, host_key, port_key?, port_default?}`:
 
 MCPs that drive a real machine (screen/mouse, a logged-in browser, a desktop app) set `device_capability` (`"computer"` / `"browser"` / `"app"`). These are automatically **remote-only** and gated behind a per-machine grant the owner approves. The capability is the security boundary, so these MCPs use `assignment_mode: "auto"`.
 
-List any genuinely dangerous tools in `device_high_risk_tools` so they still prompt even after the grant. App-connector MCPs that bridge to a desktop program add a `companion_app` block. Treat all page/app content as untrusted input in your skill guidance.
+Every tool of such an MCP follows the chat's permission mode, a tool that runs code in the app included. The grant is the consent: on a granted machine, Ask and Auto run the tools without a prompt. From OtoDock 1.9.0 the key `device_high_risk_tools` pins nothing, so leave it out. App-connector MCPs that bridge to a desktop program add a `companion_app` block. Treat all page/app content as untrusted input in your skill guidance.
 
 ## Environment contract
 

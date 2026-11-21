@@ -1,12 +1,12 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-11-21T11:53:18Z",
+  "updated_at": "2026-11-21T11:55:49Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
       "name": "blender",
       "label": "Blender",
-      "description": "Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy Python, render. Requires the official Blender MCP add-on installed + enabled in Blender (the platform installs the SERVER from git; the user installs the add-on once).",
+      "description": "Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy Python, render. Requires the official Blender MCP add-on installed + enabled in Blender. The platform installs the SERVER from git, and the user installs the add-on once.",
       "category": "community",
       "version": "1.0.3",
       "runtime": "python",
@@ -14,7 +14,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "0bde341b95d78438",
+      "manifest_hash": "1cf607c6ad30cb08",
       "manifest_url": "./blender/manifest.json",
       "readme_url": "./blender/README.md",
       "icon_url": null,
@@ -30,7 +30,7 @@
       "platform_min_version": "1.0.0",
       "trust": "maintained",
       "assignment_mode": "auto",
-      "size_bytes": 7105,
+      "size_bytes": 7139,
       "deprecated": false,
       "patched": false,
       "patch_note": null

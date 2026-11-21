@@ -2,7 +2,7 @@
   "name": "blender",
   "server_name": "blender",
   "label": "Blender",
-  "description": "Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy Python, render. Requires the official Blender MCP add-on installed + enabled in Blender (the platform installs the SERVER from git; the user installs the add-on once).",
+  "description": "Drive a running Blender on this machine via the official Blender Lab MCP server: inspect the scene, run bpy Python, render. Requires the official Blender MCP add-on installed + enabled in Blender. The platform installs the SERVER from git, and the user installs the add-on once.",
   "version": "1.0.3",
   "category": "community",
   "author": "Blender",
@@ -49,12 +49,10 @@
     "auth": "none"
   },
 
-  "device_high_risk_tools": ["execute_blender_code", "execute_blender_code_for_cli"],
-
   "system_requirements": {
     "debian": ["git"],
     "ubuntu": ["git"],
-    "notes": "Installs the official Blender Lab MCP server from git, so the machine needs `git` (Windows: `winget install Git.Git`; macOS: `brew install git`). Also requires Blender 5.1+ running with the official MCP add-on from the Blender Lab extension repository: in Blender, Preferences > Get Extensions > Repositories > add `https://lab.blender.org/`, then install and enable \"MCP\" (or drop the zip from blender.org/lab/mcp-server onto Blender twice: the first drop adds the repository, the second installs the add-on). Started, it opens a local control socket (default 127.0.0.1:9876). The platform does NOT launch Blender; the user starts it. Cross-platform (Linux X11/Wayland, macOS, Windows)."
+    "notes": "Installs the official Blender Lab MCP server from git, so the machine needs `git` (Windows: `winget install Git.Git`, macOS: `brew install git`). Also requires Blender 5.1+ running with the official MCP add-on from the Blender Lab extension repository. In Blender: Preferences > Get Extensions > Repositories > add `https://lab.blender.org/`, then install and enable \"MCP\". Or drop the zip from blender.org/lab/mcp-server onto Blender twice: the first drop adds the repository, the second installs the add-on. Started, it opens a local control socket (default 127.0.0.1:9876). The platform does NOT launch Blender: the user starts it. Cross-platform (Linux X11/Wayland, macOS, Windows)."
   },
 
   "skills": [
