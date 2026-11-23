@@ -1,7 +1,7 @@
 {
   "name": "github-mcp",
   "label": "GitHub",
-  "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's OAuth token or PAT rides the platform's credential gateway, and a GitHub App installed on chosen repositories narrows what an agent reaches.",
+  "description": "GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server. Each user's OAuth token or PAT rides the platform's credential gateway. A GitHub App installed on chosen repositories narrows what an agent reaches.",
   "version": "2.1.0",
   "category": "community",
   "author": "GitHub",

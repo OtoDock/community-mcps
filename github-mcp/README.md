@@ -4,8 +4,9 @@ GitHub repositories, issues, pull requests and code search through GitHub's
 hosted MCP server (`https://api.githubcopilot.com/mcp/`), the remote form of
 the official [`github/github-mcp-server`](https://github.com/github/github-mcp-server).
 Nothing runs on the install: each request leaves through the platform's
-credential gateway, which adds the user's OAuth token or PAT on the way out,
-so the token never reaches a session's config or a paired machine's disk.
+credential gateway. The gateway adds the user's OAuth token or PAT on the way
+out. So the token never reaches a session's config or a paired machine's
+disk.
 
 | Field | Value |
 |-------|-------|
@@ -18,7 +19,7 @@ so the token never reaches a session's config or a paired machine's disk.
 
 ## Setup (admin)
 
-### Option A — an OAuth App
+### Option A: an OAuth App
 
 1. Create a GitHub OAuth App at <https://github.com/settings/developers> →
    **OAuth Apps** → **New OAuth App**.
@@ -29,42 +30,53 @@ so the token never reaches a session's config or a paired machine's disk.
 
 3. Copy the **Client ID** and **Client secret**.
 
-4. In OtoDock admin → **MCP Servers** → install `github-mcp` → open
-   detail page → **Credentials** → paste the Client ID and Secret.
+4. In OtoDock admin → **MCP Servers**, install `github-mcp`. Open its
+   detail page → **Credentials** and paste the Client ID and Secret.
 
-### Option A2 — a GitHub App (narrowed to chosen repositories)
+### Option A2: a GitHub App (narrowed to chosen repositories)
 
 A GitHub App is installed on the repositories a person chooses, and its
 tokens reach those only. Pick **GitHub App** on the admin card and paste
 the five values from <https://github.com/settings/apps> → **New GitHub
-App**: the **App ID**, the **Client ID**, a generated **client secret**, a
-generated **private key** (the `.pem` file's text) and the **webhook
-secret**. The settings page needs three addresses from the card: the
-callback URL, the setup URL (with "Redirect on update" ticked) and the
-webhook URL. Grant the repository permissions Contents, Issues, Pull
-requests, Actions, Workflows, Discussions (read and write), Metadata and
-Commit statuses (read), and the organization permission Members (read),
-which lets an organization owner be told apart from a member.
+App**:
 
-A person then signs in and installs the app where they choose (the card
-offers **Install on GitHub** and **Refresh**); an account that installed
-nothing reaches nothing. A manager can bind one of their owned
-installations as an agent's service identity: the agent's `git` and `gh`
-then act with the installation's own token, which reaches its
-repositories only.
+- the **App ID**
+- the **Client ID**
+- a generated **client secret**
+- a generated **private key** (the `.pem` file's text)
+- the **webhook secret**
+
+The settings page needs three addresses from the card: the callback URL,
+the setup URL (with "Redirect on update" ticked) and the webhook URL.
+
+Grant these permissions:
+
+- Repository, read and write: Contents, Issues, Pull requests, Actions,
+  Workflows and Discussions.
+- Repository, read: Metadata and Commit statuses.
+- Organization, read: Members. It lets an organization owner be told apart
+  from a member.
+
+A person then signs in and installs the app where they choose. The card
+offers **Install on GitHub** and **Refresh**. An account that installed
+nothing reaches nothing.
+
+A manager can bind one of their owned installations as an agent's service
+identity. The agent's `git` and `gh` then act with the installation's own
+token, which reaches its repositories only.
 
 **With hosted sign-in** nothing is registered: OtoDock's own GitHub App
-serves the sign-in and the install page, and its events reach the install
-through OtoDock's relay. A person connects, picks **Install on GitHub** on
-the card and chooses the repositories. Hosted sign-in has no installation
-identity for an agent.
+serves the sign-in and the install page. The app's events reach the
+install through OtoDock's relay. A person connects, picks **Install on
+GitHub** on the card and chooses the repositories. Hosted sign-in has no
+installation identity for an agent.
 
-### Option B — Personal Access Token
+### Option B: Personal Access Token
 
 Skip the OAuth App registration. Each user generates their own PAT.
 
-The user follows the connect flow → picks **Personal Access Token** in
-the form → pastes the token they generated at
+The user follows the connect flow, picks **Personal Access Token** in the
+form and pastes the token they generated at
 <https://github.com/settings/tokens?type=beta>.
 
 ## Connect (per user)
@@ -79,8 +91,8 @@ the form → pastes the token they generated at
    - **GitHub sign-in**: "Sign in with your personal GitHub account." The
      OAuth App: the services you tick map to scopes (`repo`, `workflow`,
      `read:user`, `user:email`, and `admin:org_hook` for organization-wide
-     event subscriptions). With hosted sign-in both browser ways are listed;
-     a self-managed install lists the kind its admin registered.
+     event subscriptions). With hosted sign-in both browser ways are listed.
+     A self-managed install lists the kind its admin registered.
    - **Personal Access Token**: "Create a personal access token on GitHub
      and paste it here." Give it the scopes for the services you tick.
 3. The platform persists the token under
@@ -89,23 +101,29 @@ the form → pastes the token they generated at
 ## Events (webhooks)
 
 The MCP can also receive GitHub events: User settings → **Integrations** →
-the GitHub account → **Subscribe to events** (or Agent Settings → MCPs → GitHub
-→ Subscribe to events for this agent). A subscription registers a webhook
-with GitHub and fires the triggers bound to it — pushes, pull requests,
-issues and their comments, reviews and review threads, discussions,
-releases, workflow runs and their jobs, check runs and suites,
-deployments, Dependabot, code scanning and secret scanning alerts,
-repository advisories, labels and milestones, stars, forks, branch and
-tag lifecycle, commit comments, repository changes and a repository made
-public, collaborators, teams and organization membership. Three kinds of
-subscription:
+the GitHub account → **Subscribe to events**. Or, for one agent, Agent
+Settings → MCPs → GitHub → Subscribe to events for this agent.
+
+A subscription registers a webhook with GitHub and fires the triggers bound
+to it. These are its events:
+
+- Pushes, pull requests, issues and their comments.
+- Reviews and review threads, discussions and releases.
+- Workflow runs and their jobs, check runs and suites, and deployments.
+- Dependabot, code scanning and secret scanning alerts, and repository
+  advisories.
+- Labels and milestones, stars, forks, and branch and tag lifecycle.
+- Commit comments, repository changes and a repository made public.
+- Collaborators, teams and organization membership.
+
+Three kinds of subscription:
 
 - **One repository**: type it as `owner/name`. A repository webhook. You
   need admin access on it.
 - **Every repository in an organization**: type the organization's name.
   One subscription covers every repository in it, now and later. You need
-  owner rights on the organization and the **Organization webhooks**
-  permission on the connected account (`admin:org_hook`: tick it when
+  owner rights on the organization. The connected account needs the
+  **Organization webhooks** permission (`admin:org_hook`: tick it when
   connecting, or reconnect). A repository already covered by an
   organization subscription fires twice if it also has its own: pick one.
 - **An installation** (a GitHub-App account): pick it from the list. One
@@ -119,7 +137,7 @@ Reconnect the account and tick Repositories."). A GitHub-App account never
 sees that line: its permissions come from the app.
 
 Events are delivered straight from GitHub to the platform's public URL and
-verified with a per-subscription secret; the hosted OAuth relay is not in
+verified with a per-subscription secret. The hosted OAuth relay is not in
 that path. An installation subscription of a hosted account is the
 exception: OtoDock's app delivers it through the relay.
 
@@ -152,34 +170,37 @@ explicitly names a different org.
 ## `git` and `gh` in the agent's shell
 
 Connecting GitHub also signs `git` and `gh` in for the agent's shell, with the
-same account the MCP uses: `git clone` / `push` against `github.com` and
-`gh pr create` work without `gh auth login`. Same scope rules as the MCP:
-user-scope chats use the user's bound account, agent-scope tasks, calls and
-triggers the bound service account, or the bound installation's own token.
+same account the MCP uses. `git clone` / `push` against `github.com` and
+`gh pr create` work without `gh auth login`. The scope rules are the same as
+the MCP's:
+
+- User-scope chats use the user's bound account.
+- Agent-scope tasks, calls and triggers use the bound service account, or
+  the bound installation's own token.
 
 ## Limitations
 
 - **GitHub Enterprise Server** is not covered: the hosted server serves
   github.com only.
-- **GitHub Apps**: an agent's identity takes the whole installation; the
-  hosted MCP server itself gets the person's user token (narrowed by
-  GitHub to the app's installations) while `git` and `gh` get the
-  installation's own.
+- **GitHub Apps**: an agent's identity takes the whole installation. The
+  hosted MCP server itself gets the person's user token, narrowed by GitHub
+  to the app's installations. `git` and `gh` get the installation's own
+  token.
 
 ## Moving from the self-hosted entry
 
-Up to 1.2.0 this entry ran `github-mcp-server` in a container beside the
-platform (`ghcr.io/otodock/github-mcp`). An install of that version is offered
-the switch on the MCP Servers page (platform 1.7.1 or newer); accounts, webhook
-subscriptions and agent assignments carry, the container is stopped and its
-image removed, and the bearer allowlist already holds `api.githubcopilot.com` for the
-`github` provider (seeded since 1.7.1).
+The self-hosted entry ran `github-mcp-server` in a container beside the
+platform (`ghcr.io/otodock/github-mcp`). An install of it is offered
+the switch on the MCP Servers page. Accounts, webhook
+subscriptions and agent assignments carry over. The container is stopped and
+its image removed. The bearer allowlist already holds `api.githubcopilot.com`
+for the `github` provider.
 
 ## Tools
 
 GitHub's default toolset: repositories, issues, pull requests, code and
 commit search, releases, branches and users (46 tools on 2026-10-09). The exact
-list follows GitHub's hosted server; see
+list follows GitHub's hosted server. See
 <https://github.com/github/github-mcp-server>.
 
 ## Troubleshooting
@@ -187,5 +208,5 @@ list follows GitHub's hosted server; see
 - **401 from GitHub**: token revoked or scopes insufficient. Reconnect and
   pick the services that cover what you need.
 - **GitHub left out of a session with "host not allowed"**: an admin removed
-  the `github` / `api.githubcopilot.com` row from the bearer allowlist
-  (Admin → Security); restore it.
+  the `github` / `api.githubcopilot.com` row from the bearer allowlist.
+  Restore it in Admin → Security.

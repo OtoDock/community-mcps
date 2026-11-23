@@ -33,7 +33,7 @@ Each MCP folder is **self-contained**. No shared `node_modules/`, no shared `ven
 | [bluesky-mcp](./bluesky-mcp/) | node | [cameronrye](https://github.com/cameronrye/atproto-mcp) | `atproto-mcp` | Bluesky posting, feeds, search, and account management via the AT Protocol |
 | [camoufox](./camoufox/) | docker | [OtoDock](https://github.com/OtoDock/community-mcps/tree/main/camoufox) | `camoufox + @playwright/mcp@0.0.78` | Anti-detect browser automation: Camoufox, a fingerprint-resistant Firefox, driven through Microsoft's… |
 | [email-server](./email-server/) | node | [yunfeizhu](https://github.com/yunfeizhu/mcp-mail-server) | `mcp-mail-server` | Email via IMAP/SMTP |
-| [github-mcp](./github-mcp/) | remote | [GitHub](https://github.com/github/github-mcp-server) | `api.githubcopilot.com` | GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server; each user's… |
+| [github-mcp](./github-mcp/) | remote | [GitHub](https://github.com/github/github-mcp-server) | `api.githubcopilot.com` | GitHub repositories, issues, pull requests, and code search through GitHub's hosted MCP server |
 | [google-maps](./google-maps/) | node | [cablate](https://github.com/cablate/mcp-google-map) | `@cablate/mcp-google-map` | Places search and details, directions by car, foot, bike or public transport, multi-stop routes, geocoding,… |
 | [home-assistant](./ha-mcp/) | python | [homeassistant-ai](https://github.com/homeassistant-ai/ha-mcp) | `ha-mcp` | Smart home control through the unofficial ha-mcp server |
 | [mastodon-mcp](./mastodon-mcp/) | node | [cameronrye](https://github.com/cameronrye/activitypub-mcp) | `activitypub-mcp` | Mastodon and the Fediverse: read timelines and trends, search, post, boost, and follow |
