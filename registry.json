@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-11-23T01:13:01Z",
+  "updated_at": "2026-11-23T01:14:47Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -417,7 +417,7 @@
       "platform_min_version": "1.0.0",
       "trust": "third-party",
       "assignment_mode": "explicit",
-      "size_bytes": 16232,
+      "size_bytes": 16244,
       "deprecated": false,
       "patched": false,
       "patch_note": null
