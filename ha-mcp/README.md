@@ -1,6 +1,6 @@
 # Home Assistant
 
-Smart-home control via Home Assistant's REST + WebSocket API, packaged as [`ha-mcp`](https://pypi.org/project/ha-mcp/), the unofficial server of the homeassistant-ai project (not made by Home Assistant or the Open Home Foundation).
+Smart-home control via Home Assistant's REST + WebSocket API, packaged as [`ha-mcp`](https://pypi.org/project/ha-mcp/). It is the unofficial server of the homeassistant-ai project (not made by Home Assistant or the Open Home Foundation).
 
 | Field | Value |
 |-------|-------|
@@ -19,10 +19,10 @@ Exposes a large surface of Home Assistant entities and services: lights, switche
 
 ## Install layout
 
-- `manifest.json` — MCP descriptor. Declares the instance fields used to populate the upstream env vars.
+- `manifest.json`: MCP descriptor. Declares the instance fields used to populate the upstream env vars.
 
 ## Operator notes
 
 - Create a **Long-Lived Access Token** under your Home Assistant profile → Security. Treat it as a password.
 - `HOMEASSISTANT_URL` should point at the HA frontend the OtoDock host can reach (e.g. `http://homeassistant.local:8123` or your reverse-proxied HTTPS URL). The MCP follows redirects.
-- Because this MCP is `assignment_mode: "explicit"`, an admin configures the URL+token instance once; agents are assigned the MCP afterwards.
+- Because this MCP is `assignment_mode: "explicit"`, an admin configures the URL+token instance once. Agents are assigned the MCP afterwards.
