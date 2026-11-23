@@ -1,6 +1,6 @@
 {
   "registry_version": "1",
-  "updated_at": "2026-11-23T01:06:10Z",
+  "updated_at": "2026-11-23T01:13:01Z",
   "platform_min_version": "1.0.0",
   "mcps": [
     {
@@ -335,7 +335,7 @@
       "image": "",
       "url_host": "",
       "version_constraint": "",
-      "manifest_hash": "26d4a019ed005531",
+      "manifest_hash": "295730de37dc818b",
       "manifest_url": "./prometheus/manifest.json",
       "readme_url": "./prometheus/README.md",
       "icon_url": "./prometheus/icon.png",
@@ -351,7 +351,7 @@
       "platform_min_version": "1.7.1",
       "trust": "third-party",
       "assignment_mode": "explicit",
-      "size_bytes": 12276,
+      "size_bytes": 12325,
       "deprecated": false,
       "patched": false,
       "patch_note": null
