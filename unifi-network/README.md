@@ -6,7 +6,7 @@ Network management, firewall, monitoring, DPI, VPN, and client tracking for UniF
 |-------|-------|
 | Manifest name | `unifi-network` |
 | Runtime | Python (stdio) |
-| Upstream | `pypi:unifi-network-mcp` (unpinned: installs the latest release; the Network server of [sirkirby/unifi-mcp](https://github.com/sirkirby/unifi-mcp)) |
+| Upstream | `pypi:unifi-network-mcp`, the Network server of [sirkirby/unifi-mcp](https://github.com/sirkirby/unifi-mcp). The package is unpinned, so the install takes its latest release. |
 | Credentials (per instance) | `UNIFI_HOST`, `UNIFI_USERNAME`, `UNIFI_PASSWORD`, optional `UNIFI_PORT`, `UNIFI_SITE`, `UNIFI_VERIFY_SSL` |
 | Per-tool cost | None |
 | Assignment mode | `explicit` |
@@ -17,17 +17,17 @@ Network management, firewall, monitoring, DPI, VPN, and client tracking for UniF
 
 Exposes the full UniFi Network controller API: list devices, see connected clients, inspect/modify firewall rules, manage VPN tunnels, run speed tests, query DPI stats, restart devices, adjust port-forwarding.
 
-Tool registration is set to `eager` (see `manifest.json::env::UNIFI_TOOL_REGISTRATION_MODE`) so every tool is available immediately — this is required for the LLM to discover the firewall/VPN tools without first running a discovery RPC.
+Tool registration is set to `eager` (see `manifest.json::env::UNIFI_TOOL_REGISTRATION_MODE`), so every tool is available immediately. The LLM needs eager registration to discover the firewall/VPN tools without first running a discovery RPC.
 
 ## Install layout
 
-- `manifest.json` — MCP descriptor.
+- `manifest.json`: the MCP descriptor.
 
 ## Operator notes
 
-- Create a **local UniFi account** dedicated to the MCP — don't reuse your UI.com SSO login (UniFi's API can't refresh Ubiquiti cloud SSO tokens reliably).
-- Give the account the **"Limited Admin"** role with the permissions you need; full admin is rarely required.
+- Create a **local UniFi account** dedicated to the MCP. Don't reuse your UI.com SSO login: UniFi's API can't refresh Ubiquiti cloud SSO tokens reliably.
+- Give the account the **"Limited Admin"** role with the permissions you need. Full admin is rarely required.
 - For self-signed certs (typical on a fresh UDM), set `UNIFI_VERIFY_SSL=false`. For a CA-signed cert behind a domain, leave it `true`.
 - `UNIFI_SITE=default` matches a single-site install. Multi-site setups expose the site identifier in the UniFi UI's URL.
 
-> Replaced from an earlier (Node, abandoned) implementation in favor of this Python port: it has some two hundred tools against the predecessor's 3 and is actively maintained. The repository moved to `sirkirby/unifi-mcp` (a monorepo; the Network server lives under `apps/network`); the PyPI package kept its name.
+> This Python port replaced an earlier Node implementation, which was abandoned. The port has some two hundred tools against the predecessor's 3 and is actively maintained. The repository moved to `sirkirby/unifi-mcp`, a monorepo where the Network server lives under `apps/network`. The PyPI package kept its name.
