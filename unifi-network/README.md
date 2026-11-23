@@ -27,7 +27,7 @@ Tool registration is set to `eager` (see `manifest.json::env::UNIFI_TOOL_REGISTR
 
 - Create a **local UniFi account** dedicated to the MCP. Don't reuse your UI.com SSO login: UniFi's API can't refresh Ubiquiti cloud SSO tokens reliably.
 - Give the account the **"Limited Admin"** role with the permissions you need. Full admin is rarely required.
-- For self-signed certs (typical on a fresh UDM), set `UNIFI_VERIFY_SSL=false`. For a CA-signed cert behind a domain, leave it `true`.
+- The default `UNIFI_VERIFY_SSL=false` fits a self-signed cert (typical on a fresh UDM). For a CA-signed cert behind a domain, set it to `true`.
 - `UNIFI_SITE=default` matches a single-site install. Multi-site setups expose the site identifier in the UniFi UI's URL.
 
 > This Python port replaced an earlier Node implementation, which was abandoned. The port has some two hundred tools against the predecessor's 3 and is actively maintained. The repository moved to `sirkirby/unifi-mcp`, a monorepo where the Network server lives under `apps/network`. The PyPI package kept its name.
