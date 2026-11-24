@@ -11,6 +11,9 @@ models/README.md) via OpenCV.
 import os
 from pathlib import Path
 
+from fftools import _f
+from shared import open_capture, own_folder
+
 _YUNET = "face_detection_yunet_2023mar.onnx"
 
 # In the image the models ship at /app/models; local dev runs use the
@@ -18,14 +21,11 @@ _YUNET = "face_detection_yunet_2023mar.onnx"
 MODELS_DIR = os.environ.get("VIDEO_TOOLS_MODELS_DIR", "") or (
     "/app/models" if Path("/app/models").exists()
     else str(Path(__file__).parent / "models"))
+own_folder(MODELS_DIR)
 
 _SCORE_THRESHOLD = 0.6
 _SAMPLES_PER_SHOT = 8
 _MIN_SAMPLE_STEP = 0.4   # seconds between detection samples within a shot
-
-
-def _f(v: float) -> str:
-    return f"{float(v):.6g}"
 
 
 def _detector(width: int, height: int):
@@ -81,7 +81,7 @@ def plan_segments(path: str, shots: list[tuple[float, float]],
     """
     import cv2
 
-    cap = cv2.VideoCapture(path)
+    cap = open_capture(path)
     try:
         detector = _detector(src_w, src_h)
     except RuntimeError:

@@ -1,5 +1,6 @@
 """Composition tool handlers: create / edit / validate / render."""
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -9,7 +10,7 @@ from mcp.types import ImageContent, TextContent
 import audiofx as audiofx_mod
 import composition as comp_mod
 import renderer
-from shared import _normalize_operations, _notify_file_written, _resolve_path, _to_agents_relative
+from shared import _normalize_operations, _notify_file_written, _resolve_path, _to_agents_relative, safe_kind
 
 
 def _clip_label(clip: dict) -> str:
@@ -49,8 +50,8 @@ async def _validation_block(comp: dict) -> tuple[str, list[dict], dict, dict]:
 
 async def handle_create_composition(args: dict):
     raw_path = args["path"]
-    path = _resolve_path(raw_path, writing=True)
-    if Path(path).exists() and not args.get("create_new"):
+    path = await _resolve_path(raw_path, writing=True)
+    if (await asyncio.to_thread(safe_kind, path)).kind != "missing" and not args.get("create_new"):
         return (f"Error: {raw_path} already exists — pass create_new=true to "
                 "overwrite, or use edit_composition to modify it")
 
@@ -67,7 +68,7 @@ async def handle_create_composition(args: dict):
     else:
         comp = comp_mod.new_composition(args.get("project"))
 
-    comp_mod.save_composition(path, comp)
+    await asyncio.to_thread(comp_mod.save_composition, path, comp)
     await _notify_file_written(path)
     report, issues, _, _ = await _validation_block(comp)
     return (f"Created {_to_agents_relative(path)}\n\n{report}\n\n"
@@ -77,13 +78,13 @@ async def handle_create_composition(args: dict):
 
 async def handle_edit_composition(args: dict):
     raw_path = args["path"]
-    path = _resolve_path(raw_path, writing=True)
-    comp = comp_mod.load_composition(path)
+    path = await _resolve_path(raw_path, writing=True)
+    comp = await asyncio.to_thread(comp_mod.load_composition, path)
     operations = _normalize_operations(args.get("operations"))
     if not operations:
         return "Error: no operations given"
     comp, results = comp_mod.apply_operations(comp, operations)
-    comp_mod.save_composition(path, comp)
+    await asyncio.to_thread(comp_mod.save_composition, path, comp)
     await _notify_file_written(path)
     report, issues, _, _ = await _validation_block(comp)
     return ("\n".join(results)
@@ -91,8 +92,8 @@ async def handle_edit_composition(args: dict):
 
 
 async def handle_validate_composition(args: dict):
-    path = _resolve_path(args["path"])
-    comp = comp_mod.load_composition(path)
+    path = await _resolve_path(args["path"])
+    comp = await asyncio.to_thread(comp_mod.load_composition, path)
     report, issues, resolved, media_info = await _validation_block(comp)
     if args.get("format") == "json":
         return json.dumps(_timeline_json(comp, resolved, media_info, issues))
@@ -240,9 +241,9 @@ async def handle_render_frames(args: dict):
 
 async def handle_render_status(args: dict):
     import jobs
-    return json.dumps(jobs.status(str(args.get("job_id") or "")))
+    return json.dumps(await jobs.status(str(args.get("job_id") or "")))
 
 
 async def handle_cancel_render(args: dict):
     import jobs
-    return json.dumps(jobs.cancel(str(args.get("job_id") or "")))
+    return json.dumps(await jobs.cancel(str(args.get("job_id") or "")))

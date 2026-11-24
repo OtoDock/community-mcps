@@ -29,7 +29,7 @@ import slowmo as slowmo_mod
 import speedramp as speedramp_mod
 import stab as stab_mod
 import transitions as transitions_mod
-from fftools import atempo_chain, ff_color
+from fftools import _f, atempo_chain, ff_color, frame_bytes_per_pixel, render_threads
 
 _AUDIO_NORM = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
 
@@ -50,17 +50,15 @@ class RenderPlan:
     loudnorm: dict | None = None   # set when the renderer must run 2-pass
 
 
-def _f(v: float) -> str:
-    return f"{v:.6g}"
-
-
 class _GraphBuilder:
-    def __init__(self, media_info: dict | None = None):
+    def __init__(self, media_info: dict | None = None, threads: int = 1):
         self.inputs: list[tuple[list[str], str]] = []
         self._media_index: dict[str, int] = {}
         self._media_info = media_info or {}
         self.chains: list[str] = []
         self._n = 0
+        # Each input's decoder runs this many threads (``render_threads``).
+        self._threads = ["-threads", str(threads)]
 
     def label(self, prefix: str) -> str:
         self._n += 1
@@ -77,7 +75,7 @@ class _GraphBuilder:
         distinct inputs."""
         key = (path, round(seek, 6))
         if key not in self._media_index:
-            opts: list[str] = []
+            opts: list[str] = list(self._threads)
             if seek > 0:
                 opts += ["-ss", _f(seek)]
             alpha_codec = (self._media_info.get(path) or {}).get("alpha_codec")
@@ -89,7 +87,7 @@ class _GraphBuilder:
 
     def still_input(self, path: str, duration: float) -> int:
         idx = len(self.inputs)
-        self.inputs.append((["-loop", "1", "-t", _f(duration)], path))
+        self.inputs.append(([*self._threads, "-loop", "1", "-t", _f(duration)], path))
         return idx
 
     def chain(self, src: str, filters: list[str], out: str) -> str:
@@ -907,7 +905,8 @@ def compile_render(
     timeline = comp_mod.compute_timeline(comp, media_info)
     base_entries = timeline["base"]
 
-    g = _GraphBuilder(media_info)
+    threads = render_threads()
+    g = _GraphBuilder(media_info, threads)
     base_clips = comp_mod.base_track(comp)["clips"]
 
     want_v = "v" in streams
@@ -1069,11 +1068,11 @@ def compile_render(
 
     encode = (
         ["-c:v", "libx264", "-preset", "slow", "-crf", str(crf or 18),
-         "-profile:v", "high",
+         "-profile:v", "high", "-threads", str(threads),
          "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
         if mode == "final" else
         ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf or 27),
-         "-g", str(max(1, round(PREVIEW_KEYFRAME_S * fps))),
+         "-g", str(max(1, round(PREVIEW_KEYFRAME_S * fps))), "-threads", str(threads),
          "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
     )
 
@@ -1234,6 +1233,12 @@ def bare_cut_points(comp: dict, media_info: dict) -> list[float]:
     ]
 
 
+# The frames a decoder keeps besides one per thread (references in flight),
+# and x264's own at the final preset (lookahead 50, B-frames 3, references 5).
+_DECODER_REFS = 4
+_X264_FRAMES = 58
+
+
 def estimate_window_bytes(comp: dict, media_info: dict,
                           t0: float, t1: float) -> float:
     """Worst-case decoded-frame bytes ffmpeg buffers while rendering
@@ -1252,13 +1257,24 @@ def estimate_window_bytes(comp: dict, media_info: dict,
         return (int(mi.get("width") or proj["width"])
                 * int(mi.get("height") or proj["height"]))
 
+    def src_bpp(clip: dict) -> float:
+        mi = media_info.get(clip.get("src") or clip.get("image")) or {}
+        return frame_bytes_per_pixel(mi.get("pix_fmt"))
+
+    def src_frame(clip: dict) -> float:
+        """One decoded frame of the clip's source, at its real size."""
+        return src_pixels(clip) * src_bpp(clip)
+
+    canvas = int(proj["width"]) * int(proj["height"])
     total = 0.0
+    opened: list[dict] = []
     entries = comp_mod.compute_timeline(comp, media_info)["base"]
     clips = comp_mod.base_track(comp).get("clips", [])
     for e, clip in zip(entries, clips):
         overlap = min(e["end"], t1) - max(e["start"], t0)
         if overlap <= 0 or comp_mod.clip_source_kind(clip) == "fill":
             continue
+        opened.append(clip)
         # Count SOURCE frames decoded, not timeline frames shown: the
         # source's own fps (60fps footage on a 30fps timeline decodes 2×),
         # and a speeded clip consumes `speed` source seconds per timeline
@@ -1271,7 +1287,16 @@ def estimate_window_bytes(comp: dict, media_info: dict,
             decoded = overlap
         else:
             decoded = e["duration"] * float(clip.get("speed", 1.0))
-        total += decoded * src_fps * src_pixels(clip) * 1.5
+        total += decoded * src_fps * src_frame(clip)
+        # A transition holds both its inputs across its overlap, at the
+        # canvas size in the format it blends in (planar RGB for a whip).
+        trans = e.get("transition")
+        if trans:
+            tdur = float(trans.get("duration", 0.5))
+            held = min(e["start"] + tdur, t1) - max(e["start"], t0)
+            if held > 0:
+                blend = 3.0 if transitions_mod.needs_rgb(trans.get("type", "fade")) else 1.5
+                total += 2 * held * fps * canvas * blend
     for track in comp.get("tracks", []):
         if track.get("kind") != "overlay":
             continue
@@ -1287,7 +1312,18 @@ def estimate_window_bytes(comp: dict, media_info: dict,
                 # (see test_estimate_overlay_clamped_to_window_overlap).
                 # The decode-from-0 cost of unpruned overlays is CPU, not
                 # buffered RAM.
-                total += overlap * fps * src_pixels(clip) * 4
+                total += overlap * fps * src_pixels(clip) * max(4.0, src_bpp(clip))
+                opened.append(clip)
+    # What the frames above leave out, measured on a 1080p render of four
+    # clips and three dissolves (peak 2,444 MB against 2,239 MB of frames):
+    # each open input's decoder holds about one frame per thread plus its
+    # references, and x264 at the final preset holds its lookahead (50), its
+    # B-frames (3), its references (5) and a frame per thread, all yuv420.
+    # The render passes this thread count to each decoder and to x264.
+    threads = render_threads()
+    for clip in opened:
+        total += (threads + _DECODER_REFS) * src_frame(clip)
+    total += (_X264_FRAMES + threads) * canvas * 1.5
     return total
 
 

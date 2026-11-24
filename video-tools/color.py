@@ -29,6 +29,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from fftools import _COLR_NAMES
+from shared import own_folder
+
 # A colour that ffmpeg's filter graph carries as written: a hex value (# or 0x,
 # then 3, 6 or 8 digits) or a name of letters only, each with an optional
 # @opacity. Nothing else can reach a graph, where any other character could
@@ -56,6 +59,7 @@ def graph_colour(value: str) -> str:
 
 
 LOOKS_DIR = os.environ.get("VIDEO_TOOLS_LOOKS_DIR", "/app/looks")
+own_folder(LOOKS_DIR)
 
 _CURVES_PRESETS = {
     "color_negative", "cross_process", "darker", "increase_contrast",
@@ -130,6 +134,10 @@ _ALIASES = {"matrix": _MATRIX_ALIASES, "primaries": _PRIMARIES_ALIASES,
 # ffprobe reports these stream fields; the compiler maps them onto INPUT_KEYS.
 PROBE_FIELDS = {"matrix": "color_space", "primaries": "color_primaries",
                 "transfer": "color_transfer", "range": "color_range"}
+# The names ffprobe prints for each field, a closed list: a field it calls
+# 'unknown' or 'reserved' is none of them.
+_PROBE_NAMES = {key: frozenset(names.values()) for key, names in _COLR_NAMES.items()}
+_PROBE_NAMES["range"] = frozenset({"tv", "pc"})
 
 # The timeline: what every base chain and the composited tail are pinned to.
 OUTPUT_TAGS = {"matrix": "bt709", "primaries": "bt709", "transfer": "bt709",
@@ -236,12 +244,14 @@ def default_tags(height) -> dict:
 
 def probe_tags(probe_color) -> dict:
     """ffprobe's stream colour fields → {key: value} for the KNOWN fields
-    only (ffprobe omits unknown ones or prints 'unknown')."""
+    only: a value reaches a graph when it is a name ffprobe prints for that
+    field (``_PROBE_NAMES``), and any other counts as unknown, as ffprobe's
+    own 'unknown' does."""
     out: dict[str, str] = {}
     for key, field in PROBE_FIELDS.items():
-        val = (probe_color or {}).get(field) or (probe_color or {}).get(key)
-        if val and str(val).lower() not in ("unknown", "unspecified"):
-            out[key] = str(val)
+        val = str((probe_color or {}).get(field) or (probe_color or {}).get(key) or "").lower()
+        if val in _PROBE_NAMES[key]:
+            out[key] = val
     return out
 
 

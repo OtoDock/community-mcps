@@ -21,7 +21,16 @@ from mcp.types import ImageContent, TextContent
 import color as color_mod
 from fftools import audio_stream, colr_box, media_duration, probe, run_ffmpeg, stream_color, stream_fps, stream_rotation, timecode, video_stream
 import shared
-from shared import _notify_file_written, _resolve_path, _to_agents_relative
+from shared import (
+    _notify_file_written,
+    _resolve_path,
+    _to_agents_relative,
+    open_capture,
+    opened_name,
+    safe_kind,
+    safe_read_bytes,
+    safe_write_bytes,
+)
 
 _MAX_SHOT_THUMBS = 60
 
@@ -31,22 +40,29 @@ def _sidecar_path(media_path: str, suffix: str) -> Path:
     return p.parent / (p.stem + suffix)
 
 
-def _merge_sidecar(media_path: str, key: str, payload: dict) -> Path | None:
+# An analysis sidecar is a small JSON file; one past this is read as empty.
+_SIDECAR_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _merged(path: str, key: str, payload: dict) -> None:
+    try:
+        data = json.loads(safe_read_bytes(path, _SIDECAR_MAX_BYTES).decode("utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[key] = payload
+    safe_write_bytes(path, (json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+
+async def _merge_sidecar(media_path: str, key: str, payload: dict) -> Path | None:
     """The analysis kept beside the media, when the session may write there
     (judged by the proxy); None when it may not: the answer still carries it."""
-    judged = shared._write_beside(str(_sidecar_path(media_path, ".analysis.json")))
+    judged = await shared._write_beside(str(_sidecar_path(media_path, ".analysis.json")))
     if judged is None:
         return None
-    path = Path(judged)
-    data = {}
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-    data[key] = payload
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    return path
+    await asyncio.to_thread(_merged, judged, key, payload)
+    return Path(judged)
 
 
 def _png_content(png_bytes: bytes) -> ImageContent:
@@ -87,7 +103,7 @@ def _grid(cells: list[tuple[str, "object"]], columns: int = 4,
 
 
 async def handle_probe_media(args: dict):
-    path = _resolve_path(args["path"])
+    path = await _resolve_path(args["path"])
     info = await probe(path)
     fmt = info.get("format", {})
     lines = [f"# {_to_agents_relative(path)}"]
@@ -127,7 +143,7 @@ async def handle_probe_media(args: dict):
                 f"audio: {s.get('codec_name')} {s.get('sample_rate')} Hz · "
                 f"{s.get('channels')}ch")
     if video_stream(info) is not None:
-        lines.append(_colr_line(path, fmt.get("format_name", "")))
+        lines.append(await asyncio.to_thread(_colr_line, path, fmt.get("format_name", "")))
     tc = timecode(info)
     if tc:
         lines.append(f"timecode: {tc[0]} ({tc[1]})")
@@ -168,7 +184,8 @@ def _colr_line(path: str, format_name: str) -> str:
 def _detect_shots(path: str, threshold: float) -> list[tuple[float, float]]:
     from scenedetect import ContentDetector, detect
 
-    scenes = detect(path, ContentDetector(threshold=threshold))
+    with opened_name(path) as name:
+        scenes = detect(name, ContentDetector(threshold=threshold))
     return [(s.get_seconds(), e.get_seconds()) for s, e in scenes]
 
 
@@ -176,8 +193,8 @@ def _shot_thumbnails(path: str, midpoints: list[float]) -> list:
     import cv2
     from PIL import Image
 
-    cap = cv2.VideoCapture(path)
     thumbs = []
+    cap = open_capture(path)
     try:
         for t in midpoints:
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
@@ -193,7 +210,7 @@ def _shot_thumbnails(path: str, midpoints: list[float]) -> list:
 
 
 async def handle_analyze_video(args: dict):
-    path = _resolve_path(args["path"])
+    path = await _resolve_path(args["path"])
     threshold = float(args.get("threshold", 27.0))
     info = await probe(path)
     vs = video_stream(info)
@@ -223,7 +240,7 @@ async def handle_analyze_video(args: dict):
                    "duration": round(e - s, 3)}
                   for i, (s, e) in enumerate(shots)],
     }
-    sidecar = _merge_sidecar(path, "video", payload)
+    sidecar = await _merge_sidecar(path, "video", payload)
     if sidecar is not None:
         await _notify_file_written(str(sidecar))
 
@@ -231,9 +248,9 @@ async def handle_analyze_video(args: dict):
                                                                  kept=sidecar is not None))]
     if cells:
         sheet = _grid(cells, columns=int(args.get("columns", 4)))
-        sheet_path = shared._write_beside(str(_sidecar_path(path, ".shots.png")))
+        sheet_path = await shared._write_beside(str(_sidecar_path(path, ".shots.png")))
         if sheet_path is not None:
-            Path(sheet_path).write_bytes(sheet)
+            await asyncio.to_thread(safe_write_bytes, sheet_path, sheet)
             await _notify_file_written(sheet_path)
         result.insert(0, _png_content(sheet))
     return result
@@ -327,7 +344,7 @@ _LOUDNORM_JSON = re.compile(r"\{[^{}]*\"input_i\"[^{}]*\}", re.S)
 
 
 async def handle_analyze_audio(args: dict):
-    path = _resolve_path(args["path"])
+    path = await _resolve_path(args["path"])
     info = await probe(path)
     if audio_stream(info) is None:
         return f"Error: '{args['path']}' has no audio stream"
@@ -363,14 +380,14 @@ async def handle_analyze_audio(args: dict):
 
     samples = lib.pop("samples")
     payload = {**lib, "silences": silences, "loudness": loudness}
-    sidecar = _merge_sidecar(path, "audio", payload)
+    sidecar = await _merge_sidecar(path, "audio", payload)
     if sidecar is not None:
         await _notify_file_written(str(sidecar))
 
     wave_png = _draw_waveform(samples, lib["duration"], lib["beats"])
-    wave_path = shared._write_beside(str(_sidecar_path(path, ".waveform.png")))
+    wave_path = await shared._write_beside(str(_sidecar_path(path, ".waveform.png")))
     if wave_path is not None:
-        Path(wave_path).write_bytes(wave_png)
+        await asyncio.to_thread(safe_write_bytes, wave_path, wave_png)
         await _notify_file_written(wave_path)
 
     beats = payload["beats"]
@@ -546,10 +563,10 @@ def align_sanity(res: dict, grade: str) -> tuple[str, list[str]]:
 
 
 async def handle_align_audio(args: dict):
-    ref = _resolve_path(args["ref"])
-    target = _resolve_path(args["target"])
+    ref = await _resolve_path(args["ref"])
+    target = await _resolve_path(args["target"])
     for label, raw, p in (("ref", args["ref"], ref), ("target", args["target"], target)):
-        if not Path(p).exists():
+        if (await asyncio.to_thread(safe_kind, p)).kind == "missing":
             return f"Error: {label} file not found: {raw}"
     try:
         max_offset = float(args.get("max_offset", 60.0))
@@ -626,7 +643,7 @@ async def handle_align_audio(args: dict):
 async def handle_sample_frames(args: dict):
     from PIL import Image
 
-    path = _resolve_path(args["path"])
+    path = await _resolve_path(args["path"])
     timestamps = args.get("timestamps") or []
     if not timestamps:
         return "Error: pass timestamps=[…] (seconds) to sample"
@@ -673,7 +690,7 @@ async def handle_render_filmstrip(args: dict):
     side in one JPEG: a page draws its timeline thumbnails from one file. One
     ffmpeg run with a fast seek per frame, so a long clip is never decoded
     whole."""
-    path = _resolve_path(args["path"])
+    path = await _resolve_path(args["path"])
     try:
         count = int(args.get("count", 10))
         height = int(args.get("height", 90))
@@ -708,8 +725,8 @@ async def handle_render_filmstrip(args: dict):
     span = "" if whole else f"-{_millis(start)}-{_millis(end)}"
     name = f".filmstrip-{count}x{height}{span}.jpg"
     out_arg = args.get("output_path")
-    out = (_resolve_path(out_arg, writing=True) if out_arg
-           else shared._write_beside(str(_sidecar_path(path, name))))
+    out = (await _resolve_path(out_arg, writing=True) if out_arg
+           else await shared._write_beside(str(_sidecar_path(path, name))))
     if out is None:
         return "Error: this session may not write beside the file: pass an output_path it may write"
     times = [round(start + (end - start) * (i + 0.5) / count, 3) for i in range(count)]

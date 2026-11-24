@@ -69,7 +69,7 @@ def test_near_silent_measurement_returns_none(monkeypatch, tmp_path):
 def test_normal_measurement_returns_linear_two_pass(monkeypatch, tmp_path):
     flt, report = _measure_with_stderr(monkeypatch, tmp_path, _NORMAL)
     assert flt is not None
-    assert "measured_I=-20.00" in flt
+    assert "measured_I=-20:" in flt
     assert "linear=true" in flt and flt.endswith(",aresample=48000")
     assert report["normalization_type"] == "linear"
 

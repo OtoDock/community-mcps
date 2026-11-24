@@ -2,7 +2,7 @@
   "name": "video-tools",
   "label": "Video Tools",
   "description": "Agent-driven video editing, rendered with FFmpeg: composition timelines, transitions, captions, color grading, music sync, and analysis",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "platform_min_version": "1.7.0",
   "category": "community",
   "author": "OtoDock",
@@ -16,7 +16,7 @@
     "busy_endpoint": "/busy",
     "tool_timeout_sec": 3600,
     "url_template": "http://${docker_mcp_host}:${port}",
-    "image": "ghcr.io/otodock/video-tools:0.4.9",
+    "image": "ghcr.io/otodock/video-tools:0.5.0",
     "source": "docker:video-tools-mcp (ffmpeg + libass)",
     "proxy_callbacks": true
   },

@@ -68,11 +68,11 @@ def test_stages_without_delay_get_no_compensation():
 def test_level_defaults_and_params():
     [flt] = audiofx.clip_chain({"level": True})
     # 4.2 s window → 21 frames of 200 ms; 28 dB → ×25.1; −6 dBFS → 0.501.
-    assert flt == "dynaudnorm=f=200:g=21:p=0.9:m=25.1189:r=0.501187"
+    assert flt == "dynaudnorm=f=200:g=21:p=0.9:m=25.118864:r=0.501187"
     [flt] = audiofx.clip_chain({"level": {"window": 1.5, "max_gain_db": 12,
                                           "target_db": -12}})
     assert flt.startswith("dynaudnorm=f=200:g=7:")     # 7.5 frames → odd 7
-    assert ":m=3.98107:" in flt and flt.endswith(":r=0.251189")
+    assert ":m=3.981072:" in flt and flt.endswith(":r=0.251189")
 
 
 def test_eq_bands_and_presets():
@@ -193,3 +193,15 @@ def test_parse_loudnorm_json_takes_the_last_block():
     assert audiofx.measured_is_silent({"input_i": "-inf"})
     assert audiofx.measured_is_silent({"input_i": "-84.3"})
     assert not audiofx.measured_is_silent(meas)
+
+
+def test_a_first_pass_value_that_is_no_number_reaches_no_filter():
+    """The second pass takes the first pass's five values as numbers only:
+    a value that is no number is refused before any filter is written."""
+    cfg = {"i": -14.0, "tp": -1.5, "lra": 11.0, "mode": "dynamic"}
+    for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
+        meas = dict(_MEAS_LINEAR, **{key: "1:volume=10"})
+        with pytest.raises(ValueError, match=f"gave {key} as no number"):
+            audiofx.loudnorm_pass2(cfg, meas)
+    chain, _ = audiofx.loudnorm_pass2(cfg, dict(_MEAS_LINEAR, target_offset="0.20"))
+    assert ":offset=0.2:" in chain

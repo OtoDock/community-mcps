@@ -54,7 +54,7 @@ pattern, shared-pool-safe for T3 cloud:
   written to `/agents` workspace paths.
 
 **The artifact the agent edits is a declarative JSON composition**: a project file in
-the user's workspace (`<name>.vproj.json`). The MCP compiles it to ffmpeg 8.x
+the user's workspace (`<name>.vproj.json`). The MCP compiles it to ffmpeg 7.x
 filtergraphs + generated ASS files at render time. Rationale:
 
 - LLMs author/revise structured documents far more reliably than imperative ffmpeg
@@ -65,8 +65,8 @@ filtergraphs + generated ASS files at render time. Rationale:
 
 **In-container engine stack** (all self-hosted, licence-clean):
 
-- ffmpeg 8.1+ (xfade / maskedmerge / alphamerge / chromakey / lut3d / curves / eq /
-  loudnorm)
+- ffmpeg 7.x, the image's Debian package (xfade / maskedmerge / alphamerge / chromakey /
+  lut3d / curves / eq / loudnorm)
 - libass
 - PySceneDetect (BSD)
 - librosa (ISC) for beats/BPM/energy/sections
@@ -129,8 +129,8 @@ Write / composition:
 - `validate_composition`: preflight (missing assets, overlaps, bad params) with
   actionable errors. It also runs implicitly before any render.
 - `render_composition`: `mode=preview` (low-res, optional time range, fast) or
-  `mode=final`. Long finals: job pattern (`render_status`) vs one long call with MCP
-  progress notifications (decide at impl). Previews are always synchronous.
+  `mode=final`. A long final runs in the background (`background: true`, then
+  `render_status` and `cancel_render`). A preview runs in the call.
 - `render_frames`: stills from the *composition* (post-effects) at timestamps. It is
   the `screenshot_document` analog, and the core QC loop.
 - `edit_video`: one-shot ops without composition ceremony (trim, crop, resize, speed,
@@ -189,9 +189,20 @@ and are usable outside any video project (animated logos, banners, post assets).
 Security posture:
 
 - per-render throwaway context
-- **network egress blocked** except `file://`/`data:` and an in-container asset
-  endpoint serving the mounted workspace. No external fetch, no LAN probing from
-  agent-authored JS.
+- **The page reaches no network.** It loads from a routed origin,
+  `https://motion.invalid/`. Its route serves the page, `data:`, `blob:` and
+  `about:` URLs and the files the session may read, read beneath the mount. It
+  refuses every other request. Service workers are blocked, and every WebSocket
+  is refused.
+- **A request the route does not see finds no network.** Chromium starts with
+  a proxy on a loopback port where nothing listens, loopback addresses
+  included. It resolves no name, and WebRTC sends nothing outside that proxy.
+  This rests on Chromium's own settings. Its sandbox is off in the container,
+  and the container keeps its network, so a fault in the browser itself is
+  outside this guard.
+- **A page takes a share.** One capture is served at most 64 names and 256 MB,
+  one request at a time, and the answer says when a limit was reached. Two
+  captures run at once, and a call that gets no turn within its time says so.
 - frame-count/duration caps
 
 Authoring contract (0.3.2, 2026-08):
@@ -778,6 +789,69 @@ Authoring contract (0.3.2, 2026-08):
   platform it goes to encodes it again, and bytes at CRF 18 matter more
   there.
 
+- **0.5.0 (2026-11-23): every file opens beneath the mount.**
+  `safe_fs.py` is the platform's own `proxy/services/infra/safe_fs.py`,
+  byte for byte, and `shared.py` carries file-tools' helpers under their
+  names. A file is opened beneath the mount with no link followed. Each
+  call keeps the identity of every file beneath the mount it hands to
+  ffmpeg, ffprobe or OpenCV: device, inode, size and change time. A later
+  open of another file at that name is refused, a background job's
+  included. So the file checked is the file used. The rule rests on the
+  mount's filesystem giving each file its own inode and stamping each
+  change, as a local disk does. A new link to the file and a change of its
+  mode read as changed too, and so does a paired computer's file the
+  platform writes anew. The call then says to run it again. ffmpeg, ffprobe and OpenCV get the open file (`/proc/self/fd/N`),
+  with only the single-file formats the tool reads allowed, so a file
+  changed after the probe cannot turn into a playlist. OpenCV reads through
+  its FFmpeg reader alone: the build's other readers are off for the
+  process. Any other argument that names the mount is refused. Outside the
+  mount a file opens, and an output is written, only in the tool's own
+  folders: its temp folders, the image's looks and models, and the
+  slow-motion cache. The door reads the last argument alone as the output:
+  every call site ends in its output or in `-`, and a new one must too. A
+  value a child prints reaches a filter only as a number, or as a colour
+  name of ffprobe's own list.
+
+  An output lands on its name only when the run succeeds. The next render
+  of that output sweeps a temp no writer can hold: one last written before
+  the process started, or an hour ago. That rule reads a file's time
+  against this machine's clock, so a clock set back, or a file server's
+  clock behind it, makes a live temp look older. A cancel after a background
+  render's file landed stops nothing and says so. Chromium loads a motion
+  page from a routed origin, `https://motion.invalid/`, never opens a
+  mount path, and a request its route does not see finds no network. A
+  page is served at most 64 names and 256 MB, one request at a time. Two
+  captures run at once, and a call waits for its turn only within its
+  time: a clip's capture time, or a still's five minutes. The page's own
+  promise of its fonts is waited for ten seconds at most. The blur's
+  encode passes the gate and ends on a cancel, which reaches it between
+  frames: one after the last frame lets its file land. Its wait at the
+  gate has no limit of its own, as for every step of an edit. The proxy is
+  asked on the async client with file-tools' wait for a file on a paired
+  computer (150 s).
+
+  A render gives each decoder and the x264 encoder a thread count: the
+  container's cores and one, at most 16. Its memory estimate counts each
+  open input's decoder frames per thread and x264's lookahead and
+  references by that count. A source's frames count at the size their
+  pixel format holds, so a 10-bit or 4:2:2 frame counts more than an 8-bit
+  4:2:0 one. A transition counts both its inputs across its overlap. Four
+  1080p clips with three dissolves peaked at 2,308 to 2,444 MB in the 0.4.6
+  image (ffmpeg 7.1.5) with ffmpeg's own thread counts. With the render's
+  count of 11 on ten cores they peaked at 2,319 MB. The estimate was
+  2,239 MB and is now 3,201 MB.
+
+  `render_motion_clip` stops capturing when the call's time is nearly
+  spent, encodes the frames it has and says what the clip covers. Its
+  encode, its wait at the gate included, ends while the call still has
+  time for the answer, and a file that landed as that time ran out is
+  answered. It sends
+  progress when the call asks for it. Numbers in ffmpeg arguments keep six
+  decimals, so a cut past 1,000 s keeps its frame. The slow-motion cache
+  keys on the opened source's identity and the session's agent, and two
+  builds of one clip write temps of their own. Its prune removes the temp
+  of a process that ended during a build.
+
 ## Low-RAM windowed rendering
 
 A composition renders as ONE ffmpeg filtergraph. ffmpeg's scheduler lets
@@ -876,13 +950,16 @@ The fix (renderer + compiler, `plan_segments`/`window_pruned`/
   in practice). Stateful clips keep whole-clip decode (see above): their
   decode CPU is unpruned, never their RAM.
 
-## Open questions (decide at impl)
+## Decided at implementation
 
-- Final-render delivery: async job + `render_status` vs long synchronous call with
-  progress notifications (does the CLI surface MCP progress?).
-- Port allocation (unique among docker MCPs: file-tools holds 8932/9981).
-- Face detector choice (YuNet ONNX vs MediaPipe) and whether P2 reframe needs tracking
-  (ByteTrack) or per-shot static crop (AutoFlip-style) suffices.
-- Schema versioning / migration story for `.vproj.json` (pre-1.0: break freely).
-- Whether `analyze_video` caches its index next to the source (`<stem>.analysis.json`)
-  to avoid re-detection across sessions. Leaning yes: it mirrors transcript sidecars.
+- Final-render delivery: a background job (`render_composition` with `background`,
+  `render_status`, `cancel_render`), since an engine cuts a long silent call. A motion
+  clip runs in the call: it reports progress when the call asks for it and keeps what
+  it captured when the call's time runs out.
+- Port 8933 (file-tools holds 8932 and 9981).
+- Face detector: YuNet (ONNX, in the image). Reframe follows a tracked box when one is
+  given, else a per-shot static crop.
+- Schema: the file carries `version`, which is 1. `validate_composition` and every
+  render refuse a composition of any other version as an error.
+- `analyze_video` keeps its index beside the source (`<stem>.analysis.json`) when the
+  session may write there.

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from conftest import HAVE_FFMPEG
+from conftest import HAVE_FFMPEG, same_path
 from test_motion import HAVE_CHROMIUM
 
 pytestmark = pytest.mark.skipif(
@@ -36,7 +36,7 @@ def _run(coro):
 
 
 def test_still_png_dimensions_and_scale(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
+    monkeypatch.setattr(motion, "_resolve_path", same_path)
     from PIL import Image
 
     out1 = str(tmp_path / "card.png")
@@ -53,7 +53,7 @@ def test_still_png_dimensions_and_scale(tmp_path, monkeypatch):
 
 
 def test_still_transparent_has_alpha(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
+    monkeypatch.setattr(motion, "_resolve_path", same_path)
     import numpy as np
     from PIL import Image
 
@@ -72,7 +72,7 @@ def test_still_transparent_has_alpha(tmp_path, monkeypatch):
 
 
 def test_still_jpeg_and_bad_args(tmp_path, monkeypatch):
-    monkeypatch.setattr(motion, "_resolve_path", lambda p, writing=False: p)
+    monkeypatch.setattr(motion, "_resolve_path", same_path)
     from PIL import Image
 
     out = str(tmp_path / "card.jpg")
@@ -86,3 +86,29 @@ def test_still_jpeg_and_bad_args(tmp_path, monkeypatch):
         "html": _CARD, "transparent": True, "format": "jpeg",
         "output_path": str(tmp_path / "x.jpg")}))
     assert bad.startswith("Error")
+
+
+def test_a_page_whose_fonts_never_settle_is_pictured_after_the_limit(tmp_path, monkeypatch):
+    """The page's own promise of its fonts is waited for within its limit:
+    a page that never settles it is pictured once the limit is spent, and a
+    still that is not done within its ceiling says so and writes nothing."""
+    import time
+
+    monkeypatch.setattr(motion, "_resolve_path", same_path)
+    monkeypatch.setattr(motion, "_FONTS_WAIT_S", 0.5)
+    html = ("<!doctype html><html><body style='margin:0;background:#123456'><script>"
+            "Object.defineProperty(document, 'fonts', {value: {ready: new Promise(() => {})}});"
+            "</script></body></html>")
+    out = tmp_path / "never.png"
+    began = time.monotonic()
+    text = _run(motion.handle_render_still({"html": html, "width": 64, "height": 64,
+                                            "output_path": str(out)}))
+    assert not text.startswith("Error"), text
+    assert out.exists() and time.monotonic() - began < 30.0
+
+    monkeypatch.setattr(motion, "_FONTS_WAIT_S", 60.0)
+    monkeypatch.setattr(motion, "_STILL_MAX_S", 3.0)
+    late = tmp_path / "late.png"
+    text = _run(motion.handle_render_still({"html": html, "width": 64, "height": 64,
+                                            "output_path": str(late)}))
+    assert text == "Error: " + motion.STILL_TOO_LONG and not late.exists()

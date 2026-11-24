@@ -15,9 +15,20 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 from pathlib import Path
 
-from shared import logger
+import safe_fs
+from shared import (
+    OUTSIDE_REFUSED,
+    _write_root,
+    beneath_mount,
+    logger,
+    own_place,
+    safe_open_read,
+    safe_open_write,
+    safe_read_fd,
+)
 
 FFMPEG = os.environ.get("FFMPEG_PATH", "") or shutil.which("ffmpeg") or "ffmpeg"
 FFPROBE = os.environ.get("FFPROBE_PATH", "") or shutil.which("ffprobe") or "ffprobe"
@@ -55,6 +66,35 @@ def _cgroup_memory_limit_bytes() -> float | None:
             return None
         return float(val)
     return None
+
+
+def cpu_count() -> int:
+    """The cores this container may use: its affinity, bounded by a cgroup
+    CPU quota when one is set (``cpu.max``). ffmpeg sizes its decoder and
+    encoder threads by the cores, and each thread holds frames."""
+    try:
+        cores = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cores = os.cpu_count() or 1
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()[:2]
+        if quota != "max":
+            cores = min(cores, max(1, -(-int(quota) // int(period))))
+    except (OSError, ValueError):
+        pass
+    return max(1, cores)
+
+
+# libavcodec's own cap on the threads it picks by itself.
+_MAX_AUTO_THREADS = 16
+
+
+def render_threads() -> int:
+    """The threads each decoder and the x264 encoder of a render run with:
+    the container's cores and one, as libavcodec picks by itself, at most
+    its own cap of 16. A render passes this count to ffmpeg, and the memory
+    estimate counts the frames those threads hold by it."""
+    return min(cpu_count() + 1, _MAX_AUTO_THREADS)
 
 
 def render_budget_bytes() -> float:
@@ -162,12 +202,139 @@ async def heavy_run(claim: float | None = None):
         _gate.release(bytes_)
 
 
+# ---------------------------------------------------------------------------
+# The door every child passes: a person's file reaches ffmpeg, ffprobe and the
+# libraries that read by name only as a descriptor this process opened
+# beneath the mount with no link followed (``shared.safe_read_fd``), and an
+# output only through the atomic writer (``shared.safe_open_write``).
+# ---------------------------------------------------------------------------
+
+# The demuxers a person's file is read with: the video, audio and picture
+# containers the tool takes. Whatever its content says once the descriptor is
+# open, a file cannot become a list that opens other names (HLS, concat,
+# DASH), and no input opens anything over a network.
+INPUT_FORMATS = ",".join((
+    "mov", "matroska", "avi", "mpegts", "mpeg", "flv", "asf", "mxf", "ogg", "dv", "m4v", "h264",
+    "hevc", "mp3", "wav", "w64", "aiff", "flac", "aac", "ac3", "eac3", "caf", "amr",
+    "image2", "png_pipe", "jpeg_pipe", "webp_pipe", "bmp_pipe", "tiff_pipe", "gif", "apng",
+    "jpegxl_pipe", "exr_pipe", "dpx_pipe", "qoi_pipe", "pam_pipe", "pgm_pipe", "ppm_pipe",
+))
+READ_GUARD = ("-protocol_whitelist", "file,pipe,fd", "-format_whitelist", INPUT_FORMATS)
+# OpenCV's FFmpeg reads a file under the same two lists (scenedetect reads
+# through OpenCV); it takes the options from its environment at each open.
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"protocol_whitelist;file,pipe,fd|format_whitelist;{INPUT_FORMATS}"
+# OpenCV reads through its FFmpeg reader alone. Every other reader of the
+# pinned build is off for the process before its first capture (it reads
+# these once): a reader it falls back to, the picture sequence one first,
+# builds names of its own from the one it was given. scenedetect opens by
+# itself, so naming the reader at the tool's own opens is not enough.
+OPENCV_OTHER_READERS = ("GSTREAMER", "INTEL_MFX", "V4L2", "CV_IMAGES", "CV_MJPEG", "UEYE")
+for _reader in OPENCV_OTHER_READERS:
+    os.environ[f"OPENCV_VIDEOIO_PRIORITY_{_reader}"] = "0"
+# The muxer of an output by its final name's suffix: a descriptor's name has
+# none for ffmpeg to pick one by.
+_MUXERS = {
+    ".mp4": "mp4", ".m4v": "mp4", ".mov": "mov", ".webm": "webm", ".mkv": "matroska",
+    ".gif": "gif", ".png": "image2", ".jpg": "image2", ".jpeg": "image2", ".webp": "webp",
+    ".wav": "wav", ".mp3": "mp3", ".m4a": "ipod", ".aac": "adts", ".flac": "flac",
+    ".ogg": "ogg", ".opus": "opus",
+}
+MOUNT_REFUSED = "a file of the agents tree reached the run other than as its input or its output"
+
+
+def _muxer_of(name: str) -> list[str]:
+    muxer = _MUXERS.get(Path(name).suffix.lower())
+    if muxer is None:
+        raise FFmpegError(f"{Path(name).name}: the tool does not write this kind of file")
+    return ["-f", muxer, "-update", "1"] if muxer == "image2" else ["-f", muxer]
+
+
+def _names_mount(arg: str) -> bool:
+    root = _write_root().rstrip("/")
+    return arg == root or (root + "/") in arg
+
+
+def _own_input(value: str) -> None:
+    """An input outside the mount: the tool's own pipe, or a file in one of
+    its own folders (``own_place``). Anything else is refused before the
+    run, a generated ``-f lavfi`` source too: a graph can open files of its
+    own (``movie=``), and the tool builds none."""
+    if value == "-" or value.startswith("pipe:"):
+        return
+    if own_place(value) is None:
+        raise PermissionError(f"Cannot read '{value}': {OUTSIDE_REFUSED}")
+
+
+def _own_output(value: str) -> None:
+    """An output outside the mount, held as an input is: the tool's own
+    pipe, or a file in one of its own folders. Anything else is refused
+    before the run."""
+    if value.startswith("pipe:"):
+        return
+    if own_place(value) is None:
+        raise PermissionError(f"Cannot write '{value}': {OUTSIDE_REFUSED}")
+
+
+@contextlib.contextmanager
+def bound_files(argv: list[str], *, last_is_input: bool = False):
+    """``(argv, fds)`` for a child: each ``-i`` value beneath the mount
+    replaced by ``/proc/self/fd/N`` of the descriptor opened for it (with
+    ``READ_GUARD`` before it), the last argument beneath the mount (the
+    output, or with ``last_is_input`` ffprobe's input) handled the same way,
+    an output through ``safe_open_write`` with its muxer named; ``fds`` is
+    what the child keeps (``pass_fds``). An input or an output outside the
+    mount is the tool's own or refused (``_own_input``, ``_own_output``),
+    and any other argument that names the mount is refused, before the run. On a clean exit the
+    output's temp lands on its name; on an error it is removed and nothing
+    is written. The descriptors close with the block. Blocking: a thread
+    runs it."""
+    out: list[str] = []
+    fds: list[int] = []
+    last = len(argv) - 1
+    with contextlib.ExitStack() as stack:
+        i = 0
+        while i <= last:
+            arg = argv[i]
+            is_input = arg == "-i" and i < last and beneath_mount(argv[i + 1])
+            if is_input or (i == last and last_is_input and beneath_mount(arg)):
+                name = argv[i + 1] if is_input else arg
+                fd, _ = safe_read_fd(name)
+                stack.callback(os.close, fd)
+                fds.append(fd)
+                out += [*READ_GUARD, *(["-i"] if is_input else []), safe_fs.fd_path(fd)]
+                i += 2 if is_input else 1
+                continue
+            if arg == "-i" and i < last:
+                _own_input(argv[i + 1])
+            elif i == last and last_is_input:
+                _own_input(arg)
+            if i == last and beneath_mount(arg):
+                fh = stack.enter_context(safe_open_write(arg))
+                fds.append(fh.fileno())
+                named = len(out) >= 2 and out[-2] == "-f"
+                out += [*([] if named else _muxer_of(arg)), safe_fs.fd_path(fh.fileno())]
+                i += 1
+                continue
+            if i == last and not last_is_input and not arg.startswith("-"):
+                # An option at the end (``-version``) names no output.
+                _own_output(arg)
+            if _names_mount(arg):
+                raise FFmpegError(MOUNT_REFUSED)
+            out.append(arg)
+            i += 1
+        yield out, fds
+
+
 class FFmpegError(RuntimeError):
     """ffmpeg exited non-zero. Carries a trimmed stderr tail for the agent."""
 
     def __init__(self, message: str, stderr_tail: str = ""):
         super().__init__(message)
         self.stderr_tail = stderr_tail
+
+
+class FFmpegTimeout(FFmpegError):
+    """ffmpeg ran past its time and was stopped: its output was not written."""
 
 
 def _stderr_tail(stderr: bytes, limit: int = 1200) -> str:
@@ -183,6 +350,7 @@ async def run_ffmpeg(
     capture_stdout: bool = False,
     progress=None,
     claim: float | None = None,
+    landing=None,
 ) -> tuple[bytes, str]:
     """Run ffmpeg with the given args (after the binary). Returns
     ``(stdout, stderr_text)``; raises FFmpegError on non-zero exit or timeout.
@@ -190,6 +358,9 @@ async def run_ffmpeg(
     cancelled caller kills the process before the cancel goes on: a
     cancelled render never keeps encoding. A heavy run passes the gate first,
     claiming ``claim`` bytes of the shared budget (``heavy_run``).
+    ``landing()`` is called once the child exited cleanly, in the same step
+    of the loop that starts its output's landing: from then on the run is
+    done and its output is written.
     """
     cmd = [FFMPEG, "-hide_banner", "-y", *args]
     if progress is not None and not capture_stdout:
@@ -204,11 +375,31 @@ async def run_ffmpeg(
         return b""
 
     async def _run() -> tuple[bytes, str]:
+        files = contextlib.ExitStack()
+        try:
+            argv, fds = await asyncio.to_thread(files.enter_context, bound_files(cmd))
+        except BaseException:
+            await asyncio.to_thread(files.close)
+            raise
+        try:
+            result = await _spawn(argv, fds)
+        except BaseException as exc:
+            # The output's temp goes and nothing is written; a cancel cannot
+            # cut the step that closes the descriptors.
+            await asyncio.shield(asyncio.to_thread(files.__exit__, type(exc), exc, exc.__traceback__))
+            raise
+        if landing is not None:
+            landing()
+        await asyncio.shield(asyncio.to_thread(files.close))
+        return result
+
+    async def _spawn(argv: list[str], fds: list[int]) -> tuple[bytes, str]:
         piped = capture_stdout or progress is not None
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
+            *argv,
             stdout=asyncio.subprocess.PIPE if piped else asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
+            pass_fds=fds,
         )
         try:
             if progress is not None and not capture_stdout:
@@ -222,7 +413,7 @@ async def run_ffmpeg(
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            raise FFmpegError(f"ffmpeg timed out after {int(timeout)}s")
+            raise FFmpegTimeout(f"ffmpeg timed out after {int(timeout)}s")
         except asyncio.CancelledError:
             proc.kill()
             await proc.wait()
@@ -252,11 +443,22 @@ async def run_ffmpeg(
 LIST_FORMATS = frozenset({"concat", "hls", "dash", "sdp", "rtp", "rtsp"})
 _LIST_HEADS = (b"#EXTM3U", b"ffconcat", b"v=0")
 LIST_REFUSED = "this file lists other files, which the tool does not open"
+UNREAD_KIND = "The tool does not read this kind of file: {name}."
+
+
+def _unread_kind(stderr: str) -> bool:
+    """ffprobe found no format the tool reads the file with: a format it
+    knows but the tool does not take ("not on whitelist"), or none at all
+    (its one line says the data is invalid)."""
+    lines = [line for line in stderr.strip().splitlines() if line.strip()]
+    if any("not on whitelist" in line for line in lines):
+        return True
+    return len(lines) == 1 and lines[0].endswith("Invalid data found when processing input")
 
 
 def _lists_other_files(path: str) -> bool:
     try:
-        with open(path, "rb") as fh:
+        with safe_open_read(path) as fh:
             head = fh.read(512).lstrip(b"\xef\xbb\xbf \t\r\n")
     except OSError:
         return False
@@ -265,21 +467,33 @@ def _lists_other_files(path: str) -> bool:
 
 async def probe(path: str) -> dict:
     """ffprobe → parsed JSON with format + streams. A list of other files is
-    refused (``LIST_FORMATS``)."""
+    refused (``LIST_FORMATS``) by its first bytes, by the format it names,
+    and by the demuxers a person's file may be read with (``READ_GUARD``)."""
     if await asyncio.to_thread(_lists_other_files, path):
         raise FFmpegError(f"{path}: {LIST_REFUSED}")
-    proc = await asyncio.create_subprocess_exec(
-        FFPROBE, "-hide_banner", "-loglevel", "error",
-        "-print_format", "json", "-show_format", "-show_streams", path,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
+    argv = [FFPROBE, "-hide_banner", "-loglevel", "error",
+            "-print_format", "json", "-show_format", "-show_streams", path]
+    files = contextlib.ExitStack()
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise FFmpegError("ffprobe timed out (30s)")
+        argv, fds = await asyncio.to_thread(files.enter_context, bound_files(argv, last_is_input=True))
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, pass_fds=fds,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise FFmpegError("ffprobe timed out (30s)")
+        except asyncio.CancelledError:
+            proc.kill()
+            await proc.wait()
+            raise
+    finally:
+        await asyncio.shield(asyncio.to_thread(files.close))
     if proc.returncode != 0:
+        if _unread_kind(stderr.decode(errors="replace")):
+            raise FFmpegError(UNREAD_KIND.format(name=Path(path).name))
         raise FFmpegError(f"ffprobe failed: {_stderr_tail(stderr, 400)}")
     try:
         info = json.loads(stdout.decode())
@@ -289,6 +503,13 @@ async def probe(path: str) -> dict:
     if LIST_FORMATS.intersection(names):
         raise FFmpegError(f"{path}: {LIST_REFUSED}")
     return info
+
+
+def run_sync(argv: list[str], *, last_is_input: bool = False, **kwargs) -> subprocess.CompletedProcess:
+    """``subprocess.run`` of a child through the door (``bound_files``), for
+    code that already runs in a thread."""
+    with bound_files(argv, last_is_input=last_is_input) as (bound, fds):
+        return subprocess.run(bound, pass_fds=fds, **kwargs)
 
 
 def video_stream(info: dict) -> dict | None:
@@ -425,7 +646,7 @@ def _read_moov(path: str) -> bytes | None:
     (mdat is never read). None when the file is not ISO-BMFF or has no moov."""
     import struct
 
-    with open(path, "rb") as fh:
+    with safe_open_read(path) as fh:
         fh.seek(0, os.SEEK_END)
         total = fh.tell()
         fh.seek(0)
@@ -517,15 +738,7 @@ def colr_box(path: str) -> dict | None:
 #   2. the graph itself: ';' and '[' ']' are structural.
 # We sidestep most of it by (a) writing graphs to a -filter_complex_script
 # file (no shell involved), and (b) copying caption/LUT files to tmp paths WE
-# name (no user-controlled characters). esc_filter_value covers the rest.
-
-
-def esc_filter_value(value: str) -> str:
-    """Escape a string for use as a filter option value."""
-    out = value.replace("\\", "\\\\")
-    for ch in (":", "'", ",", ";", "[", "]", "="):
-        out = out.replace(ch, "\\" + ch)
-    return out
+# name (no user-controlled characters).
 
 
 def ff_color(hex_or_name: str) -> str:
@@ -538,6 +751,14 @@ def ff_color(hex_or_name: str) -> str:
     """
     import color as color_mod
     return color_mod.graph_colour((hex_or_name or "").strip() or "black")
+
+
+def _f(v: float) -> str:
+    """A number for ffmpeg's arguments: fixed decimals to the microsecond,
+    trailing zeros cut. ``%g`` keeps six digits in all, so a cut at
+    1234.5678 s became 1234.57, a third of a frame off."""
+    text = f"{float(v):.6f}".rstrip("0").rstrip(".")
+    return "0" if text in ("", "-0") else text
 
 
 def atempo_chain(speed: float) -> list[str]:
@@ -554,3 +775,53 @@ def atempo_chain(speed: float) -> list[str]:
         remaining /= 100.0
     stages.append(remaining)
     return [f"atempo={s:.6g}" for s in stages if abs(s - 1.0) > 1e-9] or []
+
+
+# The bytes a decoded frame holds per pixel by its pixel format: the planes
+# with their chroma subsampling, two bytes a sample past 8 bits and four
+# past 16, alpha as one more full plane. 8-bit 4:2:0 is 1.5, 10-bit 4:2:0 is
+# 3, 10-bit 4:2:2 is 4, 8-bit 4:4:4 is 3. No format is counted short: one
+# the names below miss counts 8 bytes.
+_PACKED_BYTES = {
+    "rgb24": 3, "bgr24": 3, "rgb48": 6, "bgr48": 6, "rgba64": 8, "bgra64": 8,
+    "rgba": 4, "bgra": 4, "argb": 4, "abgr": 4, "rgb0": 4, "bgr0": 4, "0rgb": 4, "0bgr": 4,
+    "x2rgb10": 4, "x2bgr10": 4, "yuyv422": 2, "uyvy422": 2, "yvyu422": 2, "y210": 4,
+    "y212": 4, "pal8": 1, "ya8": 2, "ya16": 4, "monow": 1, "monob": 1,
+    "rgbf16": 6, "rgbaf16": 8, "rgbf32": 12, "rgbaf32": 16, "xyz12": 6, "ayuv64": 8,
+    "xv30": 4, "xv36": 8, "vuya": 4, "vuyx": 4, "uyyvyy411": 1.5,
+}
+_CHROMA_SAMPLES = {"420": 0.5, "422": 1.0, "444": 2.0, "440": 1.0, "411": 0.5, "410": 0.25}
+_NV_BYTES = {"12": 1.5, "21": 1.5, "16": 2.0, "61": 2.0, "24": 3.0, "42": 3.0, "20": 4.0}
+_PLANAR_RE = re.compile(r"(yuvj?|yuva|gbrp|gbrap|gray)(\d{3})?p?f?(\d*)")
+
+
+def frame_bytes_per_pixel(pix_fmt: str | None) -> float:
+    """The bytes per pixel of a frame decoded in ``pix_fmt`` (the probe's
+    name). A source the probe names no format for counts as 8-bit 4:2:0."""
+    name = str(pix_fmt or "").lower()
+    if not name:
+        return 1.5
+    if name.endswith(("le", "be")):
+        name = name[:-2]
+    if name in _PACKED_BYTES:
+        return float(_PACKED_BYTES[name])
+    if re.fullmatch(r"p[024]\d\d", name):      # p010, p210, p416: 16-bit samples
+        return (1.0 + _CHROMA_SAMPLES[{"0": "420", "2": "422", "4": "444"}[name[1]]]) * 2
+    if name.startswith("nv") and name[2:] in _NV_BYTES:
+        return _NV_BYTES[name[2:]]
+    m = _PLANAR_RE.fullmatch(name)
+    if not m:
+        return 8.0
+    kind, sub, depth = m.groups()
+    if kind in ("gbrp", "gbrap"):
+        samples = 3.0
+    elif kind == "gray":
+        samples = 1.0
+    elif sub in _CHROMA_SAMPLES:
+        samples = 1.0 + _CHROMA_SAMPLES[sub]
+    else:
+        return 8.0
+    if kind in ("yuva", "gbrap"):
+        samples += 1.0
+    bits = int(depth or 8)
+    return samples * (1 if bits <= 8 else 2 if bits <= 16 else 4)

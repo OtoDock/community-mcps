@@ -159,10 +159,21 @@ def _sanitize_family(name: str) -> str:
     return re.sub(r"[,\r\n{}\\]", " ", str(name)).strip() or "Inter"
 
 
+# A caption source (a transcript, an SRT, an ASS) past this is no caption file.
+SOURCE_MAX_BYTES = 32 * 1024 * 1024
+
+
+def _read_source(path: str, encoding: str) -> str:
+    """A caption source read beneath the mount with no link followed."""
+    from shared import safe_read_bytes
+
+    return safe_read_bytes(path, SOURCE_MAX_BYTES).decode(encoding, errors="replace")
+
+
 def parse_transcript_json(path: str) -> list[dict]:
     """Word list from a platform transcript JSON → [{word, start, end}]."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(_read_source(path, "utf-8"))
     except json.JSONDecodeError as exc:
         raise CaptionError(f"transcript is not valid JSON: {exc}")
     if isinstance(data, dict):
@@ -200,7 +211,7 @@ _SRT_TIME = re.compile(
 
 def parse_srt(path: str) -> list[dict]:
     """SRT → cues [{start, end, text}]."""
-    text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
+    text = _read_source(path, "utf-8-sig")
     cues = []
     for block in re.split(r"\n\s*\n", text):
         m = _SRT_TIME.search(block)
@@ -309,7 +320,7 @@ def build_ass(
     """
     ext = Path(source_path).suffix.lower()
     if ext == ".ass":
-        return Path(source_path).read_text(encoding="utf-8-sig", errors="replace")
+        return _read_source(source_path, "utf-8-sig")
     if preset not in PRESETS:
         raise CaptionError(f"unknown preset '{preset}' — valid: {', '.join(sorted(PRESETS))}")
     cfg = PRESETS[preset]

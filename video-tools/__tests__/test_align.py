@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from conftest import HAVE_FFMPEG
+from conftest import HAVE_FFMPEG, same_path
 
 pytestmark = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not available")
 
@@ -57,7 +57,7 @@ def test_offset_outside_the_window_is_flagged(pair):
                for p in problems), problems
 
 def test_handler_reports_placement_candidates_and_verdict(pair, monkeypatch):
-    monkeypatch.setattr(analysis, "_resolve_path", lambda p, writing=False: p)
+    monkeypatch.setattr(analysis, "_resolve_path", same_path)
     text = asyncio.run(analysis.handle_align_audio(
         {"ref": pair["ref"], "target": pair["tgt"], "max_offset": 60}))
     assert "offset: +30.0" in text, text

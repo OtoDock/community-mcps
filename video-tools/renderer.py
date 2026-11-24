@@ -7,7 +7,6 @@ two-pass loudnorm, and frame extraction for visual QC.
 """
 
 import asyncio
-import contextlib
 import io
 import os
 import shutil
@@ -26,6 +25,7 @@ from compiler import (compile_render, estimate_window_bytes, plan_segments,
                       window_pruned)
 from fftools import (
     FFmpegError,
+    _f,
     audio_stream,
     media_duration,
     probe,
@@ -35,7 +35,7 @@ from fftools import (
     stream_fps,
     video_stream,
 )
-from shared import _notify_file_written, logger
+from shared import LANDED_GONE, _notify_file_written, cleanup_partials, landed_size_mb, logger, private_copy, safe_kind
 
 PREVIEW_SHORT_SIDE = 540
 FRAMES_SHORT_SIDE = 480
@@ -85,6 +85,9 @@ async def probe_media_paths(paths: list[str]) -> dict:
                 "width": vs.get("width"),
                 "height": vs.get("height"),
                 "fps": round(stream_fps(vs), 3),
+                # The decoded frame's format: a 10-bit or 4:2:2 source's
+                # frames are bigger, and the memory estimate counts them so.
+                "pix_fmt": vs.get("pix_fmt"),
                 # Stream colour tags (VUI/colr) drive the compiler's head
                 # tag: only fields the probe leaves unknown get a default.
                 "color": stream_color(vs),
@@ -129,7 +132,7 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
                                  "message": f"keys that start with an underscore are not allowed: {own}"})
     for original in comp_mod.media_paths(comp):
         try:
-            mapping[original] = resolve(original)
+            mapping[original] = await resolve(original)
         except ValueError as exc:
             problems.append({"level": "error", "where": "paths", "message": str(exc)})
     # A caption font is a file the session names too: judged like the media,
@@ -139,7 +142,7 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
     font_resolved = None
     if isinstance(font_file, str) and font_file:
         try:
-            font_resolved = resolve(font_file)
+            font_resolved = await resolve(font_file)
         except ValueError as exc:
             problems.append({"level": "error", "where": "captions", "message": str(exc)})
 
@@ -183,18 +186,25 @@ async def prepare(comp: dict, resolve) -> tuple[dict, dict, list[dict]]:
     # A path the platform refused keeps its raw text, and the container sees
     # every agent's folder: only a judged place is asked whether it exists.
     judged = set(mapping.values()) | ({font_resolved} if font_resolved else set())
+    present = {p for p in judged if (await asyncio.to_thread(safe_kind, p)).kind != "missing"}
     issues = problems + comp_mod.validate(
         resolved,
-        exists=lambda p: p in judged and Path(p).exists(),
+        exists=lambda p: p in present,
         media_info=media_info,
     )
     return resolved, media_info, issues
 
 
-def _stage_luts(resolved: dict, tmp: Path, resolve) -> dict[str, str]:
+# A .cube LUT of 65 points a side is about 7 MB of text; one past this is no LUT.
+LUT_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _stage_luts(resolved: dict, tmp: Path) -> dict[str, str]:
     """Stage every referenced LUT under a safe tmp name → {lut_key: tmp
-    path}. A chain entry with strength < 1 stages a copy blended with
-    identity (color.blend_cube) — the mix costs nothing at render time."""
+    path}, read from the judged path ``prepare`` put in the copy (a built-in
+    look from the image). A chain entry with strength < 1 stages a copy
+    blended with identity (color.blend_cube) — the mix costs nothing at
+    render time. Blocking: a thread runs it."""
     entries: set[tuple[str, float]] = set()
 
     def collect(spec):
@@ -207,25 +217,33 @@ def _stage_luts(resolved: dict, tmp: Path, resolve) -> dict[str, str]:
     collect(resolved.get("project", {}).get("color"))
     luts: dict[str, str] = {}
     for i, (ref, strength) in enumerate(sorted(entries)):
-        src = color_mod.resolve_lut(ref, resolve if not Path(ref).is_absolute() else (lambda p: p))
-        if not Path(src).exists():
+        src = color_mod.resolve_lut(ref, lambda p: p)
+        if safe_kind(src).kind != "file":
             raise ValueError(f"LUT not found: {ref} → {src}")
+        staged = tmp / f"lut{i}"
+        staged.mkdir()
+        copy = private_copy(src, str(staged), LUT_MAX_BYTES)
         dst = tmp / f"lut{i}.cube"
         if strength >= 1.0:
-            shutil.copyfile(src, dst)
+            os.replace(copy, dst)
         else:
-            color_mod.blend_cube(src, str(dst), strength)
+            color_mod.blend_cube(copy, str(dst), strength)
         luts[color_mod.lut_key(ref, strength)] = str(dst)
     return luts
 
 
+# A caption font past this is no font.
+FONT_MAX_BYTES = 64 * 1024 * 1024
+
+
 def _stage_captions(resolved: dict, tmp: Path, canvas: tuple[int, int],
-                    resolve, issues: list | None = None
+                    issues: list | None = None
                     ) -> tuple[str | None, str | None]:
-    """→ (ASS path, fontsdir). A `font_file` is copied under a safe name
-    into the render tmp (user-controlled names never reach the filtergraph)
-    and the Style line carries the family the FILE declares — libass
-    matches fontsdir faces by that name, not by path."""
+    """→ (ASS path, fontsdir). A `font_file` (the judged path ``prepare``
+    put in the copy) is copied under a safe name into the render tmp
+    (user-controlled names never reach the filtergraph) and the Style line
+    carries the family the FILE declares — libass matches fontsdir faces by
+    that name, not by path. Blocking: a thread runs it."""
     caps = resolved.get("captions")
     if not caps:
         return None, None
@@ -233,11 +251,12 @@ def _stage_captions(resolved: dict, tmp: Path, canvas: tuple[int, int],
     family = caps.get("font")
     font_file = caps.get("font_file")
     if font_file:
-        src = resolve(font_file)
         fonts_dir = tmp / "fonts"
         fonts_dir.mkdir(exist_ok=True)
-        staged = fonts_dir / ("caption" + Path(src).suffix.lower())
-        shutil.copyfile(src, staged)
+        landed = tmp / "font-in"
+        landed.mkdir(exist_ok=True)
+        staged = fonts_dir / ("caption" + Path(font_file).suffix.lower())
+        os.replace(private_copy(font_file, str(landed), FONT_MAX_BYTES), staged)
         declared = captions_mod.font_file_family(str(staged))
         if family and family.strip().lower() != declared.lower() and issues is not None:
             issues.append({
@@ -513,7 +532,7 @@ async def _render_segmented(resolved: dict, media_info: dict,
                             crf: int | None,
                             segments: list[tuple[float, float]],
                             captions_fontsdir: str | None = None,
-                            at=None, checkpoint=None):
+                            at=None, checkpoint=None, landing=None):
     """Low-RAM render: the timeline renders in windows split at bare cuts,
     each window compiled from a window-pruned sub-composition (far clips →
     fills, far overlays dropped) so only that window's media is opened and
@@ -577,7 +596,7 @@ async def _render_segmented(resolved: dict, media_info: dict,
         "-f", "concat", "-safe", "0", "-i", str(concat_list),
         "-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0",
         "-c", "copy", "-movflags", "+faststart", out],
-        timeout=600, heavy=False)
+        timeout=600, heavy=False, landing=landing)
     return plan, ln_report
 
 
@@ -601,27 +620,6 @@ class RenderPlan:
     duration: float
 
 
-# The partial files of the renders that run now, never removed as stale.
-_writing: set[str] = set()
-
-
-def partial_path(out: str, token: str) -> str:
-    """Where a render writes before its rename: a hidden name beside the
-    output, with its extension (ffmpeg picks the format by it)."""
-    p = Path(out)
-    return str(p.parent / f".{p.stem}.partial-{token}{p.suffix}")
-
-
-def _remove_stale_partials(out: str) -> None:
-    """Partial files of this output that no render writes now (a tool that
-    stopped mid-render left them)."""
-    p = Path(out)
-    for stale in p.parent.glob(f".{p.stem}.partial-*{p.suffix}"):
-        if str(stale) not in _writing:
-            with contextlib.suppress(OSError):
-                stale.unlink()
-
-
 async def plan_render(
     comp_path: str,
     resolve,
@@ -632,7 +630,7 @@ async def plan_render(
 ) -> RenderPlan:
     """The fast half: raises ValueError (validation, a path the session may
     not use) before anything heavy starts."""
-    comp = comp_mod.load_composition(resolve(comp_path))
+    comp = await asyncio.to_thread(comp_mod.load_composition, await resolve(comp_path))
     resolved, media_info, issues = await prepare(comp, resolve)
     errors = [i for i in issues if i["level"] == "error"]
     if errors:
@@ -647,7 +645,7 @@ async def plan_render(
                        "message": note})
     resolved = speedramp_mod.expand_composition(resolved, media_info)
 
-    out = resolve(output_path or default_output_path(comp_path, mode), writing=True)
+    out = await resolve(output_path or default_output_path(comp_path, mode), writing=True)
 
     proj = resolved["project"]
     scale = 1.0
@@ -660,9 +658,9 @@ async def plan_render(
         # Canvas must be known before ASS generation → compute like compiler.
         w = int(round(int(proj["width"]) * scale / 2) * 2)
         h = int(round(int(proj["height"]) * scale / 2) * 2)
-        captions_ass, captions_fontsdir = _stage_captions(
-            resolved, tmp, (w, h), resolve, issues)
-        luts = _stage_luts(resolved, tmp, resolve)
+        captions_ass, captions_fontsdir = await asyncio.to_thread(
+            _stage_captions, resolved, tmp, (w, h), issues)
+        luts = await asyncio.to_thread(_stage_luts, resolved, tmp)
         total = comp_mod.compute_timeline(resolved, media_info)["duration"]
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -674,18 +672,19 @@ async def plan_render(
                       luts=luts, duration=max(duration, 0.001))
 
 
-async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
-                     cancelled=None) -> dict:
-    """The heavy half: the pre-passes, the encode into a partial file beside
-    the output, its probe, and the rename. ``progress(percent)`` follows the
-    encode; ``cancelled()`` is read between steps (a step in a thread runs
-    to its end). Removes the partial file and the scratch folder whatever
-    happens."""
+async def run_render(plan: RenderPlan, *, progress=None, cancelled=None,
+                     landing=None) -> dict:
+    """The heavy half: the pre-passes, the encode, and the probe of what it
+    wrote. The encode writes through ffmpeg's door: a temp beside the output
+    that lands on its name only when the encode succeeds. ``progress(percent)``
+    follows the encode; ``cancelled()`` is read between steps until the
+    output lands (a step in a thread runs to its end). ``landing()`` is
+    called as the output lands: the render is done then, and the probe and
+    the loudness measure that follow are its report. Removes the scratch
+    folder whatever happens."""
     resolved, media_info, issues, tmp = plan.resolved, plan.media_info, plan.issues, plan.tmp
     mode, scale, time_range, crf = plan.mode, plan.scale, plan.time_range, plan.crf
-    part = partial_path(plan.out, token or os.urandom(6).hex())
-    _remove_stale_partials(plan.out)
-    _writing.add(part)
+    out = plan.out
 
     def checkpoint():
         if cancelled is not None and cancelled():
@@ -696,6 +695,10 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
             return None
         return lambda seconds: progress(min(99.0, 100.0 * (offset + seconds) / plan.duration))
 
+    # A render the container's end stopped left its temp beside the output,
+    # maybe gigabytes: it goes before the next render of that output. A temp
+    # a live writer may hold stays (``cleanup_partials``).
+    await asyncio.to_thread(cleanup_partials, out)
     try:
         await _prepare_stabilization(resolved, media_info, tmp)
         checkpoint()
@@ -714,10 +717,11 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
 
         if segments:
             render_plan, ln_report = await _render_segmented(
-                resolved, media_info, issues, mode=mode, out=part,
+                resolved, media_info, issues, mode=mode, out=out,
                 scale=scale, tmp=tmp, captions_ass=plan.captions_ass,
                 luts=plan.luts, crf=crf, segments=segments,
-                captions_fontsdir=plan.captions_fontsdir, at=at, checkpoint=checkpoint)
+                captions_fontsdir=plan.captions_fontsdir, at=at, checkpoint=checkpoint,
+                landing=landing)
         else:
             # An explicit time_range compiles from a window-pruned comp:
             # far clips become fills, so their inputs are never opened —
@@ -729,7 +733,7 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
                                            time_range[0], time_range[1],
                                            pad=WINDOW_PAD)
             render_plan = compile_render(
-                comp_graph, media_info, mode=mode, output_path=part,
+                comp_graph, media_info, mode=mode, output_path=out,
                 canvas_scale=scale, time_range=time_range,
                 captions_ass=plan.captions_ass, luts=plan.luts, crf=crf,
                 captions_fontsdir=plan.captions_fontsdir,
@@ -747,15 +751,19 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
             args = _input_args(render_plan.inputs) + [
                 "-filter_complex_script", str(graph_file),
                 "-map", f"[{render_plan.video_label}]", "-map", f"[{render_plan.audio_label}]",
-                *render_plan.encode_args, part,
+                *render_plan.encode_args, out,
             ]
             timeout = PREVIEW_TIMEOUT_S if mode == "preview" else FINAL_TIMEOUT_S
             await run_ffmpeg(args, timeout=timeout, progress=at(0.0),
-                             claim=estimate_window_bytes(resolved, media_info, *span))
+                             claim=estimate_window_bytes(resolved, media_info, *span),
+                             landing=landing)
 
-        checkpoint()
-        out_info = await probe(part)
-        size_mb = Path(part).stat().st_size / 1e6
+        # The output has landed: no cancel point from here on.
+        try:
+            size_mb = await asyncio.to_thread(landed_size_mb, out)
+            out_info = await probe(out)
+        except FileNotFoundError:
+            raise ValueError(LANDED_GONE.format(name=Path(out).name)) from None
         result = {
             "output": plan.out,
             "mode": mode,
@@ -768,14 +776,10 @@ async def run_render(plan: RenderPlan, *, token: str = "", progress=None,
         if mode == "final" and audio_stream(out_info) is not None:
             result["audio"] = {
                 "loudnorm": ln_report,
-                "delivered": await _measure_delivered(part),
+                "delivered": await _measure_delivered(out),
             }
-        os.replace(part, plan.out)
         return result
     finally:
-        _writing.discard(part)
-        with contextlib.suppress(OSError):
-            os.unlink(part)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -810,7 +814,7 @@ async def render_frames(
     assemble a labeled grid PNG (for the model's visual QC)."""
     from PIL import Image, ImageDraw
 
-    comp = comp_mod.load_composition(resolve(comp_path))
+    comp = await asyncio.to_thread(comp_mod.load_composition, await resolve(comp_path))
     resolved, media_info, issues = await prepare(comp, resolve)
     errors = [i for i in issues if i["level"] == "error"]
     if errors:
@@ -826,9 +830,9 @@ async def render_frames(
     try:
         w = int(round(int(proj["width"]) * scale / 2) * 2)
         h = int(round(int(proj["height"]) * scale / 2) * 2)
-        captions_ass, captions_fontsdir = _stage_captions(
-            resolved, tmp, (w, h), resolve)
-        luts = _stage_luts(resolved, tmp, resolve)
+        captions_ass, captions_fontsdir = await asyncio.to_thread(
+            _stage_captions, resolved, tmp, (w, h))
+        luts = await asyncio.to_thread(_stage_luts, resolved, tmp)
         await _prepare_stabilization(resolved, media_info, tmp)
         await _prepare_slowmo(resolved, media_info, issues)
         await _prepare_match(resolved, media_info, tmp)
@@ -847,7 +851,7 @@ async def render_frames(
                 captions_fontsdir=captions_fontsdir,
             )
             graph_t = (plan.graph
-                       + f";\n[{plan.video_label}]trim=start={t:.6g},"
+                       + f";\n[{plan.video_label}]trim=start={_f(t)},"
                          f"setpts=PTS-STARTPTS[vframe]")
             graph_file = tmp / f"graph_frame{i}.txt"
             graph_file.write_text(graph_t, encoding="utf-8")

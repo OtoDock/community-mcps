@@ -19,24 +19,22 @@ Three consumers:
 """
 
 import asyncio
+import contextlib
 import json
 import math
 import os
 import statistics
+import threading
 from pathlib import Path
 
-from fftools import FFMPEG
+from fftools import FFMPEG, _f, bound_files, heavy_run
 from reframe import MODELS_DIR
-from shared import _resolve_path, _to_agents_relative
+from shared import _resolve_path, _to_agents_relative, open_capture, safe_kind
 
 _VIT = "object_tracking_vittrack_2023sep.onnx"
 
 MAX_SPAN_S = 300.0          # tracking walks every frame — bound the work
 _LOST_SCORE = 0.30          # VitTracker score below this = target lost
-
-
-def _f(v: float) -> str:
-    return f"{float(v):.6g}"
 
 
 def make_tracker():
@@ -130,7 +128,7 @@ def track_span(path: str, box: tuple[float, float, float, float],
     """
     import cv2
 
-    cap = cv2.VideoCapture(path)
+    cap = open_capture(path)
     if not cap.isOpened():
         raise ValueError(f"cannot open video: {path}")
     try:
@@ -283,7 +281,7 @@ def _track_backward(path: str, box, box_time: float, start: float,
     source pixels on output. Returns points in ascending-t order."""
     import cv2
 
-    cap = cv2.VideoCapture(path)
+    cap = open_capture(path)
     try:
         W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -469,7 +467,8 @@ def _blur_frame(frame, boxes, pixelate: bool = False):
 
 
 def _render_blurred_blocking(src: str, out: str, boxes_at, has_audio: bool,
-                             pixelate: bool, vf: list[str] | None = None) -> int:
+                             pixelate: bool, vf: list[str] | None = None,
+                             stop: threading.Event | None = None) -> int:
     """cv2 decode loop → blur ROIs → rawvideo pipe into ffmpeg (x264
     crf 18), original audio muxed back. Fully blocking (Popen + pipe
     writes) — the async wrapper runs it in a worker thread. `vf` is the
@@ -481,7 +480,7 @@ def _render_blurred_blocking(src: str, out: str, boxes_at, has_audio: bool,
 
     import cv2
 
-    cap = cv2.VideoCapture(src)
+    cap = open_capture(src)
     if not cap.isOpened():
         raise ValueError(f"cannot open video: {src}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -496,36 +495,57 @@ def _render_blurred_blocking(src: str, out: str, boxes_at, has_audio: bool,
         + (["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"] if has_audio else []) \
         + ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
            *colour, "-movflags", "+faststart", "-shortest", out]
-    proc = subprocess.Popen(args, stdin=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
-    n = 0
+    # The child opens nothing by name: its input through a descriptor, its
+    # output through the atomic writer when it names the mount (fftools).
+    files = contextlib.ExitStack()
     try:
-        while True:
-            t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-            ok, frame = cap.read()
-            if not ok:
-                break
-            boxes = boxes_at(n, t)
-            if boxes:
-                frame = _blur_frame(frame, boxes, pixelate)
-            proc.stdin.write(frame.tobytes())
-            n += 1
-        proc.stdin.close()
-        stderr = proc.stderr.read()
-        rc = proc.wait(timeout=600)
-    except BrokenPipeError:
-        stderr = proc.stderr.read()
-        proc.wait(timeout=60)
-        raise RuntimeError("ffmpeg blur encode died mid-stream: "
-                           + stderr.decode(errors="replace")[-400:])
-    finally:
-        cap.release()
-        if proc.poll() is None:
-            proc.kill()
-    if rc != 0:
-        raise RuntimeError("ffmpeg blur encode failed: "
-                           + stderr.decode(errors="replace")[-400:])
+        try:
+            args, fds = files.enter_context(bound_files(args))
+            proc = subprocess.Popen(args, stdin=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, pass_fds=fds)
+        except BaseException:
+            cap.release()
+            raise
+        n = 0
+        try:
+            while True:
+                if stop is not None and stop.is_set():
+                    raise _Stopped
+                t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                boxes = boxes_at(n, t)
+                if boxes:
+                    frame = _blur_frame(frame, boxes, pixelate)
+                proc.stdin.write(frame.tobytes())
+                n += 1
+            proc.stdin.close()
+            stderr = proc.stderr.read()
+            rc = proc.wait(timeout=600)
+        except BrokenPipeError:
+            stderr = proc.stderr.read()
+            proc.wait(timeout=60)
+            raise RuntimeError("ffmpeg blur encode died mid-stream: "
+                               + stderr.decode(errors="replace")[-400:])
+        finally:
+            cap.release()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        if rc != 0:
+            raise RuntimeError("ffmpeg blur encode failed: "
+                               + stderr.decode(errors="replace")[-400:])
+    except BaseException as exc:
+        files.__exit__(type(exc), exc, exc.__traceback__)
+        raise
+    files.close()
     return n
+
+
+class _Stopped(Exception):
+    """The blur's encode was asked to stop: its child is ended and its
+    output is not written."""
 
 
 async def render_blurred(src: str, out: str, boxes_at, has_audio: bool,
@@ -533,9 +553,20 @@ async def render_blurred(src: str, out: str, boxes_at, has_audio: bool,
                          vf: list[str] | None = None) -> int:
     """Async wrapper: `boxes_at(frame_index, t) -> [(x,y,w,h)]` decides
     what gets blurred on each frame; `vf` is the encode-side colour chain
-    (see _render_blurred_blocking). Returns frames written."""
-    return await asyncio.to_thread(
-        _render_blurred_blocking, src, out, boxes_at, has_audio, pixelate, vf)
+    (see _render_blurred_blocking). Returns frames written. The encode
+    passes the gate as every heavy run does, and a cancel ends it at its
+    next frame before the cancel goes on."""
+    stop = threading.Event()
+    async with heavy_run():
+        work = asyncio.ensure_future(asyncio.to_thread(
+            _render_blurred_blocking, src, out, boxes_at, has_audio, pixelate, vf, stop))
+        try:
+            return await asyncio.shield(work)
+        except asyncio.CancelledError:
+            stop.set()
+            with contextlib.suppress(BaseException):
+                await work
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -544,8 +575,8 @@ async def render_blurred(src: str, out: str, boxes_at, has_audio: bool,
 
 
 async def handle_track_object(args: dict) -> str:
-    path = _resolve_path(args["path"])
-    if not Path(path).exists():
+    path = await _resolve_path(args["path"])
+    if (await asyncio.to_thread(safe_kind, path)).kind == "missing":
         return f"Error: file not found: {args['path']}"
     box = args.get("box")
     if (not isinstance(box, (list, tuple)) or len(box) != 4

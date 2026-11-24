@@ -15,6 +15,8 @@ Pure string builders; the compiler owns placement (after the grade,
 before the format tail).
 """
 
+from fftools import _f
+
 PRESETS = ("whip_pan", "zoom_punch", "flash_cut", "glitch", "spin", "shake",
            "zoom_out", "zoom_in")
 
@@ -27,10 +29,6 @@ PRESETS = ("whip_pan", "zoom_punch", "flash_cut", "glitch", "spin", "shake",
 # saturated areas → purple/orange casts, seen on real footage. The
 # maskedmerge mask converts gray→gbrp, so every channel wipes together.)
 XFADE_PRESETS = ("whip_left", "whip_right", "luma_wipe")
-
-
-def _f(v: float) -> str:
-    return f"{float(v):.6g}"
 
 
 def is_preset(name) -> bool:

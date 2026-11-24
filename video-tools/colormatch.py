@@ -51,13 +51,13 @@ def parse_ref(ref: str) -> tuple[str, float]:
 def _frame_size(path: str) -> tuple[int, int]:
     import subprocess
 
-    from fftools import FFPROBE
+    from fftools import FFPROBE, run_sync
 
     try:
-        out = subprocess.run(
+        out = run_sync(
             [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
              "stream=width,height", "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S)
+            last_is_input=True, capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S)
         w, h = [int(x) for x in out.stdout.strip().split(",")[:2]]
     except (ValueError, subprocess.TimeoutExpired):
         raise ValueError(f"could not read the frame size of '{path}'")
@@ -75,7 +75,7 @@ def _grab_frames(path: str, times: list[float], head: str = ""):
 
     import numpy as np
 
-    from fftools import FFMPEG
+    from fftools import FFMPEG, run_sync
 
     w, h = _frame_size(path)
     ow = min(_STATS_MAX_WIDTH, w)
@@ -84,7 +84,7 @@ def _grab_frames(path: str, times: list[float], head: str = ""):
     frames = []
     for t in times:
         try:
-            proc = subprocess.run(
+            proc = run_sync(
                 [FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
                  "-ss", f"{max(0.0, t):.3f}", "-i", path, "-vf", vf,
                  "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],

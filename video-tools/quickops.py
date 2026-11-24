@@ -14,6 +14,7 @@ and bit depth: a one-shot op never tone-maps. `-c:v copy` ops are untouched.
 """
 
 import asyncio
+import os
 import re
 import shutil
 import tempfile
@@ -24,24 +25,45 @@ import captions as captions_mod
 import color as color_mod
 import slowmo as slowmo_mod
 import stab as stab_mod
-from fftools import FFmpegError, atempo_chain, audio_stream, media_duration, probe, run_ffmpeg, stream_color, stream_fps, stream_rotation, video_stream
+from fftools import (
+    FFmpegError,
+    _f,
+    atempo_chain,
+    audio_stream,
+    media_duration,
+    probe,
+    run_ffmpeg,
+    stream_color,
+    stream_fps,
+    stream_rotation,
+    video_stream,
+)
 from shared import (
+    LANDED_GONE,
     _normalize_operations,
     _notify_file_written,
     _on_a_computer,
     _op_type,
     _resolve_path,
     _to_agents_relative,
+    landed_size_mb,
+    open_capture,
+    place_file,
+    private_copy,
+    safe_kind,
 )
+
+# A subtitle font past this is no font.
+_FONT_MAX_BYTES = 64 * 1024 * 1024
+
+
+async def _missing(path: str) -> bool:
+    return (await asyncio.to_thread(safe_kind, path)).kind == "missing"
 
 _ENCODE = ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
 
 _AUDIO_EXTS = {"wav": ".wav", "mp3": ".mp3", "aac": ".m4a", "flac": ".flac"}
-
-
-def _f(v) -> str:
-    return f"{float(v):.6g}"
 
 
 async def _step(args: list[str], timeout: float = 1800) -> None:
@@ -73,8 +95,8 @@ def _hdr_note(c) -> str:
 
 
 async def handle_edit_video(args: dict):
-    src = _resolve_path(args["path"])
-    if not Path(src).exists():
+    src = await _resolve_path(args["path"])
+    if await _missing(src):
         return f"Error: file not found: {args['path']}"
     if not args.get("output_path") and _on_a_computer(src):
         return ("Error: this video is on a computer, so its folder is not a place to write. "
@@ -103,22 +125,25 @@ async def handle_edit_video(args: dict):
         out_ext = Path(current).suffix
         default_name = Path(src).stem + "_edited" + out_ext
         out_arg = args.get("output_path")
-        out = _resolve_path(out_arg or str(Path(src).parent / default_name), writing=True)
+        out = await _resolve_path(out_arg or str(Path(src).parent / default_name), writing=True)
         if Path(out).suffix.lower() != out_ext.lower():
             # Another name is another place: judged again.
-            out = _resolve_path(str(Path(out).with_suffix(out_ext)), writing=True)
+            out = await _resolve_path(str(Path(out).with_suffix(out_ext)), writing=True)
             notes.append(f"note: output extension adjusted to {out_ext}")
         if current == src:
             return _fail(notes, "pipeline", "nothing was produced")
-        Path(out).parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(current, out)
+        # The step's own file lands on the output beneath the mount, whole or
+        # not at all, never through a link put on the way.
+        await asyncio.to_thread(place_file, current, out)
         await _notify_file_written(out)
 
         try:
+            size = await asyncio.to_thread(landed_size_mb, out)
             info = await probe(out)
             dur = media_duration(info)
-            size = Path(out).stat().st_size / 1e6
             summary = f"{dur:.2f}s · {size:.1f} MB"
+        except FileNotFoundError:
+            return "Error: " + LANDED_GONE.format(name=Path(out).name)
         except FFmpegError:
             summary = "written"
         notes.append(f"saved: {_to_agents_relative(out)} ({summary})")
@@ -329,7 +354,7 @@ async def _op_fps(src: str, base, op: dict):
 
 
 async def _op_concat(src: str, base, op: dict):
-    others = [_resolve_path(p) for p in op.get("paths", [])]
+    others = [await _resolve_path(p) for p in op.get("paths", [])]
     if not others:
         raise ValueError("concat needs paths=[…] to append")
     paths = [src] + others
@@ -488,9 +513,9 @@ async def _op_blur_faces(src: str, base, op: dict):
     def detect_all() -> list[list]:
         import cv2
 
-        cap = cv2.VideoCapture(src)
         det = reframe._detector(W, H)
         per_frame = []
+        cap = open_capture(src)
         try:
             while True:
                 t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
@@ -589,8 +614,8 @@ async def _op_extract_audio(src: str, base, op: dict):
 
 
 async def _op_replace_audio(src: str, base, op: dict):
-    audio = _resolve_path(op.get("audio_path", ""))
-    if not Path(audio).exists():
+    audio = await _resolve_path(op.get("audio_path", ""))
+    if await _missing(audio):
         raise ValueError(f"audio file not found: {op.get('audio_path')}")
     out = str(base) + ".mp4"
     mix_db = op.get("mix_original_db")
@@ -615,8 +640,8 @@ async def _op_match_color(src: str, base, op: dict):
         raise ValueError('match_color needs ref: "path@seconds" '
                          "(the frame to match this video to)")
     ref_path, ref_time = colormatch.parse_ref(ref)
-    ref_path = _resolve_path(ref_path)
-    if not Path(ref_path).exists():
+    ref_path = await _resolve_path(ref_path)
+    if await _missing(ref_path):
         raise ValueError(f"reference file not found: {ref}")
     info = await probe(src)
     dur = media_duration(info)
@@ -783,8 +808,8 @@ async def _op_loudnorm(src: str, base, op: dict):
 
 
 async def _op_burn_subtitles(src: str, base, op: dict):
-    sub = _resolve_path(op.get("subtitle_path", ""))
-    if not Path(sub).exists():
+    sub = await _resolve_path(op.get("subtitle_path", ""))
+    if await _missing(sub):
         raise ValueError(f"subtitle file not found: {op.get('subtitle_path')}")
     info = await probe(src)
     vs = video_stream(info)
@@ -799,15 +824,19 @@ async def _op_burn_subtitles(src: str, base, op: dict):
     fonts_dir = None
     font_file = op.get("font_file")
     if font_file:
-        font_src = _resolve_path(font_file)
-        if not Path(font_src).exists():
+        font_src = await _resolve_path(font_file)
+        if await _missing(font_src):
             raise ValueError(f"font file not found: {font_file}")
         fonts_dir = Path(str(base) + "-fonts")
         fonts_dir.mkdir(exist_ok=True)
+        landed = Path(str(base) + "-font-in")
+        landed.mkdir(exist_ok=True)
         staged = fonts_dir / ("caption" + Path(font_src).suffix.lower())
-        shutil.copyfile(font_src, staged)
+        copy = await asyncio.to_thread(private_copy, font_src, str(landed), _FONT_MAX_BYTES)
+        os.replace(copy, staged)
         family = captions_mod.font_file_family(str(staged))
-    ass_text = captions_mod.build_ass(
+    ass_text = await asyncio.to_thread(
+        captions_mod.build_ass,
         sub, play_w=w, play_h=h,
         preset=op.get("preset", captions_mod.DEFAULT_PRESET),
         position=op.get("position", "lower_third"),

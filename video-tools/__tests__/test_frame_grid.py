@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import HAVE_FFMPEG
+from conftest import HAVE_FFMPEG, same_path
 
 import composition as comp_mod  # noqa: E402
 
@@ -153,13 +153,13 @@ def test_windowed_render_matches_single_on_offgrid_durations(
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "100000")
     single = _run(renderer.render_composition(
-        str(path), lambda p, writing=False: p, mode="preview",
+        str(path), same_path, mode="preview",
         output_path=str(offgrid_assets["root"] / "single.mp4")))
     assert not windowed
 
     monkeypatch.setenv("VIDEO_TOOLS_RENDER_BUDGET_MB", "8")
     seg = _run(renderer.render_composition(
-        str(path), lambda p, writing=False: p, mode="preview",
+        str(path), same_path, mode="preview",
         output_path=str(offgrid_assets["root"] / "seg.mp4")))
     assert windowed and windowed[0] > 1
 

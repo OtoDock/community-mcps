@@ -4,8 +4,10 @@ with a job, ``render_status`` says how far it is, ``cancel_render`` stops it.
 A job lives in this container's memory: a restart, an update or a stop of the
 tool ends every job, and its id then answers ``lost``. One job encodes at a
 time, a few wait; a job's partial file sits beside its output under a hidden
-name and is renamed only when the render succeeded. The tool's ``/busy``
-route answers whether a job waits or runs, so the platform keeps it awake.
+name and lands on the output's name only when its encode succeeded. From
+then on the render is done: a cancel no longer stops it. The tool's
+``/busy`` route answers whether a job waits or runs, so the platform keeps
+it awake.
 
 A job is the caller's to read or stop only while the caller's own session
 resolves the job's output to the same place: read for its status, write to
@@ -39,6 +41,10 @@ FULL = (f"{MAX_WAITING} renders already wait their turn. Ask again when one has 
 ON_A_MACHINE = ("A render in the background writes on the platform, and this output is on "
                 "a computer. Render it without background.")
 TOO_LONG = "The render ran for an hour and was stopped. Render it in parts, or as a preview."
+TOO_LONG_LANDED = ("The render ran for an hour and was stopped after its file was written. "
+                   "The file is whole, but the render's report was not finished.")
+LANDED = ("The render had already written its file, so it was not stopped. "
+          "Ask render_status for its report.")
 NOT_SENT = ("The file is in the agent's folder on the platform. The render ended after its "
             "chat did, so it was not sent to a computer that chat ran on.")
 
@@ -59,6 +65,9 @@ class Job:
     # Whether the platform took the finished file's notice (it sends the file
     # to the computer a chat runs on): the call's session may have ended.
     sent: bool = False
+    # The render's file has landed on its output: the render is done, and a
+    # cancel no longer stops it.
+    landed: bool = False
 
 
 _jobs: dict[str, Job] = {}
@@ -83,10 +92,10 @@ def _sandbox_form(place: str) -> str:
     return "/" + place.split("/", 1)[1] if "/" in place else place
 
 
-def _owned(job: Job, *, writing: bool) -> bool:
+async def _owned(job: Job, *, writing: bool) -> bool:
     """The caller's own session resolves the job's output to the job's place."""
     try:
-        answer = _resolve_path(_sandbox_form(job.place), writing=writing)
+        answer = await _resolve_path(_sandbox_form(job.place), writing=writing)
     except ValueError:
         return False
     return _to_agents_relative(answer) == job.place
@@ -112,6 +121,9 @@ async def start(plan: renderer.RenderPlan, report) -> Job:
     def on_progress(percent: float) -> None:
         job.percent = round(percent, 1)
 
+    def on_landing() -> None:
+        job.landed = True
+
     async def run() -> None:
         try:
             async with _turn:
@@ -119,8 +131,8 @@ async def start(plan: renderer.RenderPlan, report) -> Job:
                     raise asyncio.CancelledError()
                 job.state = "running"
                 result = await asyncio.wait_for(renderer.run_render(
-                    plan, token=job.id[:12], progress=on_progress,
-                    cancelled=lambda: job.cancelled), JOB_MAX_S)
+                    plan, progress=on_progress,
+                    cancelled=lambda: job.cancelled, landing=on_landing), JOB_MAX_S)
             job.result = {**result, "report": report(result)}
             job.state, job.percent = "done", 100.0
             with contextlib.suppress(Exception):
@@ -129,7 +141,7 @@ async def start(plan: renderer.RenderPlan, report) -> Job:
             job.state = "cancelled"
             renderer.discard(plan)
         except asyncio.TimeoutError:
-            job.state, job.error = "failed", TOO_LONG
+            job.state, job.error = "failed", TOO_LONG_LANDED if job.landed else TOO_LONG
             renderer.discard(plan)
         except Exception as exc:  # noqa: BLE001  # the job's answer carries every failure
             logger.warning("background render %s failed: %s", job.id[:8], exc)
@@ -144,11 +156,11 @@ async def start(plan: renderer.RenderPlan, report) -> Job:
     return job
 
 
-def status(job_id: str) -> dict:
+async def status(job_id: str) -> dict:
     """``{job_id, state, percent, output, report | error}``; ``lost`` for an
     unknown id and for a job the caller's session does not reach."""
     job = _jobs.get(job_id)
-    if job is None or not _owned(job, writing=False):
+    if job is None or not await _owned(job, writing=False):
         return {"job_id": job_id, "state": "lost", "message": LOST}
     out: dict = {"job_id": job.id, "state": job.state, "percent": job.percent,
                  "output": job.place}
@@ -161,12 +173,16 @@ def status(job_id: str) -> dict:
     return out
 
 
-def cancel(job_id: str) -> dict:
-    """Stop a waiting or running job: its encode is killed, its partial file
-    removed. Needs the caller's session to write the job's output."""
+async def cancel(job_id: str) -> dict:
+    """Stop a waiting or running job: its encode is killed and its temp file
+    removed, so the output keeps the file it had. A job whose file has landed
+    is done: it is not stopped, it finishes its report, and the answer says
+    so (``LANDED``). Needs the caller's session to write the job's output."""
     job = _jobs.get(job_id)
-    if job is None or not _owned(job, writing=True):
+    if job is None or not await _owned(job, writing=True):
         return {"job_id": job_id, "state": "lost", "message": LOST}
+    if job.state in ("waiting", "running") and job.landed:
+        return {"job_id": job.id, "state": job.state, "output": job.place, "message": LANDED}
     if job.state in ("waiting", "running"):
         job.cancelled = True
         if job.task is not None:

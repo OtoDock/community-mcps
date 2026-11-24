@@ -108,7 +108,7 @@ def test_a_cache_the_session_may_not_read_is_a_miss(tmp_path, monkeypatch):
     cache.write_text("NOT JUDGED\n")
     asked: list = []
 
-    def refuse(path, writing=False):
+    async def refuse(path, writing=False):
         asked.append((path, writing))
         raise ValueError("denied")
     ran: list = []
@@ -127,3 +127,37 @@ def test_a_cache_the_session_may_not_read_is_a_miss(tmp_path, monkeypatch):
     assert hit is False and len(ran) == 1
     assert staged.read_text().startswith("VID.STAB")
     assert (str(cache), False) in asked
+
+
+def test_a_step_of_the_tools_own_has_no_sidecar(monkeypatch):
+    """A source outside the mount (an earlier step of an edit, in the
+    tool's own temp folder) gets its transform for this render only: no
+    sidecar is read or written, and the platform is asked nothing."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import shared
+    asked: list[str] = []
+
+    async def judge(path):
+        asked.append(path)
+        return path
+    monkeypatch.setattr(shared, "_read_beside", judge)
+    monkeypatch.setattr(shared, "_write_beside", judge)
+
+    async def fake_run(args, timeout=0, heavy=True):
+        vf = args[args.index("-vf") + 1]
+        with open(vf.split("result=")[1], "w") as fh:
+            fh.write("VID.STAB 1\n")
+        return b"", ""
+    monkeypatch.setattr(stab, "run_ffmpeg", fake_run)
+    own = Path(tempfile.mkdtemp(prefix="vt-edit-"))
+    try:
+        src = own / "step1.mp4"
+        src.write_bytes(b"x")
+        staged = own / "s.trf"
+        assert asyncio.run(stab.ensure_trf(str(src), None, 5, str(staged))) == (False, None)
+        assert staged.exists() and asked == [] and sorted(p.name for p in own.iterdir()) == ["s.trf", "step1.mp4"]
+    finally:
+        shutil.rmtree(own, ignore_errors=True)

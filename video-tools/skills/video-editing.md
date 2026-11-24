@@ -35,6 +35,22 @@ the final full-speed watch.
    normalization). Show the user with `display_video` (it plays inline —
    the output is web-safe, no re-transcode).
 
+## The files it reads
+
+The tool reads these kinds of file, and answers any other kind with one
+sentence: "The tool does not read this kind of file: <name>."
+
+- Video: MP4, MOV, M4V and 3GP, MKV and WebM, AVI, MPEG-TS and M2TS, MPEG
+  program streams (MPG and VOB), FLV, WMV, MXF, Ogg video, DV, and raw
+  H.264 and H.265 streams.
+- Audio: MP3, WAV and Wave64, AIFF, FLAC, AAC, M4A, AC-3 and E-AC-3, CAF,
+  AMR, Ogg and Opus, and WMA.
+- Pictures: PNG and animated PNG, JPEG, WebP, BMP, TIFF, GIF, JPEG XL,
+  OpenEXR, DPX, QOI, and PAM, PGM and PPM.
+
+Convert any other kind first, such as TGA, SVG, PSD, DTS, WavPack, Y4M or
+IVF. A playlist or a list of other files (HLS, DASH, concat) is never read.
+
 ## Editing taste (defaults that read as professional)
 
 - **Cuts beat transitions.** Most joins should be hard cuts. Use a
@@ -303,7 +319,7 @@ the final full-speed watch.
 - **Shot matching (`color.match`)**: when two sources don't sit together
   (drone vs camera, different takes, an AI-generated bridge), grade the
   odd one to a reference frame from the good one:
-  `color: {"match": {"ref": "workspace/camera.mp4@11.8"}}` — then put any
+  `color: {"match": {"ref": "/workspace/camera.mp4@11.8"}}` — then put any
   creative look ON TOP (match normalizes first). `strength: 0.7` for a
   partial pull.
 - **AI-bridge joins**: keep the cuts HARD and ramp-match the bridge to

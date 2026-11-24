@@ -12,12 +12,12 @@ The filter builders are pure string functions (importable by the compiler);
 only ``ensure_trf`` touches ffmpeg/the filesystem.
 """
 
+import asyncio
 import hashlib
 import os
-import shutil
 from pathlib import Path
 
-from fftools import run_ffmpeg
+from fftools import _f, run_ffmpeg
 from shared import logger
 
 # Strength presets: shakiness drives detection sensitivity, smoothing the
@@ -28,10 +28,6 @@ PRESETS = {
     "medium": {"shakiness": 6, "smoothing": 15, "zoom": 0.0},
     "high": {"shakiness": 9, "smoothing": 25, "zoom": 0.0},
 }
-
-
-def _f(v: float) -> str:
-    return f"{float(v):.6g}"
 
 
 def spec_params(spec) -> dict:
@@ -68,13 +64,24 @@ def transform_filters(trf_path: str, params: dict) -> list[str]:
 
 def sidecar_path(src: str, span: tuple[float, float] | None, shakiness: int) -> Path:
     """Cache location next to the source. Keyed by size+mtime (a replaced
-    file must not reuse stale transforms) + span + shakiness."""
-    st = os.stat(src)
+    file must not reuse stale transforms) + span + shakiness. Blocking: a
+    thread runs it."""
+    from shared import read_identity
+
+    # The call's later opens of the source are held to the file this reads.
+    try:
+        st = read_identity(src)
+    except FileNotFoundError:
+        raise ValueError(f"file not found: {src}") from None
     span_s = "full" if span is None else f"{span[0]:.3f}-{span[1]:.3f}"
     raw = f"{st.st_size}:{st.st_mtime_ns}:{span_s}:{shakiness}"
     key = hashlib.md5(raw.encode()).hexdigest()[:10]
     p = Path(src)
     return p.parent / (p.stem + f".stab-{key}.trf")
+
+
+# A transform file of a long clip is a few MB; one past this is no cache.
+_TRF_MAX_BYTES = 256 * 1024 * 1024
 
 
 async def ensure_trf(src: str, span: tuple[float, float] | None,
@@ -87,29 +94,35 @@ async def ensure_trf(src: str, span: tuple[float, float] | None,
     by order, so the sequences must match 1:1) and writes the sidecar
     best-effort. Returns ``(cache_hit, sidecar_path_or_None)``.
     """
-    cache = sidecar_path(src, span, shakiness)
-    # The cache beside the source is read only as the platform judges it for
-    # the session, like any file the session names; a refusal is a miss.
-    from shared import _read_beside, _write_beside
-    cached = _read_beside(str(cache))
-    if cached and Path(cached).exists():
-        shutil.copyfile(cached, staged)
-        return True, cached
-    # The cache is written beside the source only where the session may
-    # write (judged by the proxy); else the transform stays in this render.
-    judged = _write_beside(str(cache))
+    from shared import _read_beside, _write_beside, beneath_mount, place_copy, private_copy, safe_kind
 
     pre = ""
     if span is not None:
         pre = f"trim=start={_f(span[0])}:end={_f(span[1])},"
     vf = (f"{pre}setpts=PTS-STARTPTS,"
           f"vidstabdetect=shakiness={int(shakiness)}:result={staged}")
+    if not beneath_mount(src):
+        # The tool's own file (an earlier step of the edit): no sidecar, and
+        # nothing asked of the platform about a path the session never named.
+        await run_ffmpeg(["-i", src, "-vf", vf, "-f", "null", "-"], timeout=1800, heavy=True)
+        return False, None
+    cache = await asyncio.to_thread(sidecar_path, src, span, shakiness)
+    # The cache beside the source is read only as the platform judges it for
+    # the session, like any file the session names; a refusal is a miss.
+    cached = await _read_beside(str(cache))
+    if cached and (await asyncio.to_thread(safe_kind, cached)).kind == "file":
+        landed = await asyncio.to_thread(private_copy, cached, str(Path(staged).parent), _TRF_MAX_BYTES)
+        os.replace(landed, staged)
+        return True, cached
+    # The cache is written beside the source only where the session may
+    # write (judged by the proxy); else the transform stays in this render.
+    judged = await _write_beside(str(cache))
     await run_ffmpeg(["-i", src, "-vf", vf, "-f", "null", "-"],
                      timeout=1800, heavy=True)
     if judged is None:
         return False, None
     try:
-        shutil.copyfile(staged, judged)
+        await asyncio.to_thread(place_copy, staged, judged)
         return False, judged
     except OSError as exc:
         logger.warning("stab cache write failed (non-fatal): %s", exc)

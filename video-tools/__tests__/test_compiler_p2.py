@@ -309,7 +309,7 @@ def test_preset_transition_keeps_hard_cut_and_styles_both_edges():
     in_chain = next(c for c in chains if "trim=start=0:end=3" in c)
     # Outgoing tail: blur builds into the cut (t→4); incoming head decays.
     assert "dblur" in out_chain and "between(t,3.8," in out_chain
-    assert "dblur" in in_chain and "between(t,0,0.0666667)" in in_chain
+    assert "dblur" in in_chain and "between(t,0,0.066667)" in in_chain
 
 
 def test_whip_left_overlaps_with_wrap_expr_in_gbrp_and_blur_both_sides():
@@ -549,7 +549,7 @@ def test_alpha_webm_forces_libvpx_decoder():
         [{"src": "a.mp4", "in": 0, "out": 6}],
         tracks_extra=[{"kind": "overlay", "clips": [
             {"src": "sting.webm", "start": 0.5}]}]), media)
-    assert (["-c:v", "libvpx-vp9"], "sting.webm") in plan.inputs
+    assert (["-threads", str(_THREADS), "-c:v", "libvpx-vp9"], "sting.webm") in plan.inputs
     assert (["-c:v", "libvpx-vp9"], "a.mp4") not in plan.inputs
 
 
@@ -559,6 +559,26 @@ def test_alpha_webm_forces_libvpx_decoder():
 
 from compiler import (bare_cut_points, estimate_window_bytes,  # noqa: E402
                       plan_segments, window_pruned)
+
+
+@pytest.fixture(autouse=True)
+def _three_cores(monkeypatch):
+    """The estimate counts a frame per encoder and decoder thread, and the
+    threads follow the cores: three cores here (threads = 3 + 1), so its
+    numbers are the same on every machine."""
+    import compiler
+    monkeypatch.setattr(compiler, "render_threads", lambda: 3 + 1)
+
+
+_THREADS = 3 + 1                      # render_threads() under _three_cores
+_FRAME = 640 * 360 * 1.5              # one yuv420 frame at the 640x360 project size
+# What every window holds besides its source frames: x264's 58 frames plus
+# one per thread at the canvas, and the decoder of each open input (one
+# frame per thread plus 4 references) at its source size.
+_X264 = (58 + _THREADS) * _FRAME      # 62 frames
+_DECODER = (_THREADS + 4) * _FRAME    # 8 frames of a 640x360 input
+_LOGO_DECODER = (_THREADS + 4) * 200 * 100 * 1.5
+_ONE_INPUT = _X264 + _DECODER         # a window that opens one 640x360 input
 
 
 def test_window_pruned_replaces_far_clips_and_keeps_timeline():
@@ -626,11 +646,17 @@ def test_bare_cut_points_skip_transitions_and_presets():
 def test_plan_segments_split_at_bare_cuts_within_budget():
     comp = _comp([{"src": "a.mp4", "in": 0, "out": 2} for _ in range(6)])
     full = estimate_window_bytes(comp, MEDIA, 0.0, 12.0)
-    assert full == 12 * 30 * 640 * 360 * 1.5
+    # 12 s x 30 fps of source frames, six open inputs, the encoder:
+    # (360 + 6 x 8 + 62) frames = 470 frames.
+    assert full == 12 * 30 * _FRAME + 6 * _DECODER + _X264
 
     assert plan_segments(comp, MEDIA, full + 1) == []      # fits → single pass
 
-    segs = plan_segments(comp, MEDIA, full / 3)
+    # A budget of one 4 s window, two open inputs: (120 + 2 x 8 + 62) = 198
+    # frames; a 6 s window (180 + 3 x 8 + 62 = 266) does not fit.
+    four = 4 * 30 * _FRAME + 2 * _DECODER + _X264
+    assert estimate_window_bytes(comp, MEDIA, 0.0, 4.0) == four
+    segs = plan_segments(comp, MEDIA, four)
     assert [round(b - a, 6) for a, b in segs] == [4.0, 4.0, 4.0]
     assert segs[0][0] == 0.0 and segs[-1][1] == 12.0
     assert all(segs[i][1] == segs[i + 1][0] for i in range(len(segs) - 1))
@@ -652,8 +678,11 @@ def test_estimate_counts_overlays_rgba_and_skips_fills():
                          "has_audio": False, "width": 200, "height": 100}
     est = estimate_window_bytes(comp, media, 0.0, 8.0)
     # 4 s of source frames (project-size fallback) + the overlay in rgba;
-    # the fill costs nothing — generated on demand, never buffered.
-    assert est == 4 * 30 * 640 * 360 * 1.5 + 2 * 30 * 200 * 100 * 4
+    # the fill costs nothing — generated on demand, never buffered. Two
+    # inputs open (the clip and the logo, each its decoder's 8 frames at its
+    # own size) and the encoder's 62 frames at the canvas.
+    assert est == (4 * 30 * 640 * 360 * 1.5 + 2 * 30 * 200 * 100 * 4
+                   + _DECODER + _LOGO_DECODER + _X264)
 
 
 LONG = dict(MEDIA)
@@ -671,13 +700,15 @@ def test_estimate_overlay_clamped_to_window_overlap():
                          "has_audio": False, "width": 200, "height": 100}
     est = estimate_window_bytes(comp, media, 10.0, 12.0)
     # Only the overlay's 2 s inside the window count — a long watermark
-    # must not mark every window over-budget.
-    assert est == 2 * _PER_S + 2 * 30 * 200 * 100 * 4
+    # must not mark every window over-budget. Plus the two open inputs'
+    # decoders (8 frames each at its own size) and the encoder's 62 frames.
+    assert est == (2 * _PER_S + 2 * 30 * 200 * 100 * 4
+                   + _DECODER + _LOGO_DECODER + _X264)
 
 
 def test_plan_segments_synthetic_points_in_cutless_span():
     comp = _comp([{"src": "long.mp4"}])
-    budget = 12 * _PER_S
+    budget = 12 * _PER_S + _ONE_INPUT       # 12 s windows of one input
     segs = plan_segments(comp, LONG, budget)
     assert len(segs) >= 4
     assert segs[0][0] == 0.0 and segs[-1][1] == 60.0
@@ -701,7 +732,7 @@ def test_plan_segments_synthetic_points_avoid_transition_zones():
     # 59 s timeline (1 s xfade overlap), join at t=29 — no bare cuts at
     # all. A 6 s budget forces a point right at the join, which must jump
     # the zone rather than cut through the blend.
-    budget = 6 * _PER_S
+    budget = 6 * _PER_S + _ONE_INPUT        # 6 s windows of one input
     segs = plan_segments(comp, LONG, budget)
     assert len(segs) >= 6
     zone = (29.0 - 1.0 - 0.5, 29.0 + 1.0 + 0.5)
@@ -719,7 +750,7 @@ def test_plan_segments_split_a_span_whose_furthest_window_leaves_a_short_tail():
     leaves a window, both pieces inside the budget."""
     from compiler import MIN_WINDOW
     comp = _comp([{"src": "long.mp4", "in": 0, "out": 17}])
-    budget = 16.5 * _PER_S
+    budget = 16.5 * _PER_S + _ONE_INPUT     # 16.5 s of one input
     segs = plan_segments(comp, LONG, budget)
     assert segs == [(0.0, 17.0 - MIN_WINDOW), (17.0 - MIN_WINDOW, 17.0)]
     assert all(estimate_window_bytes(comp, LONG, a, b) <= budget for a, b in segs)
@@ -730,6 +761,102 @@ def test_plan_segments_pathological_span_stays_single():
     # Even MIN_WINDOW-sized pieces bust this budget: nothing to gain from
     # splitting — single-pass render with the renderer's warning.
     assert plan_segments(comp, MEDIA, _PER_S) == []
+
+
+def test_the_estimate_holds_the_peak_measured_on_a_1080p_render(monkeypatch):
+    """Four 6 s clips of 1080p30, the last three joined by a 1 s dissolve,
+    rendered final in one pass: the encode's children peaked at 2,308 to
+    2,444 MB with ffmpeg's own thread counts, and at 2,319 MB with the
+    render's (11 for each decoder and x264). Each peak is getrusage of the
+    children, a final render of this very composition inside the
+    video-tools image, ffmpeg 7.1.5, ten cores. The estimate for the whole
+    span must hold the highest of them."""
+    import compiler
+    monkeypatch.setattr(compiler, "render_threads", lambda: 10 + 1)
+    comp = comp_mod.new_composition({"width": 1920, "height": 1080, "fps": 30})
+    comp["tracks"][0]["clips"] = [
+        {"src": f"c{i}.mp4", "in": 0, "out": 6,
+         **({"transition_in": {"type": "dissolve", "duration": 1.0}} if i else {})}
+        for i in range(4)]
+    comp["audio_master"] = {"gain_db": 0, "loudnorm": False}
+    # What the probe answers for those clips (no 1080p file is encoded).
+    media = {f"c{i}.mp4": {"duration": 6.0, "has_video": True, "has_audio": True,
+                           "width": 1920, "height": 1080, "fps": 30.0, "color": {},
+                           "pix_fmt": "yuv420p"}
+             for i in range(4)}
+    duration = comp_mod.compute_timeline(comp, media)["duration"]
+    assert duration == pytest.approx(21.0)            # 4 x 6 s less three 1 s overlaps
+    est = estimate_window_bytes(comp, media, 0.0, duration)
+    # 1080p yuv420 frame = 1920 x 1080 x 1.5 = 3,110,400 bytes; threads = 10 + 1.
+    # Source frames: 4 clips x 6 s x 30 fps = 720 frames  = 2,239,488,000
+    # Dissolves:     3 x 2 inputs x 1 s x 30 fps = 180    =   559,872,000
+    # Decoders:      4 inputs x (11 threads + 4 refs) = 60 =   186,624,000
+    # x264:          58 + 11 threads = 69 frames             =   214,617,600
+    #                                                   total 3,200,601,600
+    assert est == pytest.approx(3_200_601_600)
+    assert est >= 2_444_000_000
+
+
+def test_a_render_passes_the_estimates_thread_count_to_ffmpeg(monkeypatch):
+    """The thread count the estimate counts frames by reaches every input's
+    decoder (a clip, a seeked sub-clip, a picture) and the x264 encoder, in
+    a final and in a preview."""
+    import compiler
+    monkeypatch.setattr(compiler, "render_threads", lambda: 7)
+    comp = _comp([{"src": "a.mp4", "in": 0, "out": 4}, {"image": "logo.png", "duration": 2}],
+                 tracks_extra=[{"kind": "overlay", "clips": [
+                     {"image": "logo.png", "duration": 2, "start": 1}]}])
+    media = {**MEDIA, "logo.png": {"duration": 0.0, "has_video": True, "has_audio": False,
+                                   "width": 200, "height": 100, "still": True}}
+    for mode in ("final", "preview"):
+        plan = compile_render(comp, media, mode=mode)
+        assert plan.inputs and all(opts[:2] == ["-threads", "7"] for opts, _ in plan.inputs)
+        at = plan.encode_args.index("-threads")
+        assert plan.encode_args[at + 1] == "7" and plan.encode_args.index("libx264") < at
+    sub = window_pruned(_comp([{"src": "long.mp4"}]), LONG, 24.0, 36.0)
+    opts = dict((p, o) for o, p in compile_render(sub, LONG, streams="v").inputs)["long.mp4"]
+    assert opts[:2] == ["-threads", "7"] and "-ss" in opts
+
+
+@pytest.mark.parametrize(("pix_fmt", "per_pixel"), [
+    (None, 1.5), ("yuv420p", 1.5), ("yuvj420p", 1.5), ("nv12", 1.5),
+    ("yuv420p10le", 3.0), ("p010le", 3.0), ("yuv422p", 2.0), ("yuv422p10le", 4.0),
+    ("yuv444p", 3.0), ("yuv444p12le", 6.0), ("yuva444p10le", 8.0), ("gbrp", 3.0),
+    ("rgb24", 3.0), ("rgba", 4.0), ("rgb48le", 6.0), ("rgbaf32le", 16.0), ("gray10le", 2.0),
+    ("some_future_format", 8.0),
+])
+def test_a_frame_is_counted_at_its_pixel_formats_real_size(pix_fmt, per_pixel):
+    from fftools import frame_bytes_per_pixel
+    assert frame_bytes_per_pixel(pix_fmt) == per_pixel
+
+
+def test_a_wider_source_and_a_transition_raise_the_estimate():
+    """A 10-bit 4:2:2 source's frames, and its decoder's, count at 4 bytes a
+    pixel instead of 1.5. A transition holds both its inputs across its
+    overlap at the canvas size: 4:2:0 for a dissolve, planar RGB (twice
+    that) for a whip; a cut holds nothing more."""
+    one = _comp([{"src": "a.mp4", "in": 0, "out": 4}])
+    wide = {**MEDIA, "a.mp4": {**MEDIA["a.mp4"], "width": 640, "height": 360, "fps": 30.0,
+                               "pix_fmt": "yuv422p10le"}}
+    plain = {**MEDIA, "a.mp4": {**wide["a.mp4"], "pix_fmt": "yuv420p"}}
+    held = 4 * 30 + _THREADS + 4                      # source frames and decoder frames
+    assert (estimate_window_bytes(one, wide, 0.0, 4.0)
+            - estimate_window_bytes(one, plain, 0.0, 4.0)) == pytest.approx(
+                held * 640 * 360 * (4.0 - 1.5))
+
+    def joined(kind):
+        return _comp([{"src": "a.mp4", "in": 0, "out": 4},
+                      {"src": "a.mp4", "in": 4, "out": 8, **kind}])
+    # Each window is its whole timeline: the dissolve and the whip overlap
+    # the clips by 0.5 s, the cut does not.
+    cut = estimate_window_bytes(joined({}), plain, 0.0, 8.0)
+    fade = estimate_window_bytes(joined({"transition_in": {"type": "fade", "duration": 0.5}}),
+                                 plain, 0.0, 7.5)
+    whip = estimate_window_bytes(joined({"transition_in": {"type": "whip_left", "duration": 0.5}}),
+                                 plain, 0.0, 7.5)
+    overlap = 2 * 0.5 * 30 * 640 * 360               # two inputs' pixels across 0.5 s
+    assert fade - cut == pytest.approx(overlap * 1.5)
+    assert whip - cut == pytest.approx(overlap * 3.0)
 
 
 def test_window_pruned_subclips_long_clip_with_seek():
@@ -749,7 +876,7 @@ def test_window_pruned_subclips_long_clip_with_seek():
     # Compiled: the input opens with -ss and the trim is rebased.
     plan = compile_render(pruned, LONG, streams="v")
     opts = dict((p, o) for o, p in plan.inputs)["long.mp4"]
-    assert opts[:2] == ["-ss", f"{sub['_seek']:.6g}"]
+    assert opts[:4] == ["-threads", str(_THREADS), "-ss", f"{sub['_seek']:.6g}"]
     assert f"trim=start={sub['in'] - sub['_seek']:.6g}" in plan.graph
 
 

@@ -21,13 +21,16 @@ synthesizing (and encoding) a fps/speed monster (0.1× on a 30fps timeline
 = 300 fps).
 """
 
+import asyncio
+import contextlib
 import hashlib
 import os
+import secrets
 import tempfile
 from pathlib import Path
 
-from fftools import run_ffmpeg
-from shared import logger
+from fftools import _f, run_ffmpeg
+from shared import PROCESS_START, logger, own_folder
 
 INTERP_MODES = ("flow", "blend", "duplicate")
 
@@ -39,12 +42,9 @@ BLEND_CHAIN = "minterpolate=fps={fps}:mi_mode=blend"
 # intermediates through satellite file sync would hurt more than a re-render).
 CACHE_DIR = Path(os.environ.get("VIDEO_TOOLS_CACHE_DIR", "")
                  or Path(tempfile.gettempdir()) / "vt-mezzanine")
+own_folder(CACHE_DIR)
 CACHE_MAX_BYTES = int(
     float(os.environ.get("VIDEO_TOOLS_MEZZANINE_CACHE_GB", "4")) * 1e9)
-
-
-def _f(v: float) -> str:
-    return f"{float(v):.6g}"
 
 
 def native_sufficient(src_fps: float, speed: float, timeline_fps: float) -> bool:
@@ -54,21 +54,38 @@ def native_sufficient(src_fps: float, speed: float, timeline_fps: float) -> bool
 
 def cache_key(src: str, span: tuple[float, float], speed: float,
               timeline_fps: float, stab: dict | None) -> str:
-    st = os.stat(src)
+    """The mezzanine's key: the source file itself (device, inode, size and
+    both its times, read with no link followed) and the session's agent, so
+    the shared cache never serves one agent's clip to another, and the span
+    and settings. Blocking: a thread runs it."""
+    from shared import _agent_var, read_identity
+
+    # The call's later opens of the source are held to the file this reads.
+    try:
+        st = read_identity(src)
+    except FileNotFoundError:
+        raise ValueError(f"file not found: {src}") from None
     stab_s = "none"
     if stab:
         stab_s = (f"{stab.get('shakiness')}-{stab.get('smoothing')}"
                   f"-{stab.get('zoom')}")
-    raw = (f"{st.st_size}:{st.st_mtime_ns}:{span[0]:.3f}-{span[1]:.3f}"
-           f":{speed:.4f}:{timeline_fps:.3f}:{stab_s}")
-    return hashlib.md5(raw.encode()).hexdigest()[:12]
+    raw = (f"{_agent_var.get()}:{st.st_dev}:{st.st_ino}:{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}"
+           f":{span[0]:.3f}-{span[1]:.3f}:{speed:.4f}:{timeline_fps:.3f}:{stab_s}")
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
 def _prune_cache() -> None:
-    """Drop least-recently-used mezzanines over the size budget. A pruned
-    file that an in-flight render already opened stays readable (POSIX
-    unlink keeps open fds valid)."""
+    """Drop the temps of a process that ended during a build (last written
+    before this one started, ``PROCESS_START``, the sweep's own rule), then
+    the least-recently-used mezzanines over the size budget. A pruned file
+    that an in-flight render already opened stays readable (POSIX unlink
+    keeps open fds valid)."""
     try:
+        for temp in CACHE_DIR.glob(".mezz-*.mp4"):
+            with contextlib.suppress(OSError):
+                if temp.stat().st_mtime < PROCESS_START:
+                    temp.unlink()
+                    logger.info("mezzanine cache removed %s, a build that never ended", temp.name)
         files = sorted(CACHE_DIR.glob("mezz-*.mp4"), key=lambda p: p.stat().st_mtime)
         total = sum(p.stat().st_size for p in files)
         # > 1: never evict the newest entry — it is the one just written.
@@ -88,12 +105,14 @@ async def ensure_mezzanine(src: str, span: tuple[float, float], speed: float,
     """Return ``(mezzanine_path, cache_hit)`` for a flow slow-mo span.
 
     The mezzanine is consumed via ``-i`` (an exec arg, no filtergraph
-    escaping concerns). Concurrent renders may race on a miss — both encode
-    to unique tmp names and the atomic rename makes the last one win
-    (double work at worst, never corruption).
+    escaping concerns). Two renders that miss on one key encode to temps of
+    their own (a random part in each name), and the atomic rename makes the
+    last one win: double work at worst, never one file written by two. A
+    temp is removed on any failure. The prune never counts one, and it
+    removes the temp of a process that ended during its build.
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    key = cache_key(src, span, speed, timeline_fps, stab_params)
+    key = await asyncio.to_thread(cache_key, src, span, speed, timeline_fps, stab_params)
     out = CACHE_DIR / f"mezz-{key}.mp4"
     if out.exists():
         os.utime(out)  # refresh LRU position
@@ -103,12 +122,17 @@ async def ensure_mezzanine(src: str, span: tuple[float, float], speed: float,
                f"setpts=(PTS-STARTPTS)/{_f(speed)}"]
     filters += stab_filters or []
     filters.append(FLOW_CHAIN.format(fps=_f(timeline_fps)))
-    tmp = out.with_suffix(f".tmp{os.getpid()}.mp4")
-    await run_ffmpeg(
-        ["-i", src, "-vf", ",".join(filters),
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-an",
-         str(tmp)],
-        timeout=3600, heavy=True)
-    os.replace(tmp, out)
+    tmp = CACHE_DIR / f".mezz-{key}.{secrets.token_hex(8)}.mp4"
+    try:
+        await run_ffmpeg(
+            ["-i", src, "-vf", ",".join(filters),
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-an",
+             str(tmp)],
+            timeout=3600, heavy=True)
+        os.replace(tmp, out)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
     _prune_cache()
     return str(out), False

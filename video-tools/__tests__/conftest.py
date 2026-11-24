@@ -39,7 +39,32 @@ REAL_WRITE_BESIDE = shared._write_beside
 REAL_READ_BESIDE = shared._read_beside
 
 
+async def same_path(path, writing=False):
+    """A resolver that answers every path as given (the proxy's judge is
+    tested on its own): the async shape ``_resolve_path`` has."""
+    return path
+
+
+async def _beside(path):
+    return path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _tmp_files_sit_beneath_the_mount(tmp_path_factory):
+    """Every test's tmp tree is the mount the tool opens beneath: a person's
+    file is read, and an output written, the way production does it (no
+    link followed, the atomic writer, ffmpeg's descriptor door). The tool's
+    own temp folders (``tempfile``) stay outside it, as in production."""
+    old = os.environ.get("VIDEOTOOLS_WRITE_ROOT")
+    os.environ["VIDEOTOOLS_WRITE_ROOT"] = str(tmp_path_factory.getbasetemp())
+    yield
+    if old is None:
+        os.environ.pop("VIDEOTOOLS_WRITE_ROOT", None)
+    else:
+        os.environ["VIDEOTOOLS_WRITE_ROOT"] = old
+
+
 @pytest.fixture(autouse=True)
 def _writes_beside_allowed(monkeypatch):
-    monkeypatch.setattr(shared, "_write_beside", lambda p: p)
-    monkeypatch.setattr(shared, "_read_beside", lambda p: p)
+    monkeypatch.setattr(shared, "_write_beside", _beside)
+    monkeypatch.setattr(shared, "_read_beside", _beside)

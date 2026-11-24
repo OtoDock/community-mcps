@@ -28,6 +28,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY *.py .
+# The manifest: a motion clip reads the call's ceiling from it (tool_timeout_sec).
+COPY manifest.json .
 # Vendored detection models (YuNet for smart_reframe — MIT, see models/README.md).
 COPY models/ models/
 

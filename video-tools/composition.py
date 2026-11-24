@@ -115,13 +115,24 @@ class CompositionError(ValueError):
 # ---------------------------------------------------------------------------
 
 
+# A composition is a small JSON file; one past this is no composition.
+COMPOSITION_MAX_BYTES = 16 * 1024 * 1024
+
+
 def load_composition(path: str) -> dict:
-    p = Path(path)
-    if not p.exists():
-        raise CompositionError(f"Composition file not found: {path}")
+    """The composition at ``path``, read beneath the mount with no link
+    followed. Blocking: a thread runs it."""
+    from shared import safe_read_bytes
+
     try:
-        comp = json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        raw = safe_read_bytes(path, COMPOSITION_MAX_BYTES)
+    except FileNotFoundError:
+        raise CompositionError(f"Composition file not found: {path}") from None
+    except OSError as exc:
+        raise CompositionError(f"Composition could not be read: {exc}") from None
+    try:
+        comp = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise CompositionError(f"Composition is not valid JSON: {exc}")
     if not isinstance(comp, dict):
         raise CompositionError("Composition root must be a JSON object")
@@ -129,10 +140,12 @@ def load_composition(path: str) -> dict:
 
 
 def save_composition(path: str, comp: dict) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(
-        json.dumps(comp, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    """The composition written at ``path`` whole or not at all, beneath the
+    mount with no link followed. Blocking: a thread runs it."""
+    from shared import safe_open_write
+
+    with safe_open_write(path) as fh:
+        fh.write((json.dumps(comp, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
 def new_composition(project: dict | None = None) -> dict:
@@ -168,8 +181,8 @@ def clip_source_kind(clip: dict) -> str:
     if len(present) != 1:
         raise CompositionError(
             f"clip must have exactly one of src/image/fill (got {present or 'none'}) — "
-            'e.g. {"src": "workspace/clip.mp4", "in": 2, "out": 7} for media, '
-            '{"image": "workspace/photo.jpg", "duration": 3} for a still, '
+            'e.g. {"src": "/workspace/clip.mp4", "in": 2, "out": 7} for media, '
+            '{"image": "/workspace/photo.jpg", "duration": 3} for a still, '
             '{"fill": "#0a0a12", "duration": 2} for a solid'
         )
     return {"src": "media", "image": "image", "fill": "fill"}[present[0]]
@@ -561,9 +574,9 @@ def _validate_match(match, kind: str, skind: str, where: str, issues: list,
         return
     if not isinstance(match, dict):
         _issue(issues, "error", where,
-               'match must be an object — e.g. {"ref": "workspace/a.mp4@11.8"} '
-               'or bridge mode {"ramp_from": "workspace/a.mp4@11.9", '
-               '"ramp_to": "workspace/b.mp4@0.1"}')
+               'match must be an object — e.g. {"ref": "/workspace/a.mp4@11.8"} '
+               'or bridge mode {"ramp_from": "/workspace/a.mp4@11.9", '
+               '"ramp_to": "/workspace/b.mp4@0.1"}')
         return
     unknown = set(match) - set(MATCH_KEYS)
     if unknown:
@@ -902,9 +915,9 @@ def _validate_clip(clip: dict, kind: str, where: str, issues: list,
 
     if kind in ("overlay", "audio"):
         if kind == "audio":
-            example = '{"src": "workspace/music.mp3", "start": 0, "gain_db": -10}'
+            example = '{"src": "/workspace/music.mp3", "start": 0, "gain_db": -10}'
         else:
-            example = ('{"image": "workspace/logo.png", "start": 2, '
+            example = ('{"image": "/workspace/logo.png", "start": 2, '
                        '"duration": 3, "fade_in": 0.3}')
         if not _num(clip.get("start", None), 0, 86400):
             _issue(issues, "error", where,
@@ -1097,7 +1110,7 @@ def validate(comp: dict, exists=None, media_info: dict | None = None) -> list[di
                'composition needs a tracks array — minimal shape: '
                '{"project": {"width": 1920, "height": 1080, "fps": 30}, '
                '"tracks": [{"kind": "video", "clips": '
-               '[{"src": "workspace/clip.mp4"}]}]}')
+               '[{"src": "/workspace/clip.mp4"}]}]}')
         return issues
     video_tracks = [t for t in tracks if isinstance(t, dict) and t.get("kind") == "video"]
     if len(video_tracks) != 1:

@@ -2,6 +2,10 @@
 
 import composition as comp_mod
 from compiler import compile_render
+from fftools import render_threads
+
+# Each input's decoder runs the render's thread count.
+_THREADS = ["-threads", str(render_threads())]
 
 MEDIA = {
     "a.mp4": {"duration": 10.0, "has_video": True, "has_audio": True},
@@ -26,7 +30,7 @@ def _comp(clips, tracks_extra=None, captions=None, master=None):
 def test_single_clip_graph_basics():
     plan = compile_render(_comp([{"src": "a.mp4", "in": 1, "out": 4}]),
                           MEDIA, mode="final")
-    assert plan.inputs == [([], "a.mp4")]
+    assert plan.inputs == [(_THREADS, "a.mp4")]
     assert "trim=start=1:end=4" in plan.graph
     assert "force_original_aspect_ratio=increase" in plan.graph  # cover fit
     assert "format=yuv420p" in plan.graph
@@ -54,7 +58,7 @@ def test_cut_uses_concat():
     assert "concat=n=2:v=1:a=0" in plan.graph
     assert "concat=n=2:v=0:a=1" in plan.graph
     # Same file used twice → ONE shared input.
-    assert plan.inputs == [([], "a.mp4")]
+    assert plan.inputs == [(_THREADS, "a.mp4")]
 
 
 def test_crf_override_reaches_encode_args():
@@ -140,7 +144,7 @@ def test_image_clip_input_options_and_fill():
         {"image": "logo.png", "duration": 2},
         {"fill": "#0A0A12", "duration": 1.5},
     ]), MEDIA)
-    assert (["-loop", "1", "-t", "2"], "logo.png") in plan.inputs
+    assert ([*_THREADS, "-loop", "1", "-t", "2"], "logo.png") in plan.inputs
     assert "color=c=0x0A0A12:s=640x360:r=30:d=1.5" in plan.graph
 
 

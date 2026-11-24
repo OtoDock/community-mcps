@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import color
+from conftest import HAVE_FFMPEG
 
 
 def test_validate_bounds():
@@ -302,3 +303,37 @@ def test_blend_cube_1d_with_domain(tmp_path):
     assert np.allclose(_cube_rows(dst)[:, 0], [0.0, 0.75, 1.5])
     with pytest.raises(ValueError):
         color._parse_cube("LUT_3D_SIZE 2\n0 0 0\n")
+
+
+def test_a_colour_name_reaches_a_graph_only_from_the_tools_tables():
+    """ffprobe's colour fields pass only as names of the tool's own tables:
+    any other text counts as unknown and reaches no filter."""
+    tags = color.probe_tags({"color_space": "bt709:out_range=pc", "color_primaries": "BT709",
+                             "color_transfer": "smpte2084", "color_range": "tv,scale=2"})
+    assert tags == {"primaries": "bt709", "transfer": "smpte2084"}
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not available")
+def test_a_source_tagged_with_any_name_ffprobe_prints_keeps_its_tags(tmp_path):
+    """A clip tagged SMPTE 240M, a name a person cannot type in color.input:
+    its tags arrive on the decoded frames, so the head declares nothing, as
+    it did before the probe's names were checked. A picture's 'gbr' matrix
+    is known too."""
+    import asyncio
+    import subprocess
+
+    from fftools import FFMPEG, probe
+
+    clip = tmp_path / "smpte240m.mp4"
+    subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                    "-i", "testsrc2=s=64x64:d=1:r=5", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-colorspace", "smpte240m", "-color_primaries", "smpte240m",
+                    "-color_trc", "smpte240m", str(clip)], check=True)
+    stream = asyncio.run(probe(str(clip)))["streams"][0]
+    assert stream["color_space"] == "smpte240m"
+    for height in (64, 1080):
+        assert color.tag_filter(color.head_tags(None, stream, height)) == ""
+        assert color.effective_tags(stream, height) == {
+            "matrix": "smpte240m", "primaries": "smpte240m", "transfer": "smpte240m", "range": "tv"}
+    assert color.probe_tags({"color_space": "gbr", "color_range": "pc"}) == {"matrix": "gbr", "range": "pc"}
+    assert color.probe_tags({"color_space": "reserved", "color_transfer": "unknown"}) == {}

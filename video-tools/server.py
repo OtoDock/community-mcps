@@ -21,7 +21,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
-from shared import MCP_PORT, logger, set_request_context
+from shared import MCP_PORT, begin_call, fix_write_root, logger, set_request_context
 
 _CLIP_SCHEMA_DOC = (
     "CLIP fields — base (video) track: exactly one of src (media path) / "
@@ -300,7 +300,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Project file path, e.g. workspace/videos/launch.vproj.json"},
+                "path": {"type": "string", "description": "Project file path, e.g. /workspace/videos/launch.vproj.json"},
                 "project": {
                     "type": "object",
                     "description": "{width, height, fps, background '#hex', color {global grade}}",
@@ -456,7 +456,11 @@ TOOLS = [
     ),
     Tool(
         name="cancel_render",
-        description="Stop a background render: its encode ends and its partial file is removed.",
+        description=(
+            "Stop a background render. Its encode ends and its partial file is removed, so the "
+            "output keeps the file it had. A render that has already written its file is not "
+            "stopped, and the answer says so."
+        ),
         inputSchema={
             "type": "object",
             "properties": {"job_id": {"type": "string", "maxLength": 64}},
@@ -523,11 +527,14 @@ TOOLS = [
             "stings (transparent=true → alpha WebM that drops into a "
             "composition as an OVERLAY clip src), full-frame title cards, "
             "and standalone social assets (gif/webp/mp4).\n"
-            "Rules: design for the exact width×height given; the page has NO "
-            "network access — inline all CSS/JS. file:// references are "
-            "resolved through the agent WORKSPACE (use workspace paths — "
-            "host/satellite absolute paths do not exist here); any "
-            "unresolvable file:// ref fails the render loudly before "
+            "Rules: design for the exact width and height given. The page "
+            "reaches no network. Every request goes through the tool, which "
+            "serves the page and the files the session may read and refuses "
+            "the rest. WebSockets, service workers and WebRTC find no network "
+            "either, so inline any CSS or JS from the web. One capture is "
+            "served at most 64 files and 256 MB. file:// references "
+            "resolve through the agent's workspace, so use workspace paths. "
+            "An unresolvable file:// reference fails the render before "
             "capture. Timing contract: capture starts after a "
             "1s virtual-clock settle — anchor JS timelines with "
             "t=(Date.now()-(window.VT_T0??0))/1000 (VT_T0 is injected; a "
@@ -571,12 +578,13 @@ TOOLS = [
             "social post cards, photo collages, quote cards, OG images. "
             "transparent=true → alpha PNG usable as a composition overlay "
             "or for further compositing.\n"
-            "Same rules as motion clips: no network — inline CSS; file:// "
-            "refs resolve through the agent workspace and unresolvable ones "
-            "fail loudly before capture; system fonts by name; 'at' freezes "
-            "any animation at that second (stills run on a 0-anchored "
-            "clock — no settle, no VT_T0 offset). The result is shown "
-            "inline to the user automatically."
+            "The rules of motion clips apply. The page reaches no network, "
+            "only the files the session may read, so inline any CSS from the "
+            "web. file:// references resolve through the agent's workspace, "
+            "and an unresolvable one fails before capture. System fonts work "
+            "by name. 'at' freezes any animation at that second. A still's "
+            "clock starts at 0, with no settle and no VT_T0 offset. The "
+            "result is shown inline to the user automatically."
         ),
         inputSchema={
             "type": "object",
@@ -699,6 +707,8 @@ async def list_tools() -> list[Tool]:
 
 @mcp_server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    # A background job this call starts keeps the call's record.
+    begin_call()
     handlers = {}
     # Lazy-load handlers to keep startup fast (librosa/cv2 imports are heavy).
     if name in ("probe_media", "analyze_video", "analyze_audio", "sample_frames",
@@ -810,5 +820,6 @@ starlette_app = Starlette(
 )
 
 if __name__ == "__main__":
+    fix_write_root()
     logger.info(f"Video-Tools MCP starting on port {MCP_PORT}")
     uvicorn.run(starlette_app, host="0.0.0.0", port=MCP_PORT, log_level="info")

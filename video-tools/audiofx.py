@@ -37,8 +37,12 @@ import math
 import re
 from pathlib import Path
 
+from fftools import _f
+from shared import own_folder
+
 # Bundled voice model (models/README.md carries provenance/licensing).
 RNNOISE_MODEL = str(Path(__file__).resolve().parent / "models" / "rnnoise-voice.rnnn")
+own_folder(Path(RNNOISE_MODEL).parent)
 
 AUDIO_KEYS = ("denoise", "eq", "compress", "deess", "level")
 
@@ -68,10 +72,6 @@ _COMPRESS_DEFAULTS = {"threshold_db": -18.0, "ratio": 3.0, "attack": 20.0,
 # compressor barely narrowed it; speechnorm widened it).
 _LEVEL_DEFAULTS = {"window": 4.2, "max_gain_db": 28.0, "target_db": -6.0}
 _LEVEL_FRAME_MS = 200
-
-
-def _f(v: float) -> str:
-    return f"{float(v):.6g}"
 
 
 def _lin(db: float) -> str:
@@ -321,11 +321,29 @@ def measured_is_silent(meas: dict) -> bool:
     return not math.isfinite(i) or i < SILENCE_LUFS
 
 
+def _measured_value(meas: dict, key: str, default: float | None = None) -> float:
+    """A value of the first pass, read from ffmpeg's own output: a finite
+    number, or refused."""
+    raw = meas.get(key, default) if default is not None else meas.get(key)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = math.nan
+    if not math.isfinite(value):
+        raise ValueError(f"the loudness measure gave {key} as no number")
+    return value
+
+
+def _measured(meas: dict, key: str, default: float | None = None) -> str:
+    """``_measured_value`` written as a number for the second pass's filter."""
+    return _f(_measured_value(meas, key, default))
+
+
 def loudnorm_predict(cfg: dict, meas: dict) -> dict:
     """Which branch ffmpeg's two-pass loudnorm will take for these pass-1
     numbers, with the reason when it is the dynamic one."""
-    mi, mtp, mlra = float(meas["input_i"]), float(meas["input_tp"]), float(meas["input_lra"])
-    thresh = float(meas.get("input_thresh", -70.0))
+    mi, mtp, mlra = (_measured_value(meas, k) for k in ("input_i", "input_tp", "input_lra"))
+    thresh = _measured_value(meas, "input_thresh", -70.0)
     gain = cfg["i"] - mi
     tp_after = mtp + gain
     reasons = []
@@ -349,9 +367,9 @@ def loudnorm_predict(cfg: dict, meas: dict) -> dict:
 
 
 def _measured_dict(meas: dict) -> dict:
-    return {"i": float(meas["input_i"]), "tp": float(meas["input_tp"]),
-            "lra": float(meas["input_lra"]),
-            "thresh": float(meas.get("input_thresh", -70.0))}
+    return {"i": _measured_value(meas, "input_i"), "tp": _measured_value(meas, "input_tp"),
+            "lra": _measured_value(meas, "input_lra"),
+            "thresh": _measured_value(meas, "input_thresh", -70.0)}
 
 
 def loudnorm_pass2(cfg: dict, meas: dict) -> tuple[str, dict]:
@@ -380,9 +398,10 @@ def loudnorm_pass2(cfg: dict, meas: dict) -> tuple[str, dict]:
         return chain, report
     linear = "true" if mode == "auto" else "false"
     chain = (f"loudnorm=I={_f(cfg['i'])}:TP={_f(cfg['tp'])}:LRA={_f(cfg['lra'])}"
-             f":measured_I={meas['input_i']}:measured_TP={meas['input_tp']}"
-             f":measured_LRA={meas['input_lra']}:measured_thresh={meas['input_thresh']}"
-             f":offset={meas.get('target_offset', 0)}:linear={linear}"
+             f":measured_I={_measured(meas, 'input_i')}:measured_TP={_measured(meas, 'input_tp')}"
+             f":measured_LRA={_measured(meas, 'input_lra')}"
+             f":measured_thresh={_measured(meas, 'input_thresh')}"
+             f":offset={_measured(meas, 'target_offset', 0)}:linear={linear}"
              f",aresample={CHAIN_RATE}")
     if mode == "dynamic":
         report.update(normalization_type="dynamic")

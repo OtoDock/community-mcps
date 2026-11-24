@@ -4,6 +4,7 @@ exercised in test_render_smoke.py."""
 
 import asyncio
 import time
+from pathlib import Path
 
 import slowmo
 
@@ -97,3 +98,64 @@ def test_prune_keeps_newest_within_budget(tmp_path, monkeypatch):
     slowmo._prune_cache()
     left = sorted(p.name for p in cache.glob("mezz-*.mp4"))
     assert left == ["mezz-2.mp4", "mezz-3.mp4"]
+
+
+def test_two_misses_at_once_write_temps_of_their_own(tmp_path, monkeypatch):
+    """Two renders that miss on one key at once each encode to a temp of its
+    own, and the entry is one whole file. A failed build leaves no temp, and
+    the prune counts none."""
+    import pytest
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(slowmo, "CACHE_DIR", cache)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"x" * 64)
+    temps: list[str] = []
+
+    async def slow_run(args, timeout=0, heavy=True):
+        temps.append(args[-1])
+        with open(args[-1], "wb") as fh:
+            fh.write(b"first half ")
+            await asyncio.sleep(0.2)
+            fh.write(b"second half")
+        return b"", ""
+    monkeypatch.setattr(slowmo, "run_ffmpeg", slow_run)
+
+    async def both():
+        return await asyncio.gather(*(slowmo.ensure_mezzanine(str(src), (0.0, 1.0), 0.5, 30.0)
+                                      for _ in range(2)))
+    (one, _), (two, _) = asyncio.run(both())
+    assert one == two and len(set(temps)) == 2
+    assert open(one, "rb").read() == b"first half second half"
+    assert [p.name for p in cache.iterdir()] == [Path(one).name]
+
+    async def failing(args, timeout=0, heavy=True):
+        with open(args[-1], "wb") as fh:
+            fh.write(b"part")
+        raise RuntimeError("encode failed")
+    monkeypatch.setattr(slowmo, "run_ffmpeg", failing)
+    with pytest.raises(RuntimeError):
+        asyncio.run(slowmo.ensure_mezzanine(str(src), (1.0, 2.0), 0.5, 30.0))
+    assert sorted(p.name for p in cache.iterdir()) == [Path(one).name]
+
+    monkeypatch.setattr(slowmo, "CACHE_MAX_BYTES", 1)
+    (cache / ".mezz-live.0123456789abcdef.mp4").write_bytes(b"z" * 100)
+    (cache / "mezz-newer.mp4").write_bytes(b"y" * 100)
+    slowmo._prune_cache()
+    assert (cache / ".mezz-live.0123456789abcdef.mp4").exists()
+
+
+def test_the_prune_removes_a_temp_of_a_process_that_ended(tmp_path, monkeypatch):
+    """A build a process never finished leaves its temp, last written before
+    this process started: the prune removes it, and keeps a temp written
+    since, which a build of this process may still be writing."""
+    import os
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(slowmo, "CACHE_DIR", cache)
+    dead = cache / ".mezz-dead.0123456789abcdef.mp4"
+    dead.write_bytes(b"z" * 100)
+    os.utime(dead, (slowmo.PROCESS_START - 60, slowmo.PROCESS_START - 60))
+    live = cache / ".mezz-live.fedcba9876543210.mp4"
+    live.write_bytes(b"z" * 100)
+    slowmo._prune_cache()
+    assert not dead.exists() and live.exists()
